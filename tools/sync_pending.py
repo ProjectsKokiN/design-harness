@@ -14,12 +14,27 @@ declaredAt を日付に置き換えて <プロジェクト>/design/sync_pending.
 この治具を回して宣言を減らす。**手で数字をいじらない。**
 """
 
+import argparse
 import json
 import pathlib
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-VALUES = ROOT / 'design' / 'values'
+# submodule から直接呼べる（コピー不要。aub 第2便の要望3: tools がコピー配布だと
+# エンジンを一本化した理由と同じ乖離が tools で再発する）。
+#   python3 design/harness/tools/sync_pending.py            … cwd の design/values を見る
+#   python3 design/sync_pending.py                          … コピーして使う旧形式も動く
+_ap = argparse.ArgumentParser(description="_pending.json を検査の現状から作り直す")
+_ap.add_argument("--values", type=pathlib.Path, default=None,
+                 help="design/values の場所（既定: cwd/design/values、"
+                      "無ければこのファイルの位置から推定）")
+_args = _ap.parse_args()
+if _args.values:
+    VALUES = _args.values.resolve()
+elif (pathlib.Path.cwd() / 'design' / 'values').is_dir():
+    VALUES = pathlib.Path.cwd() / 'design' / 'values'
+else:
+    VALUES = pathlib.Path(__file__).resolve().parent.parent / 'design' / 'values'
+ROOT = VALUES.parent.parent
 
 
 def main() -> int:
