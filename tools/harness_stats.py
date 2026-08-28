@@ -11,8 +11,8 @@ design_check.py が書いた design/.harness_log.jsonl を読み、ルールご�
   印象ではなく回数で判断できる。
 
 使い方:
-    python3 design/harness_stats.py
-    python3 design/harness_stats.py --json
+    python3 design/harness/tools/harness_stats.py
+    python3 design/harness/tools/harness_stats.py --json
 
 読み方:
   - 発火が多く ignored がゼロに近い warn … error に上げる候補
@@ -33,7 +33,22 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+# submodule から直接呼べる（コピー不要）。ログとルールは案件の design/ にある。
+#   python3 design/harness/tools/harness_stats.py       … cwd の design/ を見る
+#   python3 .../harness_stats.py --design <パス>        … 明示指定（path-check-ignore）
+def _design_dir():
+    import argparse as _a
+    ap = _a.ArgumentParser(add_help=False)
+    ap.add_argument("--design", type=Path, default=None)
+    known, _rest = ap.parse_known_args()
+    if known.design:
+        return known.design.resolve()
+    if (Path.cwd() / "design" / "rules.json").exists():
+        return Path.cwd() / "design"
+    return Path(__file__).resolve().parent
+
+
+HERE = _design_dir()
 LOG = HERE / ".harness_log.jsonl"
 
 
@@ -57,6 +72,7 @@ def all_rule_ids():
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--design", type=Path, default=None)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 

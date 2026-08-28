@@ -9,9 +9,9 @@
 【確かめた方法】414 で穴10件を検出して exit 1（2026-08-28）。
 
 Figma を読んだあと（ハーネスを同期したあと）に必ず走らせる。
-判定の根拠は FLUTTER_GAPS.md を参照。
+判定の根拠は config の ledger が指す台帳を参照（案件ごとに違う）。
 
-    python3 414/check_flutter_gaps.py
+    python3 <harness>/tools/check_render_gaps.py --config render-gaps.json
 
 警告があれば終了コード 1 を返す。
 """
@@ -29,6 +29,8 @@ TOKENS = None           # tokens.json
 FIGMA_COMPONENTS = None # 全量書き出し（figma/components.json）
 IGNORED_TOKENS = set()  # UI に出ない表記用トークン
 RENAMED = {}            # 書き出し側の名前 → 判定記録側の名前
+LEDGER = None           # 判定の根拠を書いた台帳（案件ごとに違う）
+DS_NAME = "?"           # デザインシステム名（表示用）
 
 # Flutter が素直に出せるフォントウェイト
 SUPPORTED_WEIGHTS = {100, 200, 300, 400, 500, 600, 700, 800, 900}
@@ -99,7 +101,7 @@ def check_tokens(doc):
             continue
         if "/" not in name and re.match(r"^[A-Z][a-z]+ \d+$", name):
             out.append(("△", f"Token {name}",
-                        "414 のトークン命名（役割ベース・スラッシュ区切り）から外れている。"
+                        f"{DS_NAME} のトークン命名（役割ベース・スラッシュ区切り）から外れている。"
                         "外部ライブラリの残りでないか確認"))
     return out
 
@@ -160,6 +162,7 @@ def check_coverage(doc):
 
 def load_config():
     global COMPONENTS, TOKENS, FIGMA_COMPONENTS, IGNORED_TOKENS, RENAMED
+    global LEDGER, DS_NAME
     ap = argparse.ArgumentParser(
         description="Figma の指定のうちスタックで再現できないものと、判定の網羅を見る")
     ap.add_argument("--config", type=Path, required=True,
@@ -176,6 +179,11 @@ def load_config():
     FIGMA_COMPONENTS = base / conf["figma_components"]
     IGNORED_TOKENS = set(conf.get("ignored_tokens", []))
     RENAMED = dict(conf.get("renamed", {}))
+    # 台帳とデザインシステム名は案件ごとに違う。固定文字列にしない
+    # （qnd/design-systems 2026-08-28: planttalk で走らせても
+    # 「414/FLUTTER_GAPS.md を参照」と出ていた）
+    LEDGER = conf.get("ledger", "FLUTTER_GAPS.md")
+    DS_NAME = conf.get("name") or base.name
 
 
 def main():
@@ -210,7 +218,7 @@ def main():
     print(f"\n判定: × {len(blockers)} 件 / "
           f"△ {len([f for f in uniq if f[0]=='△'])} 件 / "
           f"○ {len([f for f in uniq if f[0]=='○'])} 件")
-    print("詳細は 414/FLUTTER_GAPS.md を参照してください。")
+    print(f"詳細は {LEDGER} を参照してください。")
     return 1 if blockers else 0
 
 

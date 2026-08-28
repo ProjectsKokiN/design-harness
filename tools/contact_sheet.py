@@ -2,15 +2,15 @@
 """golden 画像を1枚のタイル画像にまとめる（コンタクトシート）。
 
 【このテンプレートの使い方】
-  - 置き場所はアプリの **`design/` 配下**（`design/contact_sheet.py`）。他のハーネスの治具
+  - submodule から直接呼ぶ（`design/harness/tools/contact_sheet.py`）。出力はアプリの `design/.contact_sheets/`。他のハーネスの治具
     （design_check.py・harness_stats.py）と同じ場所にそろえる。golden は PNG を読むだけなので
     Flutter / RN どちらでも書き換えなしでそのまま使える
   - 実行結果の PNG は git 管理外にする（`.gitignore` に出力先を追記する）
   - 下の【案件ごとに転記】1件（golden の置き場所）だけ、プロジェクトに合わせて書き換える
 
-    python3 design/contact_sheet.py              全 golden を1枚にまとめる
-    python3 design/contact_sheet.py --changed    直前の実行との差分がある画像だけ集める
-    python3 design/contact_sheet.py --cols 6      列数を指定する（既定は自動）
+    python3 design/harness/tools/contact_sheet.py              全 golden を1枚にまとめる
+    python3 design/harness/tools/contact_sheet.py --changed    直前の実行との差分がある画像だけ集める
+    python3 design/harness/tools/contact_sheet.py --cols 6      列数を指定する（既定は自動）
 
 golden の枚数が増えると「生成した golden は必ず画像として開いて見る」が現実的でなくなる
 （一覧の見出し FSCK: `references/verification-phases.md` Phase 3 参照）。1枚にまとめて、

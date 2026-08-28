@@ -20,3 +20,19 @@ jobs:
         run: python3 attack/engine_attack_test.py
       - name: ツールの構文
         run: python3 -m py_compile engine/design_check.py tools/*.py shims/*.py
+
+      - name: 検査自身の self-test
+        run: python3 tools/ci_path_check.py --self-test
+
+      - name: 案内しているパスが実在するか
+        # 上流なので design/ は「取り込む側」のパス。除外して自分のパスだけ見る
+        run: python3 tools/ci_path_check.py --sources '**/*.py' '**/*.md' 'ci/*' --ignore 'design/' 'tools/ghost' 'tools/gone' 'tools/real'
+
+      - name: __pycache__ が追跡されていないこと
+        run: |
+          if git ls-files | grep -q '__pycache__'; then
+            echo ".pyc が追跡されています（取り込む側の pull が止まります）" >&2
+            git ls-files | grep '__pycache__' >&2
+            exit 1
+          fi
+          echo "OK: .pyc は追跡されていません" 

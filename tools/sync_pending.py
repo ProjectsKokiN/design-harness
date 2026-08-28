@@ -1,7 +1,8 @@
 """design/values/_pending.json を、いまの検査の状況に合わせて作り直す（テンプレート）。
 
 【テンプレートについて】aub-familywalk の実運用版のコピー（2026-08-28 回収）。
-declaredAt を日付に置き換えて <プロジェクト>/design/sync_pending.py に置く。
+**コピーせず submodule のものを直接呼ぶ**（2026-08-28 にコピー配布をやめた）。
+    python3 design/harness/tools/sync_pending.py
 検査ファイルの探索範囲（test/ 配下の *.dart）はスタックに合わせて変える。
 
 【_pending.json の位置づけ】着工の道具であってリリースの免罪符ではない。
@@ -22,7 +23,7 @@ import sys
 # submodule から直接呼べる（コピー不要。aub 第2便の要望3: tools がコピー配布だと
 # エンジンを一本化した理由と同じ乖離が tools で再発する）。
 #   python3 design/harness/tools/sync_pending.py            … cwd の design/values を見る
-#   python3 design/sync_pending.py                          … コピーして使う旧形式も動く
+#   python3 <どこか>/sync_pending.py --values <パス>        … 明示指定
 _ap = argparse.ArgumentParser(description="_pending.json を検査の現状から作り直す")
 _ap.add_argument("--values", type=pathlib.Path, default=None,
                  help="design/values の場所（既定: cwd/design/values、"
@@ -93,7 +94,7 @@ def main() -> int:
         'なぜ必要か': 'ゲートをキー単位にすると、記録を足した瞬間に落ちる。'
                       '「これから検査を書く」ことを明示的に宣言させ、'
                       '黙って素通りする状態を作らないためのリスト。',
-        'ルール': '検査を書いたら python3 design/sync_pending.py を回す。'
+        'ルール': '検査を書いたら python3 design/harness/tools/sync_pending.py を回す。'
                   '空になったら、このファイルごと消してよい。'
                   'ceiling は自動で下がる。手で上げない。',
         'declaredAt': date.today().isoformat(),
