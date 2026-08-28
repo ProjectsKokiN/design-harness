@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""Figma の指定のうち Flutter で再現できないものと、判定の網羅を検査する。
+
+【この検査が捕まえるもの】負の spread・内側の影・PROGRESSIVE・行間・
+未知のウェイトなど、**値が一致しても描画で別物になる指定**（production-gate 条件5）。
+あわせて「Figma の全セットに判定があるか」（網羅）と「Figma に無い記録」（棚卸し）。
+【捕まえないもの】値そのものの一致（数値照合の領域）と、判定の中身の正しさ
+（判定は人が実測して書く。ここは判定の有無と形しか見ない）。
+【確かめた方法】414 で穴10件を検出して exit 1（2026-08-28）。
+
+Figma を読んだあと（ハーネスを同期したあと）に必ず走らせる。
+判定の根拠は FLUTTER_GAPS.md を参照。
+
+    python3 414/check_flutter_gaps.py
+
+警告があれば終了コード 1 を返す。
+"""
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+# config JSON（--config）から埋める。414 直下にあった実装を 2026-08-28 に
+# design-harness へ回収して案件非依存にしたもの（planttalk 第2便の提案1:
+# 「production-gate の条件5を 414 以外のどの案件も測れない」）。
+COMPONENTS = None       # 判定記録（components/components.json）
+TOKENS = None           # tokens.json
+FIGMA_COMPONENTS = None # 全量書き出し（figma/components.json）
+IGNORED_TOKENS = set()  # UI に出ない表記用トークン
+RENAMED = {}            # 書き出し側の名前 → 判定記録側の名前
+
+# Flutter が素直に出せるフォントウェイト
+SUPPORTED_WEIGHTS = {100, 200, 300, 400, 500, 600, 700, 800, 900}
+
+
+def check_effect_styles(doc):
+    """エフェクトスタイルの中身を見る。"""
+    out = []
+    for s in doc.get("effectStyles", []):
+        name = s.get("name", "?")
+        for e in s.get("effects", []):
+            m = re.search(r"spread(-?\d+)", e.replace(" ", ""))
+            if m and int(m.group(1)) < 0:
+                out.append((
+                    "×", f"EffectStyle {name}",
+                    f"負の spread（{m.group(1)}）。Flutter は影の矩形が縮んで、"
+                    f"要素の高さが 2×|spread| を下回ると影が要素の下に隠れて見えなくなる。"
+                    f"blur か色の不透明度で締めること"))
+            if "INNER_SHADOW" in e:
+                m = re.search(r"spread(\d+)", e.replace(" ", ""))
+                if m and int(m.group(1)) > 0:
+                    out.append((
+                        "×", f"EffectStyle {name}",
+                        "内側の影の spread は自前実装（inner_shadow.dart）が未対応"))
+                out.append((
+                    "△", f"EffectStyle {name}",
+                    "内側の影は自前描画。小さい要素で Figma と乖離しやすい"))
+            if "PROGRESSIVE" in e:
+                out.append((
+                    "△", f"EffectStyle {name}",
+                    "プログレッシブなぼかしは Flutter に機能が無い。"
+                    "一様ぼかし＋マスクの近似になる"))
+            if "BACKGROUND_BLUR" in e and "INNER_SHADOW" in " ".join(s.get("effects", [])):
+                out.append((
+                    "△", f"EffectStyle {name}",
+                    "背景ぼかしと内側の影が同居。Flutter では別ウィジェットに分かれ、"
+                    "合成が厳密には一致しない"))
+    return out
+
+
+def check_components(doc):
+    """コンポーネントが使っている指定を見る。"""
+    out = []
+    for c in doc.get("componentSets", []):
+        name = c.get("name", "?")
+        tokens = " | ".join(c.get("tokens", []))
+        if "Stroke/Glass" in tokens:
+            out.append((
+                "○", name,
+                "グラデーションの線。Flutter で再現可（GlassOutlinePainter）。"
+                "ただし Variables に載らずカラースタイルでしか持てないため同期漏れに注意"))
+        m = re.search(r"Weight/(\w+)", tokens)
+        if m:
+            w = {"S": 400, "M": 600}.get(m.group(1))
+            if w is None:
+                out.append(("×", name,
+                            f"未知のフォントウェイト Weight/{m.group(1)}。"
+                            f"Flutter は標準ウェイトに丸めるため fontVariations が要る"))
+    return out
+
+
+def check_tokens(doc):
+    """トークン体系から外れた名前を拾う。"""
+    out = []
+    text = json.dumps(doc, ensure_ascii=False)
+    for name in re.findall(r'"([A-Za-z][A-Za-z0-9 ]*\d)"\s*:\s*\{', text):
+        if name in IGNORED_TOKENS:
+            continue
+        if "/" not in name and re.match(r"^[A-Z][a-z]+ \d+$", name):
+            out.append(("△", f"Token {name}",
+                        "414 のトークン命名（役割ベース・スラッシュ区切り）から外れている。"
+                        "外部ライブラリの残りでないか確認"))
+    return out
+
+
+def check_coverage(doc):
+    """判定の網羅を見る（照合の穴を数える）。
+
+    figma/components.json（Figma の現状の全量書き出し）にある component set の
+    それぞれに、components/components.json の flutter 判定があるかを突き合わせる。
+    無いセットが1つでもあれば ×。
+
+    なぜ要るか: 2026-08-28 の監査で、Figma の 26 セット中 10 セットに判定が無いのに
+    このスクリプトが「× 0件」・終了コード 0 で通っていた。判定済みのものだけを見て
+    全部を見た顔をする——generation-rules-flutter.md が禁じる「照合の穴を数えない」
+    そのものだった。
+    """
+    out = []
+    if not FIGMA_COMPONENTS.exists():
+        out.append(("×", "figma/components.json",
+                    "全量書き出しが無い。判定の網羅を確かめられない"))
+        return out
+
+    figma_doc = json.loads(FIGMA_COMPONENTS.read_text())
+    figma_sets = figma_doc.get("componentSets", {})
+    figma_names = set(figma_sets.keys() if isinstance(figma_sets, dict)
+                      else (c.get("name") for c in figma_sets))
+
+    rated = set()
+    for c in doc.get("componentSets", []):
+        if isinstance(c, dict) and "flutter" in c:
+            rated.add(c.get("name"))
+
+    missing = sorted(n for n in figma_names
+                     if n and RENAMED.get(n, n) not in rated)
+    for n in missing:
+        out.append(("×", n,
+                    "Figma の全量書き出しに存在するが、Flutter 再現性の判定が無い。"
+                    "components/components.json に実測して flutter フィールドを足すこと"))
+
+    # 「Figma に見当たらない記録」は再現性の△とは別の軸で数える
+    # （414 要望8・2026-08-28: 同じ△に入れると「近似が20件」とも
+    # 「棚卸しが11件」とも読めず、改善と片付けの区別がつかなかった）。
+    stale = sorted(n for c in doc.get("componentSets", [])
+                   if isinstance(c, dict) and (n := c.get("name"))
+                   and n not in figma_names and n not in RENAMED.values())
+    if stale:
+        print(f"記録の整合: Figma に無い記録 {len(stale)} 件"
+              f"（棚卸し待ち・各行の note に対応先を書くこと）")
+        for n in stale:
+            print(f"  - {n}")
+
+    total = len(figma_names)
+    covered = total - len(missing)
+    print(f"判定の網羅: Figma の {total} セット中 {covered} セットに判定あり"
+          f"（穴 {len(missing)}）")
+    return out
+
+
+def load_config():
+    global COMPONENTS, TOKENS, FIGMA_COMPONENTS, IGNORED_TOKENS, RENAMED
+    ap = argparse.ArgumentParser(
+        description="Figma の指定のうちスタックで再現できないものと、判定の網羅を見る")
+    ap.add_argument("--config", type=Path, required=True,
+                    help="render-gaps.json（components / tokens / figma_components 等）")
+    args = ap.parse_args()
+    try:
+        conf = json.loads(args.config.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"設定が読めません: {args.config}: {e}", file=sys.stderr)
+        sys.exit(2)
+    base = args.config.resolve().parent
+    COMPONENTS = base / conf["components"]
+    TOKENS = base / conf["tokens"]
+    FIGMA_COMPONENTS = base / conf["figma_components"]
+    IGNORED_TOKENS = set(conf.get("ignored_tokens", []))
+    RENAMED = dict(conf.get("renamed", {}))
+
+
+def main():
+    load_config()
+    findings = []
+    if COMPONENTS.exists():
+        doc = json.loads(COMPONENTS.read_text())
+        findings += check_effect_styles(doc)
+        findings += check_components(doc)
+        findings += check_coverage(doc)
+    if TOKENS.exists():
+        findings += check_tokens(json.loads(TOKENS.read_text()))
+
+    # 同じ指摘の重複をまとめる
+    seen, uniq = set(), []
+    for f in findings:
+        if f not in seen:
+            seen.add(f)
+            uniq.append(f)
+
+    blockers = [f for f in uniq if f[0] == "×"]
+    for mark in ("×", "△", "○"):
+        rows = [f for f in uniq if f[0] == mark]
+        if not rows:
+            continue
+        label = {"×": "再現できない・別物になる", "△": "近似になる",
+                 "○": "再現できる（注意点あり）"}[mark]
+        print(f"\n{mark} {label}")
+        for _, where, why in rows:
+            print(f"  - {where}\n      {why}")
+
+    print(f"\n判定: × {len(blockers)} 件 / "
+          f"△ {len([f for f in uniq if f[0]=='△'])} 件 / "
+          f"○ {len([f for f in uniq if f[0]=='○'])} 件")
+    print("詳細は 414/FLUTTER_GAPS.md を参照してください。")
+    return 1 if blockers else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

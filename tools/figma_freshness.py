@@ -107,15 +107,21 @@ def read_sets() -> dict:
     found: dict[str, str] = {}
     dup: list[str] = []
 
-    def walk(n, names):
-        if n['type'] == 'COMPONENT_SET':
+    def walk(n, names, in_set=False):
+        # 単体の COMPONENT も読む（planttalk 2026-08-28: COMPONENT_SET しか
+        # 読まなかったため、Header / Footer など「全画面に出るのに単体」の部品が
+        # 鮮度の対象外だった。414 に単体が0件だったため露出していなかった）。
+        # COMPONENT_SET の子（バリアント）は親の指紋に含まれるので数えない。
+        if n['type'] == 'COMPONENT_SET' or (n['type'] == 'COMPONENT' and not in_set):
             name = n['name']
             if name in found:
                 dup.append(name)
             found[name] = node_digest(n, names)
-            return
+            if n['type'] == 'COMPONENT_SET':
+                return
+            in_set = True   # COMPONENT の中に COMPONENT は無いが、念のため
         for c in (n.get('children') or []):
-            walk(c, names)
+            walk(c, names, in_set or n['type'] == 'COMPONENT_SET')
 
     # **id → 名前の対応表。** スタイル名は REST の応答に入っている。
     # 変数名はプラグインで取った対応表（_varmap.json）から引く。

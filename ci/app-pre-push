@@ -1,0 +1,34 @@
+#!/bin/sh
+# アプリ案件向けの pre-push 雛形（aub-familywalk の実運用から 2026-08-28 に回収）。
+#
+# 導入:
+#   cp design/harness/ci/app-pre-push .githooks/pre-push
+#   chmod +x .githooks/pre-push
+#   git config core.hooksPath .githooks
+#
+# production-gate: 「CI が無い段階の案件は、pre-push から verify.sh を呼ぶ」。
+# GitHub Actions を持つ案件は ci/ の workflow を使い、これは補助にする。
+
+set -u
+
+# 1) Mac から main への直 push を止める（PC の役割分担。Mac は PR 経由）
+if [ "$(uname)" = "Darwin" ]; then
+  while read -r _local_ref _local_sha remote_ref _remote_sha; do
+    case "$remote_ref" in
+      refs/heads/main|refs/heads/master)
+        echo "Mac から main への直 push は止めています（PR を使ってください）。" >&2
+        exit 1 ;;
+    esac
+  done
+fi
+
+# 2) 統合検査（無い場合はその旨を言って落とす。黙って通さない）
+if [ -x design/verify.sh ] || [ -f design/verify.sh ]; then
+  sh design/verify.sh || exit 1
+else
+  echo "design/verify.sh がありません。検査せずに push はしません。" >&2
+  exit 1
+fi
+
+# 3) ピンの遅れを知らせる（落とさない）
+python3 design/harness/tools/pin_check.py 2>/dev/null || true

@@ -23,23 +23,40 @@ VALUES = ROOT / 'design' / 'values'
 
 
 def main() -> int:
+    # 「status を持つのは entries だけ」と決めて、そこだけを見る
+    # （flash-compose 2026-08-28: values のトップキーは案件で違い、
+    # 文字列の配列を持つキー（notSurveyed 等）で AttributeError になった。
+    # 前提が崩れたときは読める失敗をする）。
     measured = []
+    no_assert = []
     for f in sorted(VALUES.glob('*.json')):
         if f.name.startswith('_'):
             continue
         doc = json.loads(f.read_text())
-        for key, items in doc.items():
-            if key == '$meta':
+        entries = doc.get('entries')
+        if entries is None:
+            continue                      # entries を持たないファイルは対象外
+        if not isinstance(entries, list) or any(
+                not isinstance(e, dict) for e in entries):
+            print(f'この案件の values は形が違います: {f.name} の entries が'
+                  f'記録の配列ではありません。', file=sys.stderr)
+            return 2
+        for e in entries:
+            if e.get('status') != 'measured':
                 continue
-            measured += [e['key'] for e in items if e.get('status') == 'measured']
+            key = e.get('key')
+            if not key:
+                continue
+            measured.append(key)
+            # 「検査があるか」は記録側の assert フラグで判定する
+            # （flash-compose 2026-08-28: 文字列一致は、対応表から動的に組む
+            # テストを数え落とし、コメントで触れただけのものを数え過ぎる。
+            # 「名前が出るか」と「値を照合しているか」は別）。
+            # assert: true の嘘は values ゲートが見張る（照合が無ければ落ちる）。
+            if not e.get('assert'):
+                no_assert.append(key)
 
-    source = ''
-    for f in sorted((ROOT / 'test').rglob('*.dart')):
-        if f.name == 'values_gate_test.dart':
-            continue
-        source += f.read_text()
-
-    uncovered = sorted(k for k in measured if k not in source)
+    uncovered = sorted(no_assert)
     covered = len(measured) - len(uncovered)
 
     out = VALUES / '_pending.json'

@@ -41,13 +41,18 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Windows の cp932 端末でも UnicodeEncodeError で検査ごと落ちないようにする
-# （flash-compose 2026-08-24。検査が落ちると「違反が無い」ように見える）
+# Windows の cp932 端末でも、UnicodeEncodeError で検査ごと落ちない・
+# 日本語が「?」に潰れない、の両方を満たす（flash-compose 2026-08-24 ＋
+# Windows 受け入れテスト 2026-08-28: errors=replace だけでは日本語出力が化け、
+# PYTHONUTF8=1 を毎回付ける前提は配布できない）
 for _stream in (sys.stdout, sys.stderr):
     try:
-        _stream.reconfigure(errors="replace")
-    except (AttributeError, ValueError):
-        pass
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        try:
+            _stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
 
 IGNORE_MARK = "harness-ignore"
 
@@ -133,10 +138,36 @@ def load_rules(rules_path):
     merged["rules"].extend(child.get("rules", []))
 
     # 案件側の追加設定はそのまま通す
-    for key in ("ignore_reason_min", "project_root"):
+    for key in ("ignore_reason_min", "project_root", "expected_targets"):
         if key in child:
             merged[key] = child[key]
     return merged
+
+
+KNOWN_RULE_TYPES = {"require-near"}
+
+
+def unrunnable_rules(config):
+    """実行できない形のルールを返す（aub 2026-08-28・最優先の指摘）。
+
+    「12 → 13 とルール件数だけ増え、検査は1つも増えていない」を止める。
+    require-semantics-on-tappable が実装の無いまま rules.json に載って
+    一度も走らなかった病（幽霊ルール）と同じもので、統合で1件は動き出したが、
+    type の綴りを1字間違えるだけで再発する状態だった。
+    """
+    out = []
+    for rule in config.get("rules", []):
+        rid = rule.get("id", "unknown")
+        rtype = rule.get("type")
+        if rtype is not None and rtype not in KNOWN_RULE_TYPES:
+            out.append(f"  {rid}: type '{rtype}' をエンジンは知りません"
+                       f"（知っているのは {sorted(KNOWN_RULE_TYPES)}）")
+        elif rtype == "require-near":
+            if not rule.get("trigger") or not rule.get("require"):
+                out.append(f"  {rid}: require-near に trigger / require がありません")
+        elif not rule.get("pattern"):
+            out.append(f"  {rid}: pattern がありません（このルールは一度も走りません）")
+    return out
 
 
 def broken_patterns(config):
@@ -355,7 +386,7 @@ def scan(content, config, path, project_root, soften=False):
 
         pattern = rule.get("pattern")
         if not pattern:
-            continue
+            continue  # unrunnable_rules() が読み込み時に落とすため、ここには来ない
         if rule.get("multiline"):
             try:
                 rx = re.compile(pattern, re.DOTALL)
@@ -386,13 +417,23 @@ def target_suffixes(config):
     return exts
 
 
-def is_target(path, config):
-    """対象拡張子・除外パス・除外ファイルの判定。"""
+def is_target(path, config, project_root):
+    """対象拡張子・除外パス・除外ファイルの判定。
+
+    除外は **project_root からの相対パス**に当てる（qnd 2026-08-28:
+    絶対パスに当てていたため、"harness" が site/design/harness/ 配下の
+    実ファイル19件まで食い、"archive" がクローン先のフォルダ名にまで
+    当たって対象0件になった）。
+    """
     if path.suffix not in target_suffixes(config):
         return False
     if path.name in config.get("exclude_files", []):
         return False
-    posix = "/" + path.as_posix().strip("/") + "/"
+    try:
+        rel = path.resolve().relative_to(project_root).as_posix()
+    except ValueError:
+        rel = path.as_posix()
+    posix = "/" + rel.strip("/") + "/"
     return not any(
         "/" + excluded.strip("/") + "/" in posix
         for excluded in config.get("exclude_paths", [])
@@ -406,7 +447,7 @@ def scan_path(path, config, project_root, hooks):
     読めないファイルを黙って握りつぶさない（flash-compose 2026-08-24。
     権限や文字コードで読めないファイルが検査されず痕跡も残らなかった）。
     """
-    if not path.exists() or not path.is_file() or not is_target(path, config):
+    if not path.exists() or not path.is_file() or not is_target(path, config, project_root):
         return [], [], [], None
     try:
         content = path.read_text(encoding="utf-8")
@@ -463,6 +504,20 @@ def run_all(config, rules_path, project_root, hooks, log_path):
         warns_total.extend(warns)
         write_observations(log_path, obs)
 
+    expected = config.get("expected_targets")
+    if isinstance(expected, int) and scanned < expected:
+        print(f"デザインハーネス異常: 中身を読んだファイルが {scanned} 件で、"
+              f"宣言（expected_targets: {expected}）を下回りました。\n"
+              f"  除外の書き方などで検査対象が黙って減っています（qnd 2026-08-28:"
+              f" 除外1語で19ファイル減っても緑だった）。\n"
+              f"  意図した減少なら rules.json の expected_targets を下げてください"
+              f"（差分が git に残ります）。", file=sys.stderr)
+        return 2
+    if isinstance(expected, int) and scanned > expected:
+        print(f"デザインハーネス注意: 対象が {scanned} 件に増えています。"
+              f"rules.json の expected_targets（{expected}）を上げてください。",
+              file=sys.stderr)
+
     if scanned == 0:
         print("デザインハーネス異常: 中身を読んだファイルが 0 です。"
               "走査が空振りしています（対象外 "
@@ -510,7 +565,7 @@ def run_single(file_path, config, rules_path, project_root, hooks, log_path):
         hooks["notice"](path, project_root)
 
     scanning = LOG_SOURCE == "scan"
-    if not is_target(path, config):
+    if not is_target(path, config, project_root):
         return SKIP_CODE_TARGET if scanning else 0
     if not path.exists():
         # hook では消したファイルで来ることがあるので静かに通す。
@@ -584,6 +639,13 @@ def main(argv=None, *, rules_path=None, hooks=None, log_path=None):
     if config is None:
         # fail-closed（テンプレ 2026-08-20 の是正。QnD 版は fail-open のままだった）
         return fail_config(rules_path)
+
+    unrunnable = unrunnable_rules(config)
+    if unrunnable:
+        print("デザインハーネス異常: 実行できない形のルールがあります。"
+              "件数に入るのに検査されないので、先に直してください。", file=sys.stderr)
+        print("\n".join(unrunnable), file=sys.stderr)
+        return 2
 
     broken = broken_patterns(config)
     if broken:

@@ -207,6 +207,39 @@ def main():
         expect_exit=2, expect_in=["一度も走らない"],
         label="--all: paths が全部潰されたルールで落ちる")
 
+    # --- 実行できないルール（aub 2026-08-28・幽霊ルールの病そのもの）---------
+    run({**RULES, "rules": RULES["rules"] + [
+            {"id": "ghost", "kind": "totally-unknown", "severity": "error"}]},
+        {"lib/a.dart": GOOD}, stdin=file_input("lib/a.dart"),
+        expect_exit=2, expect_in=["実行できない形のルール"],
+        label="実行できないルール（pattern も type も無い）で落ちる")
+    run({**RULES, "rules": RULES["rules"] + [
+            {"id": "typo", "type": "reqire-near", "severity": "error",
+             "trigger": "x", "require": "y"}]},
+        {"lib/a.dart": GOOD}, stdin=file_input("lib/a.dart"),
+        expect_exit=2, expect_in=["知りません"],
+        label="未知の type（綴りミス）で落ちる")
+
+    # --- exclude_paths は project_root からの相対（qnd 2026-08-28）----------
+    # クローン先のフォルダ名に "lib" が入っていても、対象が消えないこと
+    run({**RULES, "exclude_paths": ["design/"]},
+        {"lib/a.dart": BAD}, stdin=file_input("lib/a.dart"),
+        expect_exit=2,
+        label="除外はリポジトリ内の相対パスにだけ当たる")
+
+    # --- 対象数のラチェット（expected_targets。7例目の対策）------------------
+    run({**RULES, "expected_targets": 2},
+        {"lib/a.dart": GOOD, "lib/b.dart": GOOD}, args=["--all"], stdin="",
+        expect_exit=0, label="expected_targets: 宣言どおりで通る")
+    run({**RULES, "expected_targets": 2, "exclude_paths": ["lib/sub/"]},
+        {"lib/a.dart": GOOD, "lib/sub/b.dart": GOOD}, args=["--all"], stdin="",
+        expect_exit=2, expect_in=["下回りました"],
+        label="expected_targets: 除外で対象が減ったら落ちる")
+    run({**RULES, "expected_targets": 1},
+        {"lib/a.dart": GOOD, "lib/b.dart": GOOD}, args=["--all"], stdin="",
+        expect_exit=0, expect_in=["上げてください"],
+        label="expected_targets: 増えたら注意（落とさない）")
+
     # --- 発火ログ -----------------------------------------------------------
     # HARNESS_SOURCE=test では書かない（QnD: ログの77%がテストで埋まった）
     with tempfile.TemporaryDirectory() as td:
