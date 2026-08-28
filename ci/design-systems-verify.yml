@@ -1,0 +1,53 @@
+# デザインシステムの関門（2026-08-28 新設。414 の要望1）。
+#
+# それまで design-systems は関門 0 段で、check_flutter_gaps.py の穴 10 件が
+# 15 日間検知されなかった。ここが上流なので、無検査だと全アプリに波及する。
+#
+# デザインシステムのディレクトリ（414/ planttalk/ …）を走査し、
+# 検査スクリプトを持つものすべてに同じ検査をかける。
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: design-harness（検査エンジン）を取得
+        run: git clone --depth 1 https://github.com/ProjectsKokiN/design-harness /tmp/design-harness
+
+      - name: 各デザインシステムの検査
+        run: |
+          set -u
+          FAILED=0
+          RAN=0
+          for ds in */ ; do
+            ds="${ds%/}"
+            [ -f "$ds/tokens/tokens.json" ] || continue   # DS ディレクトリの目印
+            echo "=== $ds ==="
+            if [ -f "$ds/check_flutter_gaps.py" ]; then
+              python3 "$ds/check_flutter_gaps.py" || FAILED=1
+              RAN=$((RAN+1))
+            fi
+            if [ -f "$ds/check_contrast.py" ]; then
+              python3 "$ds/check_contrast.py" || FAILED=1
+              RAN=$((RAN+1))
+            fi
+          done
+          # 空振り検知: 1本も走っていないのに緑、を作らない
+          if [ "$RAN" -eq 0 ]; then
+            echo "検査が1本も走っていません（DS ディレクトリの検出に失敗）"
+            exit 1
+          fi
+          exit $FAILED
+
+      - name: 鮮度差（下流が上流より古くないか）
+        run: python3 /tmp/design-harness/tools/staleness_check.py --config staleness.json

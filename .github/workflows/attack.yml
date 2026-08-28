@@ -1,0 +1,22 @@
+# エンジンを変えたら妨害テストが全部通ることを機械で確かめる。
+# 「通ることの確認だけでは、何も見ていない可能性を排除できない」ため、
+# このリポジトリの検査は最初から全件が妨害ケース（落ちるべきものが落ちるか）。
+name: attack
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  attack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: エンジンの妨害テスト
+        run: python3 attack/engine_attack_test.py
+      - name: ツールの構文
+        run: python3 -m py_compile engine/design_check.py tools/*.py shims/*.py
