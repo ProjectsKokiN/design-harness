@@ -22,7 +22,9 @@ jobs:
         run: python3 -m py_compile engine/design_check.py tools/*.py shims/*.py
 
       - name: 検査自身の self-test
-        run: python3 tools/ci_path_check.py --self-test
+        run: |
+          python3 tools/ci_path_check.py --self-test
+          python3 tools/impl_coverage_check.py --self-test
 
       - name: 案内しているパスが実在するか
         # 上流なので design/ は「取り込む側」のパス。除外して自分のパスだけ見る
