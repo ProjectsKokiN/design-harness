@@ -21,6 +21,9 @@
 | **`tools/seed_check.py`** | **種まき欠陥テスト**: ルールが実際に発火するか（ラチェットは対象数、これは発火件数） |
 | **`seeds/<stack>/`** | 種のひな形（わざと違反させたコード）。案件の `design/seeds/` へコピーする |
 | **`tools/gap_report.py`** | **検査が見なかったものを機械が出す**（完了レポートの「限界」を自己申告にしない） |
+| **`tools/expectation_source_check.py`** | 照合テストの期待値が書き出し由来か（手書きの期待値を禁じる） |
+| **`tools/exporter_check.py`** | 書き出しを作った器が保存され、指紋が一致するか |
+| **`tools/tree_test_check.py`** | 条件9 の網羅（状態・スロットを持つセットにテストがあるか） |
 | **`tools/stage_check.py`** | **verify.sh の各段が「落ちるところを見た」道具か**（self-test の有無と結果） |
 | **`tools/fingerprint_parity.py`** | 指紋が JS と Python で同じ値になるか（非 ASCII の固定具で照合） |
 | **`fingerprint/text_digest.{py,mjs}`** | テキスト指紋の正本（両言語）。**案件が自前で書かない** |

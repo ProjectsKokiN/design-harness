@@ -75,6 +75,12 @@ step "ルールの生成物（段の値が tokens と一致するか）" \
 
 # 見なかったものを機械が出す。完了レポートの「残っている限界」はこの出力を貼る
 # （AI の自己申告にしない。走査が空振りしていれば exit 2 で落ちる）
+step "期待値の出どころ（照合テストが書き出しを読んでいるか）" \
+  "$PY" "$HARNESS/tools/expectation_source_check.py" --config design/expectations.json
+step "書き出しの器（保存されていて指紋が一致するか）" \
+  "$PY" "$HARNESS/tools/exporter_check.py" --config design/exporters.json
+step "条件9 の網羅（状態・スロットを持つセットにテストがあるか）" \
+  "$PY" "$HARNESS/tools/tree_test_check.py" --config design/tree-tests.json
 step "指紋の一致（JS と Python で同じ値になるか）" \
   "$PY" "$HARNESS/tools/fingerprint_parity.py"
 step "段の健全性（落ちるところを見た道具か）" \
