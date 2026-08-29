@@ -20,6 +20,12 @@ from pathlib import Path
 
 ENGINE = Path(__file__).resolve().parent.parent / "engine" / "design_check.py"
 
+#: extends の合成は関数を直に呼んで確かめる（子プロセス越しでは見えないため）
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location("_engine", ENGINE)
+engine = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(engine)
+
 PASSED, FAILED = [], []
 
 
@@ -283,6 +289,47 @@ def main():
             PASSED.append("発火ログ: hook では書く")
         else:
             FAILED.append(("発火ログ", ["hook で書かれていない"], ""))
+
+    # --- extends の鎖（2026-08-29。A層→B層→C層の3段を組んだ時点で発覚）--------
+    # それまで extends は1段しか読まず、親の extends が黙って無視されていた。
+    # 414 を3層に組んだ結果、A層の no-raw-color / no-raw-fontsize が消えた。
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        (d / "a.json").write_text(json.dumps({
+            "file_extensions": [".dart"],
+            "rules": [{"id": "from-A", "severity": "error", "pattern": "AAA"}]}),
+            encoding="utf-8")
+        (d / "b.json").write_text(json.dumps({
+            "extends": ["a.json"],
+            "rules": [{"id": "from-B", "severity": "error", "pattern": "BBB"}]}),
+            encoding="utf-8")
+        (d / "c.json").write_text(json.dumps({
+            "extends": ["b.json"],
+            "rules": [{"id": "from-C", "severity": "error", "pattern": "CCC"}]}),
+            encoding="utf-8")
+        cfg = engine.load_rules(d / "c.json")
+        ids = {r["id"] for r in (cfg or {}).get("rules", [])}
+        if ids == {"from-A", "from-B", "from-C"}:
+            PASSED.append("extends: 3段の鎖を最後までたどる")
+        else:
+            FAILED.append(("extends の鎖", [f"孫が落ちた: {sorted(ids)}"], ""))
+
+        # 循環しても止まる（無限再帰で落ちない）
+        (d / "x.json").write_text(json.dumps({
+            "extends": ["y.json"], "rules": [{"id": "X", "pattern": "x"}]}),
+            encoding="utf-8")
+        (d / "y.json").write_text(json.dumps({
+            "extends": ["x.json"], "rules": [{"id": "Y", "pattern": "y"}]}),
+            encoding="utf-8")
+        try:
+            cfg = engine.load_rules(d / "x.json")
+            got = {r["id"] for r in (cfg or {}).get("rules", [])}
+            if got <= {"X", "Y"}:
+                PASSED.append("extends: 循環しても止まる")
+            else:
+                FAILED.append(("extends の循環", [f"想定外の結果: {sorted(got)}"], ""))
+        except RecursionError:
+            FAILED.append(("extends の循環", ["無限再帰で落ちた"], ""))
 
     # --- 結果 ---------------------------------------------------------------
     print(f"妨害テスト: {len(PASSED)} 件 通過 / {len(FAILED)} 件 失敗")

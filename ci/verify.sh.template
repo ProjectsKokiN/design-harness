@@ -53,16 +53,23 @@ step "鮮度差（書き出し → 生成物・記録）" \
   "$PY" "$HARNESS/tools/staleness_check.py" --config staleness.json
 step "ページの範囲（参照してよいページか）" \
   "$PY" "$HARNESS/tools/page_scope_check.py" --config design/figma/page-scope.json
+step "種まき（ルールが実際に発火するか）" \
+  "$PY" "$HARNESS/tools/seed_check.py"
+step "ルールの生成物（段の値が tokens と一致するか）" \
+  "$PY" "$HARNESS/tools/gen_rules.py" --config {{<DS>/rules/gen-rules.json}} --check
 
-# Figma 本体との鮮度。FIGMA_TOKEN が無ければ**落とす**（素通りさせない。
-# aub で「無いと selftest だけ走って鮮度は見ていない」がまかり通った）
-step "鮮度（Figma 本体 → 書き出し）" bash -c '
-  if [ -z "${FIGMA_TOKEN:-}" ]; then
-    echo "FIGMA_TOKEN がありません。鮮度を確認せずに通すことはしません。" >&2
-    echo "  source ~/.claude/.env を実行してから再実行してください。" >&2
-    exit 1
-  fi
-  '"$PY"' design/figma_freshness.py'
+# Figma 本体との鮮度は **必須段から外した**（2026-08-29 ユーザー判断）。
+#
+#   得るもの: 「書き出しが Figma より古い」の検出
+#   払うもの: 関門がネットワークと FIGMA_TOKEN に依存する（必須段でここだけ）
+#
+# 1人のデザイナーが自分の Figma を持つ構成では、更新はユーザーが伝える。
+# その1件のために関門の性質（ローカル完結・秘密情報なし）を変える価値は無い、
+# という判断。**書き出し → 生成物の鮮度差（上の staleness_check）は必須のまま**で、
+# こちらはネットワーク不要。別物なので混同しない。
+#
+# ユーザーが「Figma を更新した」と言ったとき、実装の前に手で回す:
+#   source ~/.claude/.env && python3 design/figma_freshness.py
 
 # --- 案件固有の段（{{ }} を具体化して足す）----------------------------------
 # step "静的解析"        {{flutter analyze / npx tsc --noEmit}}

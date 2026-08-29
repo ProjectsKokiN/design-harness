@@ -96,11 +96,16 @@ def find_project_root(rules_path, config):
     return rules_path.resolve().parent.parent
 
 
-def load_rules(rules_path):
+def load_rules(rules_path, _seen=None):
     """rules.json を読み、extends を解決して1つの設定に合成する。
 
     合成の規則: extends（親）を先に読み、rules は 親→子 の順に連結する。
     file_extensions / exclude_paths / exclude_files は子に定義があれば子を使う。
+
+    **extends は再帰的にたどる**（2026-08-29 に修正。それまで1段しか読まず、
+    親の extends が黙って無視されていた——A層（スタック共通）→ B層（tokens から
+    生成）→ C層（DS の命名）→ 案件、という鎖を組んだ時点で発覚し、A層の
+    no-raw-color / no-raw-fontsize が消えた）。循環と深すぎる鎖は打ち切る。
     """
     if not rules_path.exists():
         return None
@@ -108,6 +113,21 @@ def load_rules(rules_path):
         child = json.loads(rules_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+
+    if _seen is None:
+        _seen = set()
+    here = rules_path.resolve()
+    if here in _seen:
+        print(f"デザインハーネス注意: extends が循環しています: {here}\n"
+              f"  この輪をたどるのをやめます。", file=sys.stderr)
+        return {"file_extensions": [], "exclude_paths": [],
+                "exclude_files": [], "rules": []}
+    _seen = _seen | {here}
+    if len(_seen) > MAX_EXTENDS_DEPTH:
+        print(f"デザインハーネス異常: extends の鎖が {MAX_EXTENDS_DEPTH} 段を"
+              f"超えました: {here}", file=sys.stderr)
+        return {"file_extensions": [], "exclude_paths": [],
+                "exclude_files": [], "rules": []}
 
     merged = {"file_extensions": [], "exclude_paths": [],
               "exclude_files": [], "rules": []}
@@ -121,9 +141,8 @@ def load_rules(rules_path):
                 file=sys.stderr,
             )
             continue
-        try:
-            parent = json.loads(parent_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        parent = load_rules(parent_path, _seen)   # 再帰: 親の extends もたどる
+        if parent is None:
             print(f"デザインハーネス注意: extends の読み込みに失敗: {parent_path}",
                   file=sys.stderr)
             continue
@@ -144,6 +163,9 @@ def load_rules(rules_path):
             merged[key] = child[key]
     return merged
 
+
+#: extends の鎖の上限（A層→B層→C層→案件で4段。余裕をみて8）
+MAX_EXTENDS_DEPTH = 8
 
 KNOWN_RULE_TYPES = {"require-near"}
 

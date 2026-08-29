@@ -1,0 +1,11 @@
+{
+  "$これは何": "各ルールが種に対して何件発火するはずかの宣言。0 になったら、そのルールは死んでいます。",
+  "$注意": "\"*\": true は「rules に載っている全ルールに種が要る」という宣言。案件固有のルールに種を書けるまでは外してください。",
+  "no-raw-color": 1,
+  "no-raw-fontsize": 1,
+  "no-offscale-radius": 1,
+  "no-offscale-fontweight": 1,
+  "no-raw-edgeinsets": 1,
+  "no-raw-zero-spacing": 1,
+  "no-direct-generated-import": 1
+}

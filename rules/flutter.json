@@ -1,0 +1,53 @@
+{
+  "$meta": {
+    "layer": "A: スタック共通",
+    "なぜここにあるか": "デザインシステムの値に依存しない禁止（生値の直書き）は、どのデザインシステムでも同じ。案件ごと・DS ごとに手で写すと、直しが他へ届かない（engine・DESIGN.md と同じ病）。2026-08-29 に flash-compose の実績あるルールを引き上げた。",
+    "継承の鎖": "design-harness/rules/<stack>.json ← <DS>/rules/<stack>.generated.json（tokens から生成）← <DS>/rules/<stack>.json（命名・セマンティック規約）← <案件>/design/rules.json",
+    "ここに置かないもの": "段の値が入るもの（角丸・ウェイトのスケール）は gen_rules.py が生成する。命名やセマンティックの用途規約は DS 依存なので DS 側に置く。"
+  },
+  "file_extensions": [".dart"],
+  "exclude_paths": ["build/", ".dart_tool/", "test/golden/"],
+  "exclude_files": [".g.dart", ".freezed.dart"],
+  "rules": [
+    {
+      "id": "no-raw-color",
+      "severity": "error",
+      "pattern": "Color\\(0x[0-9A-Fa-f]{8}\\)|Colors\\.(?!transparent\\b)[a-z]",
+      "forbidden": "色を生の値（Color(0x…) / Colors.*）で書くこと",
+      "instead": "セマンティックトークンを使う。必要な色が無ければ実装せず token-missing で報告する（近い値で代用しない）"
+    },
+    {
+      "id": "no-raw-fontsize",
+      "severity": "error",
+      "pattern": "fontSize:\\s*[0-9]",
+      "forbidden": "fontSize に数値を直書きすること",
+      "instead": "タイポグラフィのスタイルを使う。スタイルが無ければ token-missing で報告する",
+      "note": "定数経由（fontSize: kBodySize）は正規表現では拾えない。AST 化の候補（2026-08-29 の実測では flash-compose 3件・aub 0件）"
+    },
+    {
+      "id": "no-raw-edgeinsets",
+      "severity": "warn",
+      "paths": ["lib/ui/"],
+      "pattern": "EdgeInsets\\.(?:all|symmetric|only|fromLTRB)\\([^)]*\\b[1-9][0-9]*",
+      "forbidden": "EdgeInsets に余白の数値を直書きすること",
+      "instead": "余白のトークンを使う。スケールに無い値が本当に必要なら、理由コメント（Figma の実測根拠）と harness-ignore を添える",
+      "note": "flash-compose で 2026-08-20 に warn で段階導入し、実績が出たので 2026-08-29 に共通へ引き上げた。**値がスケールに乗っていても違反**（例: Gap.S が 16 のときの EdgeInsets.all(16)）。値が正しいので動作は壊れず、レビューでも気付かないが、Figma で 16→14 に変えたときそこだけ動かない。幅・高さ（SizedBox 等）は同時に入れない: 実測31件のうち多くが正当（TextStyle の height・区切り線の 1）で、正規表現では見分けられない"
+    },
+    {
+      "id": "no-raw-zero-spacing",
+      "severity": "warn",
+      "paths": ["lib/ui/"],
+      "pattern": "EdgeInsets\\.zero|EdgeInsets\\.(?:all|symmetric|only|fromLTRB)\\([^)]*(?<![\\d.])0(?:\\.0)?(?![\\d.])[^)]*\\)|SizedBox\\(\\s*(?:height|width):\\s*(?<![\\d.])0(?:\\.0)?(?![\\d.])\\s*[,)]",
+      "forbidden": "余白・間隔のゼロを生の 0 や EdgeInsets.zero で書くこと",
+      "instead": "ゼロのトークン（none / zero）を使う。ゼロを意図して選んだのか書き忘れて 0 になったのかがコードから読めるようにするため（2026-08-13 ユーザー確定・D12）",
+      "note": "間隔ではない 0（Positioned で辺に付ける等）は対象外。誤検出したら理由コメント＋ harness-ignore"
+    },
+    {
+      "id": "no-direct-generated-import",
+      "severity": "error",
+      "pattern": "import\\s+['\"][^'\"]*\\.g\\.dart['\"]",
+      "forbidden": "生成物（*.g.dart）を画面から直接 import すること",
+      "instead": "公開している層（theme / tokens の入口）を経由する。生成物の形が変わったとき、画面が一斉に壊れる"
+    }
+  ]
+}
