@@ -26,6 +26,8 @@ jobs:
           python3 tools/ci_path_check.py --self-test
           python3 tools/impl_coverage_check.py --self-test
           python3 tools/page_scope_check.py --self-test
+          python3 tools/gen_input_check.py --self-test
+          python3 tools/coverage_check.py --self-test
 
       - name: 案内しているパスが実在するか
         # 上流なので design/ は「取り込む側」のパス。除外して自分のパスだけ見る

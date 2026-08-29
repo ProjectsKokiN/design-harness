@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# 統合検査の入口（テンプレート・2026-08-29 新設）。
+#
+# <プロジェクト>/design/verify.sh として置き、{{ }} を具体化する。
+# **必須段はこの並びから減らさない。** aub-familywalk で impl_coverage が
+# 未配線だったために、31部品中9部品の状態で「照合の穴 0」と報告された実害がある。
+# 規則や道具があっても、ここに1行足されていなければ素通りする。
+#
+# 使い方:
+#   bash design/verify.sh          全部
+#   bash design/verify.sh quick    禁止パターンだけ（保存時の hook と同じ検査を全量で）
+set -uo pipefail
+cd "$(dirname "$0")/.." || exit 1     # リポジトリのルートへ
+
+HARNESS="design/harness"
+PY="${PYTHON:-python3}"
+export PYTHONUTF8=1 PYTHONIOENCODING=utf-8
+FAILED=0
+
+step() {  # step <名前> <コマンド...>
+  echo "=== $1 ==="
+  shift
+  if "$@"; then echo "OK"; else echo "NG"; FAILED=1; fi
+  echo
+}
+
+if ! command -v "$PY" >/dev/null 2>&1; then
+  echo "python3 が見つかりません。検査を実行できないため中止します。" >&2
+  exit 1
+fi
+if [ ! -f "$HARNESS/engine/design_check.py" ]; then
+  echo "検査エンジンがありません（$HARNESS）。" >&2
+  echo "  git submodule update --init --recursive" >&2
+  exit 1
+fi
+
+TARGET="${1:-all}"
+
+# --- 必須段（減らさない）----------------------------------------------------
+step "禁止パターン（全量）"   "$PY" design/design_check.py --all
+[ "$TARGET" = "quick" ] && exit $FAILED
+
+step "実装網羅（条件7: Figma にあるものは全部実装）" \
+  "$PY" "$HARNESS/tools/impl_coverage_check.py" --config impl-coverage.json
+step "照合体制（条件2: 照合相手は書き出しだけ）" \
+  "$PY" "$HARNESS/tools/coverage_check.py" --config coverage.json
+step "生成器の入力（書き出し以外を読んでいないか）" \
+  "$PY" "$HARNESS/tools/gen_input_check.py"
+step "鮮度差（書き出し → 生成物・記録）" \
+  "$PY" "$HARNESS/tools/staleness_check.py" --config staleness.json
+step "ページの範囲（参照してよいページか）" \
+  "$PY" "$HARNESS/tools/page_scope_check.py" --config design/figma/page-scope.json
+
+# Figma 本体との鮮度。FIGMA_TOKEN が無ければ**落とす**（素通りさせない。
+# aub で「無いと selftest だけ走って鮮度は見ていない」がまかり通った）
+step "鮮度（Figma 本体 → 書き出し）" bash -c '
+  if [ -z "${FIGMA_TOKEN:-}" ]; then
+    echo "FIGMA_TOKEN がありません。鮮度を確認せずに通すことはしません。" >&2
+    echo "  source ~/.claude/.env を実行してから再実行してください。" >&2
+    exit 1
+  fi
+  '"$PY"' design/figma_freshness.py'
+
+# --- 案件固有の段（{{ }} を具体化して足す）----------------------------------
+# step "静的解析"        {{flutter analyze / npx tsc --noEmit}}
+# step "生成物のべき等"  "$PY" design/gen/verify.py
+# step "テスト"          {{flutter test / npm test}}
+
+if [ "$FAILED" -ne 0 ]; then
+  echo "検証に失敗しました。上の NG を直してから再実行してください。"
+  exit 1
+fi
+echo "すべての検証を通過しました。"

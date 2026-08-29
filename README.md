@@ -16,7 +16,10 @@
 | `shims/design_check_shim.py` | 案件側に置く薄い入口のテンプレート |
 | `tools/staleness_check.py` | 下流が上流より古くないか（鮮度差） |
 | `tools/figma_freshness.py` | 書き出しが Figma より古くないか（指紋） |
-| `tools/sync_pending.py` | 検査未着手の宣言＋ラチェット（増えたら落ちる） |
+| `tools/gen_input_check.py` | 生成器・照合の入力が書き出しだけか（記録層の廃止・2026-08-29） |
+| `tools/coverage_check.py` | 照合体制（条件2）: 照合相手が書き出しだけか |
+| `tools/sync_pending.py` | 【廃止予定】記録層とともに削除する（既存案件の移行後） |
+| `ci/verify.sh.template` | 統合検査の入口の雛形（必須段を減らさない） |
 | `tools/harness_stats.py` | 発火ログの集計（仕組改善層） |
 | `tools/contact_sheet.py` | golden を1枚のタイルに |
 | `tools/token_query.py` | 値からトークン名の逆引き |

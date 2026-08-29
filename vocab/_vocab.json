@@ -4,7 +4,8 @@
     "なぜ切り出したか": "status と blockedBy の一覧が _schema.md（人が読む表）と values_gate_test.dart（機械が読む定数）の2箇所にあり、片方だけ増やせる状態だった（2026-08-19 の監査で判明）。ここを正本にして、両方がここを読む",
     "検査": "test/ui/values_gate_test.dart が (1) 記録の値がこの一覧に収まっているか (2) _schema.md の表がこの一覧と一致しているか を見る",
     "updatedAt": "2026-08-28",
-    "回収の記録": "reference は aub-familywalk、resolved は flash-compose で生まれた区分を 2026-08-28 にテンプレへ回収した"
+    "回収の記録": "reference は aub-familywalk、resolved は flash-compose で生まれた区分を 2026-08-28 にテンプレへ回収した",
+    "記録層の廃止": "2026-08-29 に記録層（design/values/）を廃止。status の語彙は既存案件の移行が終わるまで残す。origin と blockedBy の考え方は figma/missing.json（例外の申告）と申し送りで生き続ける"
   },
   "status": {
     "measured": {

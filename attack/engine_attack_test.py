@@ -207,6 +207,22 @@ def main():
         expect_exit=2, expect_in=["一度も走らない"],
         label="--all: paths が全部潰されたルールで落ちる")
 
+    # --- harness-ignore の期限（aub 2026-08-29: 「あとで測る」が永久に有効だった）--
+    run(RULES, {"lib/a.dart":
+            "// 仮の値。expires=2020-01-01 に測る harness-ignore\n" + BAD},
+        stdin=file_input("lib/a.dart"),
+        expect_exit=2, expect_in=["期限の切れた"],
+        label="harness-ignore: 期限切れは無効")
+    run(RULES, {"lib/a.dart":
+            "// 仮の値。expires=2099-12-31 に測る harness-ignore\n" + BAD},
+        stdin=file_input("lib/a.dart"),
+        expect_exit=0, label="harness-ignore: 期限内は有効")
+    run({**RULES, "ignore_requires_expiry": True},
+        {"lib/a.dart": "// 理由はあるが期限なし harness-ignore\n" + BAD},
+        stdin=file_input("lib/a.dart"),
+        expect_exit=2, expect_in=["期限の無い"],
+        label="harness-ignore: 期限必須の案件では期限なしを拒否")
+
     # --- 実行できないルール（aub 2026-08-28・幽霊ルールの病そのもの）---------
     run({**RULES, "rules": RULES["rules"] + [
             {"id": "ghost", "kind": "totally-unknown", "severity": "error"}]},

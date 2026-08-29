@@ -138,7 +138,8 @@ def load_rules(rules_path):
     merged["rules"].extend(child.get("rules", []))
 
     # 案件側の追加設定はそのまま通す
-    for key in ("ignore_reason_min", "project_root", "expected_targets"):
+    for key in ("ignore_reason_min", "project_root", "expected_targets",
+                "ignore_requires_expiry"):
         if key in child:
             merged[key] = child[key]
     return merged
@@ -250,20 +251,37 @@ def ignore_reason(line):
     return text.replace(IGNORE_MARK, " ").strip(" \t*#-")
 
 
-def is_ignored(lines, lineno, reason_min):
+EXPIRES_RX = re.compile(r"(?:expires|期限)\s*[=:]\s*(\d{4}-\d{2}-\d{2})")
+
+
+def is_ignored(lines, lineno, reason_min, require_expiry=False):
     """該当行または直前の行に harness-ignore があるか（lineno は1始まり）。
 
-    戻り値は (除外するか, 理由なしで拒否したか)。
-    reason_min > 0 の案件では、理由がその長さに満たない除外を認めない。
+    戻り値は (除外するか, 拒否の種類)。拒否の種類:
+      None = 拒否なし / "no_reason" = 理由不足 / "expired" = 期限切れ /
+      "no_expiry" = 期限なし（require_expiry の案件のみ）
+
+    期限（2026-08-29・aub の実害から）: `album.goal.height = 96` が
+    harness-ignore で検査から外され、「あとで測る」のまま放置された。
+    測れば分かる数（44 + 51.6）だった。**「あとで」が永久に有効な状態をやめる。**
+    理由に `expires=YYYY-MM-DD` を書くと、その日を過ぎた除外は無効になる。
+    config の `ignore_requires_expiry: true` で期限を必須にできる。
     """
     for n in (lineno, lineno - 1):
         if 1 <= n <= len(lines) and IGNORE_MARK in lines[n - 1]:
-            if reason_min <= 0:
-                return True, False
-            if len(ignore_reason(lines[n - 1])) >= reason_min:
-                return True, False
-            return False, True
-    return False, False
+            line = lines[n - 1]
+            reason = ignore_reason(line)
+            if reason_min > 0 and len(reason) < reason_min:
+                return False, "no_reason"
+            m = EXPIRES_RX.search(line)
+            if m:
+                from datetime import date
+                if date.fromisoformat(m.group(1)) < date.today():
+                    return False, "expired"
+            elif require_expiry:
+                return False, "no_expiry"
+            return True, None
+    return False, None
 
 
 def ignored_rule_ids(content):
@@ -308,6 +326,7 @@ def scan(content, config, path, project_root, soften=False):
     lines = content.splitlines()
     errors, warns, observations = [], [], []
     reason_min = int(config.get("ignore_reason_min", 0))
+    require_expiry = bool(config.get("ignore_requires_expiry", False))
     file_ignored = ignored_rule_ids(content)
     default_exts = config.get("file_extensions", [])
     try:
@@ -340,11 +359,14 @@ def scan(content, config, path, project_root, soften=False):
             warns.append(entry)
 
     def hit(rule, lineno, snippet):
-        skip, no_reason = is_ignored(lines, lineno, reason_min)
+        skip, rejected = is_ignored(lines, lineno, reason_min, require_expiry)
         if skip:
             note(rule, lineno, "ignored")
             return
-        note(rule, lineno, "ignored_no_reason" if no_reason else "hit")
+        kind = {"no_reason": "ignored_no_reason",
+                "expired": "ignored_expired",
+                "no_expiry": "ignored_no_expiry"}.get(rejected, "hit")
+        note(rule, lineno, kind)
         report(rule, lineno, snippet,
                softened=soften and rule.get("soften_without_figma"))
 
@@ -585,6 +607,13 @@ def run_single(file_path, config, rules_path, project_root, hooks, log_path):
     errors, warns, obs = scan(content, config, path, project_root, soften)
     write_observations(log_path, obs)
 
+    if any(o.get("kind") == "ignored_expired" for o in obs):
+        print(f"注意: 期限の切れた {IGNORE_MARK} を無効にしました（{path.name}）。\n"
+              f"  直すか、理由と新しい期限（expires=YYYY-MM-DD）を書き直してください。",
+              file=sys.stderr)
+    if any(o.get("kind") == "ignored_no_expiry" for o in obs):
+        print(f"注意: 期限の無い {IGNORE_MARK} は、この案件では無効です（{path.name}）。\n"
+              f"  理由に expires=YYYY-MM-DD を添えてください。", file=sys.stderr)
     reason_min = int(config.get("ignore_reason_min", 0))
     if reason_min > 0 and any(o.get("kind") == "ignored_no_reason" for o in obs):
         print(f"注意: 理由の書かれていない {IGNORE_MARK} は無視しました（{path.name}）。\n"
