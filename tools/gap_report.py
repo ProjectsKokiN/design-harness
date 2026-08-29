@@ -37,6 +37,8 @@ AI が短くできない。
 
     python3 design/harness/tools/gap_report.py --config design/gaps.json
 
+出力は `design/.gaps.md` にも書く。**マシンごとの生成物なので .gitignore に入れる。**
+
     # design/gaps.json
     {
       "rules": "design/rules.json",
