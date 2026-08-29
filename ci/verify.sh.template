@@ -40,6 +40,9 @@ TARGET="${1:-all}"
 step "禁止パターン（全量）"   "$PY" design/design_check.py --all
 [ "$TARGET" = "quick" ] && exit $FAILED
 
+step "文脈（共通の憲法を参照しているか・写していないか）" \
+  "$PY" "$HARNESS/tools/design_md_check.py"
+
 step "実装網羅（条件7: Figma にあるものは全部実装）" \
   "$PY" "$HARNESS/tools/impl_coverage_check.py" --config impl-coverage.json
 step "照合体制（条件2: 照合相手は書き出しだけ）" \
