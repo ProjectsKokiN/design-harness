@@ -1,0 +1,8 @@
+ASCII line
+日本語の行（全角括弧つき）
+emoji: 👨‍👩‍👧‍👦 🇯🇵 ✅
+combining decomposed: が / composed: が
+combining accent: é / precomposed: é
+tab	and  double  space
+CRLF line ends here
+CR only ends here全角スペース　と半角

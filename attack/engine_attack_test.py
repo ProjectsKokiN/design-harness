@@ -335,18 +335,20 @@ def main():
     # extends を1段しか読まない古いピンで奥の層が届かず、ルールが静かに減っても
     # 「違反なし」で exit 0 だった。expected_targets はファイル数しか見ない。
     with tempfile.TemporaryDirectory() as td:
-        d = Path(td)
-        (d / "lib").mkdir()
+        d = Path(td) / "proj"
+        (d / "lib").mkdir(parents=True)
+        (d / "design").mkdir()
         (d / "lib" / "a.dart").write_text("var ok = 1;\n", encoding="utf-8")
 
         def rules(n_rules, expected):
-            (d / "rules.json").write_text(json.dumps({
+            (d / "design" / "rules.json").write_text(json.dumps({
                 "file_extensions": [".dart"],
                 "expected_rules": expected,
                 "rules": [{"id": f"r{i}", "severity": "error", "pattern": f"ZZZ{i}"}
                           for i in range(n_rules)]}), encoding="utf-8")
             return subprocess.run(
-                [sys.executable, str(ENGINE), "--rules", str(d / "rules.json"), "--all"],
+                [sys.executable, str(ENGINE),
+                 "--rules", str(d / "design" / "rules.json"), "--all"],
                 capture_output=True, text=True, cwd=d,
                 env={**os.environ, "HARNESS_SOURCE": "test"})
 
@@ -381,6 +383,37 @@ def main():
             PASSED.append("重複した id: 1件に畳まれ、子が勝つ")
         else:
             FAILED.append(("重複した id", [f"畳まれていない: {got}"], ""))
+
+    # --- exclude_files の照合（2026-08-29。テンプレの ".g.dart" が無効だった）---
+    # 完全一致だけだったため、全案件に配っていた ".g.dart" / ".freezed.dart" が
+    # **1件も効いていなかった**。flash-compose と aub では exclude_paths の
+    # lib/theme/ が生成物を覆っていて表に出ず、誤解されたまま配られていた。
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td) / "proj"
+        (d / "lib").mkdir(parents=True)
+        (d / "design").mkdir()
+        for n in ("normal.dart", "tokens.g.dart", "m.freezed.dart", "notes-2026.md"):
+            (d / "lib" / n).write_text("var x = BAD;\n", encoding="utf-8")
+        (d / "design" / "rules.json").write_text(json.dumps({
+            "file_extensions": [".dart", ".md"],
+            "exclude_files": [".g.dart", ".freezed.dart", "notes-*.md"],
+            "rules": [{"id": "x", "severity": "error", "pattern": "BAD"}]}),
+            encoding="utf-8")
+        r = subprocess.run(
+            [sys.executable, str(ENGINE),
+             "--rules", str(d / "design" / "rules.json"), "--all"],
+            capture_output=True, text=True, cwd=d,
+            env={**os.environ, "HARNESS_SOURCE": "test"})
+        # 違反は stderr に出る（stdout は要約だけ）
+        hits = [l for l in (r.stdout + r.stderr).splitlines()
+                if l.startswith("- [")]
+        leaked = [h for h in hits if ".g.dart" in h or ".freezed.dart" in h
+                  or "notes-" in h]
+        if len(hits) == 1 and not leaked:
+            PASSED.append("exclude_files: 接尾辞と glob が効く")
+        else:
+            FAILED.append(("exclude_files",
+                           [f"除外できていない: {leaked or hits}"], r.stdout[-200:]))
 
     # --- 結果 ---------------------------------------------------------------
     print(f"妨害テスト: {len(PASSED)} 件 通過 / {len(FAILED)} 件 失敗")

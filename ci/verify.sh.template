@@ -75,6 +75,10 @@ step "ルールの生成物（段の値が tokens と一致するか）" \
 
 # 見なかったものを機械が出す。完了レポートの「残っている限界」はこの出力を貼る
 # （AI の自己申告にしない。走査が空振りしていれば exit 2 で落ちる）
+step "指紋の一致（JS と Python で同じ値になるか）" \
+  "$PY" "$HARNESS/tools/fingerprint_parity.py"
+step "段の健全性（落ちるところを見た道具か）" \
+  "$PY" "$HARNESS/tools/stage_check.py" --verify design/verify.sh
 step "見なかったもの（gap_report）" \
   "$PY" "$HARNESS/tools/gap_report.py" --config design/gaps.json
 

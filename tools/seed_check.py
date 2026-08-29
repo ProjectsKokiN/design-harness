@@ -42,6 +42,7 @@ expected に現れることを要求する**（種を書き忘れたルールを
 ## この検査が捕まえないもの
 
 - 正規表現が**広すぎる**こと（本物のコードでの誤検出）。それは実運用と warn が見る
+- 宣言に無いキー・rules.json に無い id は**落とす**（黙って捨てない・aub 提案9）
 - ルールの内容が正しいか（禁止すべきものを禁止しているか）。それは人が決める
 - 確かめた方法: --self-test（ルールを壊したら落ちること・種の書き忘れで落ちること）
 """
@@ -126,9 +127,20 @@ def main(argv=None):
         print(f"種のファイルが1つもありません: {args.seeds}（空振り）", file=sys.stderr)
         return 1
 
+    declared_ids = {r.get("id") for r in config.get("rules", []) if r.get("id")}
+
     problems = []
     for rid, want in sorted(expected.items()):
         got = counts.get(rid, 0)
+        # 台帳が知らないキーを黙って扱わない（aub 提案9・2026-08-29）。
+        # rules.json に無い id を「死んでいる」と報告すると、綴り間違いが
+        # 「ルールの不具合」に化けて、直す場所を間違える
+        if rid not in declared_ids:
+            problems.append(
+                f"{rid}: expected.json にあるが **rules.json に無いルール**です。"
+                f"綴りを確かめるか、宣言から消してください"
+                f"（似ている id: {', '.join(sorted(declared_ids)[:3])}…）")
+            continue
         if got != want:
             problems.append(
                 f"{rid}: {want}件出るはずが {got}件"
@@ -193,6 +205,12 @@ def self_test():
         if main(argv) != 1:
             print("self-test NG: ルールが死んでいるのに落ちなかった"); ok = False
         write_rules()
+
+        # rules.json に無い id を宣言している（綴り間違い）
+        exp.write_text(json.dumps({"no-raw-color": 1, "no-raw-fontsize": 1,
+                                   "no-raw-colour": 1}), encoding="utf-8")
+        if main(argv) != 1:
+            print("self-test NG: rules.json に無い id を見逃した"); ok = False
 
         # 種を書き忘れる（"*" が真のとき）
         exp.write_text(json.dumps({"*": True, "no-raw-color": 1}), encoding="utf-8")

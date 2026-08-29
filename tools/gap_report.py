@@ -46,8 +46,16 @@ AI が短くできない。
       "frames": "../design-systems/414/figma/frames.json",
       "page_scope": "design/figma/page-scope.json",
       "tests": "test",
-      "notVerifiable": ["ぼかしの半径", "影の重なり順"]
+      "notVerifiable": [
+        {"item": "ぼかしの半径", "why": "描画結果でしか確かめられない",
+         "reviewBy": "2026-12-31"}
+      ]
     }
+
+`notVerifiable` は **why（なぜ測れないか）と reviewBy（棚卸しの期限）が必須**
+（aub 提案8・2026-08-29）。理由が消えた項目が黙って素通りし続けるのを止める。
+期限を過ぎたら落ちるので、そのとき「まだ測れないか」を確かめて期限を延ばすか、
+測れるようになっていたら宣言から消す。
 """
 
 import argparse
@@ -55,11 +63,15 @@ import importlib.util
 import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ENGINE = HERE.parent / "engine" / "design_check.py"
 IGNORE_RX = re.compile(r"harness-ignore[^\n]*")
+
+#: 棚卸しの期限の比較に使う。テストから差し替えられるようにモジュール変数にする
+TODAY = date.today().isoformat()
 
 
 def load_engine(path=ENGINE):
@@ -204,9 +216,28 @@ def main(argv=None):
             pass
 
     nv = conf.get("notVerifiable") or []
+    nv_problems = []
     if nv:
-        lines.append(f"- **数値で検証できないもの（人の目視が要る・{len(nv)}件）**: "
-                     + " / ".join(nv))
+        lines.append(f"- **数値で検証できないもの（人の目視が要る・{len(nv)}件）**")
+        for e in nv:
+            if isinstance(e, str):
+                lines.append(f"  - {e}")
+                nv_problems.append(
+                    f"notVerifiable の「{e}」に理由と棚卸しの期限がありません。"
+                    f'{{"item": …, "why": …, "reviewBy": "YYYY-MM-DD"}} の形で書いてください')
+                continue
+            item = e.get("item", "?")
+            why, by = e.get("why"), e.get("reviewBy")
+            lines.append(f"  - {item}（理由: {why or '未記入'} / 棚卸し: {by or '未設定'}）")
+            if not why:
+                nv_problems.append(f"notVerifiable の「{item}」に why がありません")
+            if not by:
+                nv_problems.append(f"notVerifiable の「{item}」に reviewBy がありません")
+            elif by < TODAY:
+                nv_problems.append(
+                    f"notVerifiable の「{item}」は棚卸しの期限（{by}）を過ぎています。"
+                    f"**理由がまだ生きているか確かめてください**"
+                    f"（測れるようになっていたら消す）")
     else:
         lines.append("- 数値で検証できないものの宣言（`notVerifiable`）が**空**です。"
                      "ぼかし・影・階調など目視が要る項目があるなら、"
@@ -214,6 +245,13 @@ def main(argv=None):
 
     out = "\n".join(lines)
     print(out)
+    # 「見ない」の宣言が形を保っているか（aub 提案8・2026-08-29）。
+    # 理由が消えた項目が黙って素通りし続けるのを止める
+    if nv_problems:
+        print("\n『見ない』の宣言が形を保っていません:", file=sys.stderr)
+        for x in nv_problems:
+            print(f"  - {x}", file=sys.stderr)
+        return 1
     if args.no_write:
         return 0
     dest = base / "design" / ".gaps.md"
@@ -267,6 +305,26 @@ def self_test():
         for good, msg in checks:
             if not good:
                 print(f"self-test NG: {msg}"); ok = False
+
+        # notVerifiable の形（aub 提案8）
+        cfgp = root / "design" / "gaps.json"
+        base = {"rules": "design/rules.json", "seeds": "design/seeds"}
+
+        def with_nv(nv):
+            cfgp.write_text(json.dumps({**base, "notVerifiable": nv}), encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                return main(["--config", str(cfgp)])
+
+        if with_nv([{"item": "ぼかし", "why": "描画でしか分からない",
+                     "reviewBy": "2099-01-01"}]) != 0:
+            print("self-test NG: 形のそろった notVerifiable で落ちた"); ok = False
+        if with_nv(["ぼかし"]) != 1:
+            print("self-test NG: 理由の無い notVerifiable を見逃した"); ok = False
+        if with_nv([{"item": "ぼかし", "why": "x"}]) != 1:
+            print("self-test NG: reviewBy の無い項目を見逃した"); ok = False
+        if with_nv([{"item": "ぼかし", "why": "x", "reviewBy": "2020-01-01"}]) != 1:
+            print("self-test NG: 期限切れの項目を見逃した"); ok = False
+        cfgp.write_text(json.dumps({**base, "notVerifiable": []}), encoding="utf-8")
 
         # 走査が空振りしたら落ちること（この道具自身の嘘を潰す）
         (root / "lib" / "a.dart").unlink()

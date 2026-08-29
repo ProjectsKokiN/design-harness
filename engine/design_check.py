@@ -34,6 +34,7 @@
 """
 
 import argparse
+import fnmatch
 import json
 import re
 import os
@@ -483,8 +484,31 @@ def target_suffixes(config):
     return exts
 
 
+def excluded_file(name, patterns):
+    """除外ファイルの照合。完全一致 / 接尾辞 / glob の3通り。
+
+    - `"design_check.py"` … 完全一致（従来どおり）
+    - `".g.dart"`         … 接尾辞（`tokens.g.dart` に当たる）
+    - `"harness-update-*.md"` … glob
+    """
+    for pat in patterns:
+        if name == pat:
+            return True
+        if pat.startswith(".") and "*" not in pat and name.endswith(pat):
+            return True
+        if ("*" in pat or "?" in pat or "[" in pat) and fnmatch.fnmatch(name, pat):
+            return True
+    return False
+
+
 def is_target(path, config, project_root):
     """対象拡張子・除外パス・除外ファイルの判定。
+
+    `exclude_files` は**完全一致・接尾辞・glob** の3通りで当てる（2026-08-29 に修正）。
+    それまで完全一致だけだったため、テンプレートが配っていた `".g.dart"` /
+    `".freezed.dart"` が**1件も効いていなかった**。flash-compose と aub では
+    `exclude_paths` の `lib/theme/` が生成物を覆っていて表に出ず、
+    「生成物は除外できている」と誤解されたまま全案件に配られていた。
 
     除外は **project_root からの相対パス**に当てる（qnd 2026-08-28:
     絶対パスに当てていたため、"harness" が site/design/harness/ 配下の
@@ -493,7 +517,7 @@ def is_target(path, config, project_root):
     """
     if path.suffix not in target_suffixes(config):
         return False
-    if path.name in config.get("exclude_files", []):
+    if excluded_file(path.name, config.get("exclude_files", [])):
         return False
     try:
         rel = path.resolve().relative_to(project_root).as_posix()

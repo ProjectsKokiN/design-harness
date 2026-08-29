@@ -21,6 +21,9 @@
 | **`tools/seed_check.py`** | **種まき欠陥テスト**: ルールが実際に発火するか（ラチェットは対象数、これは発火件数） |
 | **`seeds/<stack>/`** | 種のひな形（わざと違反させたコード）。案件の `design/seeds/` へコピーする |
 | **`tools/gap_report.py`** | **検査が見なかったものを機械が出す**（完了レポートの「限界」を自己申告にしない） |
+| **`tools/stage_check.py`** | **verify.sh の各段が「落ちるところを見た」道具か**（self-test の有無と結果） |
+| **`tools/fingerprint_parity.py`** | 指紋が JS と Python で同じ値になるか（非 ASCII の固定具で照合） |
+| **`fingerprint/text_digest.{py,mjs}`** | テキスト指紋の正本（両言語）。**案件が自前で書かない** |
 | `tools/staleness_check.py` | 下流が上流より古くないか（鮮度差） |
 | `tools/figma_freshness.py` | 書き出しが Figma より古くないか（指紋） |
 | `tools/gen_input_check.py` | 生成器・照合の入力が書き出しだけか（記録層の廃止・2026-08-29） |
@@ -144,8 +147,15 @@ git -C design/harness pull origin main
 | `contact_sheet` / `token_query` / `harness_stats` | **合否を出さない**（人が見る道具） |
 | `sync_pending` | 廃止予定（記録層とともに削除する） |
 
+`design/design_check.py`（案件のシム → エンジン）は `--self-test` を持たないが、
+**`attack/engine_attack_test.py` の39件がその役目**を果たす。`stage_check` からは
+「外部の道具」として一覧に出る。
+
 ## 変えるときの決まり
 
+- **段を足す前に、その道具が落ちるところを見る。** `--self-test` に落ちるケースを
+  書き、`stage_check.py` が通ることを確かめる。文章の決まりでは守れなかった
+  （aub 2026-08-29: 何も見ていない検査が緑で並び、1日に2回踏んだ）
 - **エンジンを変えたら `python3 attack/engine_attack_test.py` を先に通す。**
   新機能には「落ちるケース」を必ず1つ足す（通ることの確認だけでは、
   何も見ていない可能性を排除できない）
