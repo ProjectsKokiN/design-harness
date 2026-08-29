@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""検査が「見なかったもの」を機械が出す（2026-08-29 新設）。
+
+## なぜ要るか
+
+いま完了レポートの「残っている限界」を書いているのは **AI 自身**。
+自己申告なので、書き落とせば報告書は合格したように読める。
+記録層を廃止したのと同じ構図——自分の答案を自分で採点している。
+
+実害: `check_flutter_gaps.py` が「**× 0件 / exit 0**」と報告した裏で、
+Figma の26セットのうち **10セットに評価が付いていなかった**。
+「0件」は「違反が0件」であって「10セットを見ていない」とは書いていない。
+出力上はまったく同じに見える。
+
+この道具は各検査の**穴**を集めて、そのまま報告書に貼れる形で出す。
+AI が短くできない。
+
+## 集めるもの
+
+| 出どころ | 穴 |
+|---|---|
+| 実コードの走査 | **1件も発火していないルール**（種が無ければ「効いているか不明」） |
+| 同上 | `harness-ignore` で除外した箇所と理由・期限 |
+| `figma/frames.json` | 画面はあるが照合テストが見当たらない |
+| `page-scope.json` | いま参照を止めているページ |
+| 設定の `notVerifiable` | **数値で検証できないと宣言したもの**（ぼかし・影など） |
+
+## 集められないもの（正直に書く）
+
+- 「照合テストが**正しく**書けているか」。存在の有無しか見ない
+- 実装の意味的な誤り。これは定性検査（人）の領域
+- `notVerifiable` は人が書く宣言。ここだけは手書きが残る（機械には
+  「何が数値化できないか」が分からないため）。**空なら空と出す**
+- 確かめた方法: --self-test（穴を仕込んで、出力に現れること）
+
+## 使い方（案件のルートで）
+
+    python3 design/harness/tools/gap_report.py --config design/gaps.json
+
+    # design/gaps.json
+    {
+      "rules": "design/rules.json",
+      "seeds": "design/seeds",
+      "frames": "../design-systems/414/figma/frames.json",
+      "page_scope": "design/figma/page-scope.json",
+      "tests": "test",
+      "notVerifiable": ["ぼかしの半径", "影の重なり順"]
+    }
+"""
+
+import argparse
+import importlib.util
+import json
+import re
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+ENGINE = HERE.parent / "engine" / "design_check.py"
+IGNORE_RX = re.compile(r"harness-ignore[^\n]*")
+
+
+def load_engine(path=ENGINE):
+    spec = importlib.util.spec_from_file_location("_engine", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def scan_project(engine, config, project_root):
+    """実コードを走査し、ルールごとの発火件数と除外の一覧を返す。"""
+    hits, ignored, read = {}, [], 0
+    for rule in config.get("rules", []):
+        if rule.get("id"):
+            hits.setdefault(rule["id"], 0)
+    for path in sorted(project_root.rglob("*")):
+        if set(path.relative_to(project_root).parts) & engine.SKIP_DIRS:
+            continue
+        _, _, obs, state = engine.scan_path(path, config, project_root, {})
+        if state is not True:
+            continue
+        read += 1
+        for o in obs:
+            if o.get("kind") == "hit":
+                hits[o["rule"]] = hits.get(o["rule"], 0) + 1
+            elif str(o.get("kind", "")).startswith("ignored"):
+                ignored.append(o)
+    return hits, ignored, read
+
+
+def seeded_rules(seeds_dir):
+    exp = seeds_dir / "expected.json" if seeds_dir else None
+    if not exp or not exp.exists():
+        return set()
+    try:
+        d = json.loads(exp.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    return {k for k, v in d.items() if not k.startswith("$") and k != "*" and v}
+
+
+def screens_without_test(frames_path, tests_dir):
+    if not frames_path or not frames_path.exists():
+        return None, "frames.json がありません（画面固有の値の照合先が無い状態です）"
+    try:
+        frames = json.loads(frames_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        return None, f"frames.json が読めません: {e}"
+    names = list(frames.get("frames", frames)) if isinstance(frames, dict) else []
+    if not tests_dir or not tests_dir.exists():
+        return names, f"テストの置き場がありません: {tests_dir}"
+    blob = "\n".join(
+        f.read_text(encoding="utf-8", errors="ignore")
+        for f in tests_dir.rglob("*") if f.is_file() and f.suffix in
+        (".dart", ".ts", ".tsx", ".js", ".mjs", ".py"))
+    return [n for n in names if n not in blob], None
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="検査が見なかったものを出す")
+    ap.add_argument("--config", type=Path)
+    ap.add_argument("--engine", type=Path, default=ENGINE)
+    ap.add_argument("--root", type=Path,
+                    help="案件のルート（既定: 設定ファイルの親の親）")
+    ap.add_argument("--no-write", action="store_true",
+                    help="design/.gaps.md を書かない（試しに回すとき）")
+    ap.add_argument("--self-test", action="store_true")
+    args = ap.parse_args(argv)
+
+    if args.self_test:
+        return self_test()
+    if not args.config:
+        ap.error("--config が要ります（--self-test を除く）")
+
+    try:
+        conf = json.loads(args.config.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"設定が読めません: {args.config}: {e}", file=sys.stderr)
+        return 2
+    base = (args.root.resolve() if args.root
+            else args.config.resolve().parent.parent)
+    rel = lambda k, d=None: (base / conf[k]) if conf.get(k) else d
+
+    engine = load_engine(args.engine)
+    rules_path = rel("rules", base / "design" / "rules.json")
+    config = engine.load_rules(rules_path)
+    if not config:
+        print(f"ルールが読めません: {rules_path}", file=sys.stderr)
+        return 2
+
+    hits, ignored, read = scan_project(engine, config, base)
+    # 自分自身の空振りを先に潰す。読んだファイルが0なら、以下の「0件」は
+    # 全部「見ていない」であって「綺麗」ではない（この道具が一番やりがちな嘘）
+    if read == 0:
+        print(f"デザインハーネス異常: {base} で中身を読んだファイルが 0 です。\n"
+              f"  この報告の「発火0」は全部『見ていない』という意味で、"
+              f"『綺麗』ではありません。\n"
+              f"  --root と rules.json の対象設定（file_extensions / "
+              f"exclude_paths）を確かめてください。", file=sys.stderr)
+        return 2
+    seeded = seeded_rules(rel("seeds"))
+    silent = sorted(r for r, n in hits.items() if n == 0)
+    unproven = [r for r in silent if r not in seeded]
+    missing_tests, frames_note = screens_without_test(rel("frames"), rel("tests"))
+
+    lines = ["## この実装で機械が見ていないもの（gap_report.py が生成。手で縮めない）", "",
+             f"走査したファイル: {read}件 / ルール: {len(hits)}件 / "
+             f"発火: {sum(hits.values())}件", ""]
+
+    if unproven:
+        lines.append(f"- **効いているか不明なルール（{len(unproven)}件）**: "
+                     + " / ".join(unproven))
+        lines.append("  実コードで1件も発火せず、種（design/seeds/）も無い。"
+                     "コードが綺麗なのか、ルールが死んでいるのか区別が付かない")
+    proven_clean = [r for r in silent if r in seeded]
+    if proven_clean:
+        lines.append(f"- 発火0だが種で発火を確認済み（{len(proven_clean)}件・"
+                     f"コードが綺麗という意味）: " + " / ".join(proven_clean))
+
+    if ignored:
+        lines.append(f"- **検査から除外した箇所（{len(ignored)}件）**")
+        for o in ignored[:12]:
+            lines.append(f"  - `{o.get('file')}:{o.get('line')}` "
+                         f"{o.get('rule')}（{o.get('kind')}）")
+        if len(ignored) > 12:
+            lines.append(f"  - ほか {len(ignored) - 12}件")
+
+    if frames_note:
+        lines.append(f"- **画面の照合**: {frames_note}")
+    elif missing_tests:
+        lines.append(f"- **照合テストが見当たらない画面（{len(missing_tests)}件）**: "
+                     + " / ".join(missing_tests[:10])
+                     + (f" ほか{len(missing_tests) - 10}件" if len(missing_tests) > 10 else ""))
+
+    ps = rel("page_scope")
+    if ps and ps.exists():
+        try:
+            d = json.loads(ps.read_text(encoding="utf-8"))
+            lines.append(f"- **参照していない Figma ページ**: フェーズ `{d.get('phase')}`。"
+                         f"許可 {d.get('allowed')}。ここに無いページは見ていない")
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    nv = conf.get("notVerifiable") or []
+    if nv:
+        lines.append(f"- **数値で検証できないもの（人の目視が要る・{len(nv)}件）**: "
+                     + " / ".join(nv))
+    else:
+        lines.append("- 数値で検証できないものの宣言（`notVerifiable`）が**空**です。"
+                     "ぼかし・影・階調など目視が要る項目があるなら、"
+                     f"{args.config} に書いてください")
+
+    out = "\n".join(lines)
+    print(out)
+    if args.no_write:
+        return 0
+    dest = base / "design" / ".gaps.md"
+    try:
+        dest.write_text(out + "\n", encoding="utf-8")
+        print(f"\n（{dest} にも書きました。完了レポートにこのまま貼ってください）")
+    except OSError:
+        pass
+    return 0
+
+
+def self_test():
+    import tempfile
+    ok = True
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "design").mkdir()
+        (root / "lib").mkdir()
+        (root / "design" / "rules.json").write_text(json.dumps({
+            "file_extensions": [".dart"],
+            "rules": [
+                {"id": "fires", "severity": "error", "pattern": "BAD"},
+                {"id": "silent-unseeded", "severity": "error", "pattern": "NEVER_HERE"},
+                {"id": "silent-seeded", "severity": "error", "pattern": "ALSO_NEVER"},
+            ]}), encoding="utf-8")
+        (root / "lib" / "a.dart").write_text(
+            "var x = BAD;\nvar y = BAD; // harness-ignore: 移行中 expires=2026-12-31\n",
+            encoding="utf-8")
+        (root / "design" / "seeds").mkdir()
+        (root / "design" / "seeds" / "expected.json").write_text(
+            json.dumps({"silent-seeded": 1}), encoding="utf-8")
+        (root / "design" / "gaps.json").write_text(json.dumps({
+            "rules": "design/rules.json", "seeds": "design/seeds",
+            "notVerifiable": []}), encoding="utf-8")
+
+        import io, contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = main(["--config", str(root / "design" / "gaps.json")])
+        out = buf.getvalue()
+        checks = [
+            ("silent-unseeded" in out, "種の無い沈黙ルールが出ていない"),
+            ("silent-seeded" in out, "種のある沈黙ルールが出ていない"),
+            ("除外した箇所" in out, "harness-ignore の箇所が出ていない"),
+            ("notVerifiable" in out or "空" in out, "notVerifiable が空の注意が無い"),
+            ("fires" not in out.split("種で発火")[0].split("不明なルール")[-1].split("\n")[0],
+             "発火しているルールが穴として出ている"),
+            (rc == 0, f"戻り値が 0 でない: {rc}"),
+            ((root / "design" / ".gaps.md").exists(), ".gaps.md が書かれていない"),
+        ]
+        for good, msg in checks:
+            if not good:
+                print(f"self-test NG: {msg}"); ok = False
+
+        # 走査が空振りしたら落ちること（この道具自身の嘘を潰す）
+        (root / "lib" / "a.dart").unlink()
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc2 = main(["--config", str(root / "design" / "gaps.json")])
+        if rc2 != 2:
+            print(f"self-test NG: 読んだファイル0なのに落ちなかった（{rc2}）"); ok = False
+    print("self-test:", "OK" if ok else "NG")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -16,6 +16,11 @@
 | `engine/design_check.py` | 禁止パターン検査エンジン（5案件の機能を統合した正本） |
 | `shims/design_check_shim.py` | 案件側に置く薄い入口のテンプレート |
 | `tools/design_md_check.py` | 案件の DESIGN.md が共通の憲法を参照しているか・写していないか |
+| **`rules/<stack>.json`** | **A層: スタック共通の禁止ルール**（生値の直書き。DS の値に依存しない） |
+| **`tools/gen_rules.py`** | **B層の生成器**: 段の値が入るルールを tokens.json から作る（`--check` でズレを検出） |
+| **`tools/seed_check.py`** | **種まき欠陥テスト**: ルールが実際に発火するか（ラチェットは対象数、これは発火件数） |
+| **`seeds/<stack>/`** | 種のひな形（わざと違反させたコード）。案件の `design/seeds/` へコピーする |
+| **`tools/gap_report.py`** | **検査が見なかったものを機械が出す**（完了レポートの「限界」を自己申告にしない） |
 | `tools/staleness_check.py` | 下流が上流より古くないか（鮮度差） |
 | `tools/figma_freshness.py` | 書き出しが Figma より古くないか（指紋） |
 | `tools/gen_input_check.py` | 生成器・照合の入力が書き出しだけか（記録層の廃止・2026-08-29） |
@@ -43,6 +48,34 @@
 案件側が共通の内容を写すと `tools/design_md_check.py` が落ちます。
 案件側に必要な見出しは共通 `DESIGN.md` の ```required-sections``` 宣言が分母です。
 
+## ルールの4層（2026-08-29）
+
+`no-offscale-radius` の正規表現に角丸のスケールが**手で書き写されていた**。
+Figma で段を変えた瞬間に静かに古くなる、という「手で写した層」だったので、
+記録層・DESIGN.md と同じ処方（生成して、ズレを機械で見る）を当てた。
+
+| 層 | 置き場 | 中身 | 誰が書くか |
+|---|---|---|---|
+| **A** | `design-harness/rules/<stack>.json` | 生値の直書き禁止。DS の値に依存しない | 手（ここ） |
+| **B** | `<DS>/rules/<stack>.generated.json` | 段の値（角丸・ウェイトのスケール） | **`gen_rules.py` が生成** |
+| **C** | `<DS>/rules/<stack>.json` | セマンティックの用途規約（`scope-*`）。DS の命名に依存 | 手（DS） |
+| **D** | `<案件>/design/rules.json` | その案件だけの禁止 | 手（案件） |
+
+engine の `extends` で D→C→B→A とたどる（**2026-08-29 に再帰化**。それまで1段しか
+読まず、A層が黙って落ちていた）。
+
+## 「検査が働いているか」を見る3つ
+
+| 道具 | 数えるもの | 捕まえる失敗 |
+|---|---|---|
+| `attack/engine_attack_test.py` | エンジンの挙動 | エンジンが壊れた |
+| `expected_targets`（engine） | 読んだファイル数 | 検査対象が黙って狭まった |
+| `tools/seed_check.py` | **ルールごとの発火件数** | **ルールが黙って死んだ** |
+
+`tools/gap_report.py` はこの3つの結果を合わせて「見なかったもの」を出す。
+発火0のルールは、**種があれば「コードが綺麗」・無ければ「効いているか不明」**と
+区別して報告する。
+
 ## 各プロジェクトへの導入
 
 ```bash
@@ -61,6 +94,18 @@ hook・verify.sh・CI は従来どおり `design/design_check.py` を呼べば�
 ```bash
 git -C design/harness pull origin main
 ```
+
+## self-test を持たない道具（意図的な例外）
+
+「検査が働いているか」を見るのがこのリポジトリの主眼なので、**判定を出す道具は
+必ず落ちるケースを持つ**。持たないものは、理由を明記した例外だけ。
+
+| 道具 | 理由 |
+|---|---|
+| `pin_check` | ネットワークが要る（本人が冒頭に明記） |
+| `figma_freshness` | 同上。Figma 本体を叩く |
+| `contact_sheet` / `token_query` / `harness_stats` | **合否を出さない**（人が見る道具） |
+| `sync_pending` | 廃止予定（記録層とともに削除する） |
 
 ## 変えるときの決まり
 

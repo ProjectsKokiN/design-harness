@@ -6,7 +6,8 @@
 あわせて「Figma の全セットに判定があるか」（網羅）と「Figma に無い記録」（棚卸し）。
 【捕まえないもの】値そのものの一致（数値照合の領域）と、判定の中身の正しさ
 （判定は人が実測して書く。ここは判定の有無と形しか見ない）。
-【確かめた方法】414 で穴10件を検出して exit 1（2026-08-28）。
+【確かめた方法】--self-test（入力が欠けたら落ちること・網羅の穴で落ちること）。
+414 で穴10件を検出して exit 1（2026-08-28）。
 
 Figma を読んだあと（ハーネスを同期したあと）に必ず走らせる。
 判定の根拠は config の ledger が指す台帳を参照（案件ごとに違う）。
@@ -157,17 +158,30 @@ def check_coverage(doc):
     covered = total - len(missing)
     print(f"判定の網羅: Figma の {total} セット中 {covered} セットに判定あり"
           f"（穴 {len(missing)}）")
+    # 空振り検知（2026-08-29）。書き出しに component set が 0 件だと
+    # 「0 セット中 0 セット・穴 0」で通っていた。**穴が無いのではなく、
+    # 何も見ていない。** 網羅検査そのものが同じ病にかかっていた
+    if total == 0:
+        out.append(("×", "figma/components.json",
+                    "全量書き出しに component set が 1 件もない。"
+                    "『穴 0』は『何も見ていない』という意味。書き出し器か"
+                    "パスの指定を確かめること"))
     return out
 
 
-def load_config():
+def load_config(argv=None):
     global COMPONENTS, TOKENS, FIGMA_COMPONENTS, IGNORED_TOKENS, RENAMED
     global LEDGER, DS_NAME
     ap = argparse.ArgumentParser(
         description="Figma の指定のうちスタックで再現できないものと、判定の網羅を見る")
-    ap.add_argument("--config", type=Path, required=True,
+    ap.add_argument("--config", type=Path,
                     help="render-gaps.json（components / tokens / figma_components 等）")
-    args = ap.parse_args()
+    ap.add_argument("--self-test", action="store_true")
+    args = ap.parse_args(argv)
+    if args.self_test:
+        return True
+    if not args.config:
+        ap.error("--config が要ります（--self-test を除く）")
     try:
         conf = json.loads(args.config.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
@@ -184,18 +198,32 @@ def load_config():
     # 「414/FLUTTER_GAPS.md を参照」と出ていた）
     LEDGER = conf.get("ledger", "FLUTTER_GAPS.md")
     DS_NAME = conf.get("name") or base.name
+    return False
 
 
-def main():
-    load_config()
+def main(argv=None):
+    if load_config(argv):
+        return self_test()
+
+    # 入力が無ければ**落とす**（2026-08-29）。それまで exists() で分岐しており、
+    # ファイルが1つでも欠けるとその検査を黙って飛ばして exit 0 を返していた。
+    # 「違反 0 件」と「そもそも見ていない」が出力上まったく同じになる型の穴。
+    missing = [str(x) for x in (COMPONENTS, TOKENS, FIGMA_COMPONENTS) if not x.exists()]
+    if missing:
+        print("再現性の判定に必要な入力がありません。**確認せずに通すことはしません**:",
+              file=sys.stderr)
+        for m in missing:
+            print(f"  - {m}", file=sys.stderr)
+        print("  書き出しを取り直すか、render-gaps.json のパスを直してください。",
+              file=sys.stderr)
+        return 2
+
     findings = []
-    if COMPONENTS.exists():
-        doc = json.loads(COMPONENTS.read_text())
-        findings += check_effect_styles(doc)
-        findings += check_components(doc)
-        findings += check_coverage(doc)
-    if TOKENS.exists():
-        findings += check_tokens(json.loads(TOKENS.read_text()))
+    doc = json.loads(COMPONENTS.read_text())
+    findings += check_effect_styles(doc)
+    findings += check_components(doc)
+    findings += check_coverage(doc)
+    findings += check_tokens(json.loads(TOKENS.read_text()))
 
     # 同じ指摘の重複をまとめる
     seen, uniq = set(), []
@@ -220,6 +248,58 @@ def main():
           f"○ {len([f for f in uniq if f[0]=='○'])} 件")
     print(f"詳細は {LEDGER} を参照してください。")
     return 1 if blockers else 0
+
+
+def self_test():
+    """落ちるケースを持つ（2026-08-29 新設。入力欠落と空振りの穴を潰した回）。"""
+    import tempfile
+    ok = True
+    BASE = {
+        "components.json": {"componentSets": [{"name": "Button", "flutter": "○"}]},
+        "figma.json": {"componentSets": {"Button": {}}},
+        "tokens.json": {"Typography": {"Weight/M": 600}},
+    }
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+
+        def setup(**over):
+            """ファイル名をキーにして中身を差し替える。None で削除。"""
+            data = dict(BASE)
+            data.update(over)
+            for name, doc in data.items():
+                path = base / name
+                if doc is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_text(json.dumps(doc), encoding="utf-8")
+            (base / "c.json").write_text(json.dumps({
+                "components": "components.json", "tokens": "tokens.json",
+                "figma_components": "figma.json"}), encoding="utf-8")
+            return ["--config", str(base / "c.json")]
+
+        def expect(rc, argv, msg):
+            nonlocal ok
+            got = main(argv)
+            if got != rc:
+                print(f"self-test NG: {msg}（戻り値 {got}・期待 {rc}）")
+                ok = False
+
+        expect(0, setup(), "そろっているのに落ちた")
+
+        # 入力が欠けたら落ちる（黙って飛ばさない）——この回の本体
+        for miss in ("components.json", "tokens.json", "figma.json"):
+            expect(2, setup(**{miss: None}), f"{miss} が無いのに落ちなかった")
+
+        # 網羅の穴（Figma にあるのに判定が無い）
+        expect(1, setup(**{"figma.json": {"componentSets": {"Button": {}, "Card": {}}}}),
+               "判定の無いセットがあるのに落ちなかった")
+
+        # 書き出しが空（「穴 0」が「何も見ていない」を意味する場合）
+        expect(1, setup(**{"figma.json": {"componentSets": {}}}),
+               "書き出しが空なのに『穴 0』で通した")
+
+    print("self-test:", "OK" if ok else "NG")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

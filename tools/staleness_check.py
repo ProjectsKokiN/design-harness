@@ -91,13 +91,19 @@ def date_of(path):
             "mtime（git 管理外。クローンで動くため参考値）")
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description="下流が上流より古くないかを見る")
-    ap.add_argument("--config", type=Path, required=True,
+    ap.add_argument("--config", type=Path,
                     help="pairs を書いた staleness.json")
     ap.add_argument("--max-lag-days", type=int, default=0,
                     help="許容する遅れ（日）。既定 0 = 上流より1日でも古ければ失敗")
-    args = ap.parse_args()
+    ap.add_argument("--self-test", action="store_true")
+    args = ap.parse_args(argv)
+
+    if args.self_test:
+        return self_test()
+    if not args.config:
+        ap.error("--config が要ります（--self-test を除く）")
 
     try:
         conf = json.loads(args.config.read_text(encoding="utf-8"))
@@ -138,6 +144,51 @@ def main():
         return 1
     print(f"\n{len(pairs)} 対すべて鮮度に問題ありません。")
     return 0
+
+
+def self_test():
+    """落ちるケースを持つ（この道具だけ self-test が無く、2026-08-29 に足した）。"""
+    import tempfile
+    ok = True
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+
+        def w(name, date):
+            (base / name).write_text(
+                json.dumps({"$meta": {"syncedAt": date}}), encoding="utf-8")
+
+        def cfg(pairs, **kw):
+            d = {"pairs": pairs}
+            (base / "c.json").write_text(json.dumps(d), encoding="utf-8")
+            a = ["--config", str(base / "c.json")]
+            for k, v in kw.items():
+                a += [f"--{k.replace('_', '-')}", str(v)]
+            return a
+
+        # 下流が新しい → 通る
+        w("up.json", "2026-08-01"); w("down.json", "2026-08-05")
+        if main(cfg([{"up": "up.json", "down": "down.json"}])) != 0:
+            print("self-test NG: 下流が新しいのに落ちた"); ok = False
+
+        # 下流が古い → 落ちる（本体）
+        w("down.json", "2026-07-20")
+        if main(cfg([{"up": "up.json", "down": "down.json"}])) != 1:
+            print("self-test NG: 下流が古いのに落ちなかった"); ok = False
+
+        # 猶予の範囲内なら通る
+        if main(cfg([{"up": "up.json", "down": "down.json"}], max_lag_days=30)) != 0:
+            print("self-test NG: 猶予の範囲内なのに落ちた"); ok = False
+
+        # 対の一方が無い → 落ちる（黙って skip しない）
+        if main(cfg([{"up": "up.json", "down": "missing.json"}])) == 0:
+            print("self-test NG: 対の一方が無いのに通した"); ok = False
+
+        # pairs が空 → 落ちる（空振りを通さない）
+        if main(cfg([])) != 2:
+            print("self-test NG: pairs が空なのに落ちなかった"); ok = False
+
+    print("self-test:", "OK" if ok else "NG")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

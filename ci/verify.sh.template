@@ -53,6 +53,8 @@ step "鮮度差（書き出し → 生成物・記録）" \
   "$PY" "$HARNESS/tools/staleness_check.py" --config staleness.json
 step "ページの範囲（参照してよいページか）" \
   "$PY" "$HARNESS/tools/page_scope_check.py" --config design/figma/page-scope.json
+step "再現性の判定（条件5: 値が合っても描画で別物になる指定）" \
+  "$PY" "$HARNESS/tools/check_render_gaps.py" --config {{<DS>/render-gaps.json}}
 step "種まき（ルールが実際に発火するか）" \
   "$PY" "$HARNESS/tools/seed_check.py"
 step "ルールの生成物（段の値が tokens と一致するか）" \
@@ -70,6 +72,11 @@ step "ルールの生成物（段の値が tokens と一致するか）" \
 #
 # ユーザーが「Figma を更新した」と言ったとき、実装の前に手で回す:
 #   source ~/.claude/.env && python3 design/figma_freshness.py
+
+# 見なかったものを機械が出す。完了レポートの「残っている限界」はこの出力を貼る
+# （AI の自己申告にしない。走査が空振りしていれば exit 2 で落ちる）
+step "見なかったもの（gap_report）" \
+  "$PY" "$HARNESS/tools/gap_report.py" --config design/gaps.json
 
 # --- 案件固有の段（{{ }} を具体化して足す）----------------------------------
 # step "静的解析"        {{flutter analyze / npx tsc --noEmit}}
