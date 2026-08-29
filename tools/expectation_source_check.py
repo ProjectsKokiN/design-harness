@@ -15,7 +15,8 @@
 
 - `figma/*.json`（または config の `export_globs` に合う名前）を読む記述があるか
 - 無ければ「手書きの期待値」として落とす
-- 例外は `allow` に**理由つきで**宣言する（理由の無い例外は落とす）
+- 例外は `allow` に**理由と棚卸しの期限つきで**宣言する
+  （理由・期限の無い例外、期限切れの例外は落とす）
 
 ## この検査が捕まえないもの
 
@@ -41,7 +42,10 @@
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
+
+TODAY = date.today().isoformat()
 
 SUFFIXES = (".dart", ".ts", ".tsx", ".js", ".mjs", ".py")
 DEFAULT_GLOBS = ["figma/", "design/figma/", "frames.json", "components.json",
@@ -80,9 +84,18 @@ def main(argv=None):
                             f'{{"file": …, "why": …}} の形で書いてください')
             allow[a] = None
         else:
-            if not a.get("why"):
-                problems.append(f"allow の「{a.get('file')}」に why がありません")
-            allow[a.get("file")] = a.get("why")
+            f_, why, by = a.get("file"), a.get("why"), a.get("reviewBy")
+            if not why:
+                problems.append(f"allow の「{f_}」に why がありません")
+            if not by:
+                problems.append(f"allow の「{f_}」に reviewBy がありません"
+                                f"（例外は期限つきにする）")
+            elif by < TODAY:
+                problems.append(
+                    f"allow の「{f_}」は期限（{by}）を過ぎています。"
+                    f"**書き出しから読むように直すか、理由がまだ生きているか"
+                    f"確かめてください**")
+            allow[f_] = f"{why or '理由なし'} / 期限 {by or '未設定'}"
 
     dirs = conf.get("dirs") or []
     if not dirs:
@@ -157,10 +170,17 @@ def self_test():
             print("self-test NG: 手書きの期待値を見逃した"); ok = False
 
         if main(setup({}, allow=[{"file": "test/design/b_test.dart",
-                                  "why": "期待値を持たない"}])) != 0:
-            print("self-test NG: 理由つきの例外で落ちた"); ok = False
+                                  "why": "期待値を持たない",
+                                  "reviewBy": "2099-01-01"}])) != 0:
+            print("self-test NG: 理由と期限つきの例外で落ちた"); ok = False
         if main(setup({}, allow=[{"file": "test/design/b_test.dart"}])) != 1:
             print("self-test NG: 理由の無い例外を通した"); ok = False
+        if main(setup({}, allow=[{"file": "test/design/b_test.dart",
+                                  "why": "x"}])) != 1:
+            print("self-test NG: 期限の無い例外を通した"); ok = False
+        if main(setup({}, allow=[{"file": "test/design/b_test.dart",
+                                  "why": "x", "reviewBy": "2020-01-01"}])) != 1:
+            print("self-test NG: 期限切れの例外を通した"); ok = False
 
         for f in (root / "test" / "design").glob("*"):
             f.unlink()

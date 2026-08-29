@@ -34,13 +34,23 @@
 
 `--update` は**書き出しを取り直した直後だけ**回します（指紋を記録し直す）。
 
-    { "exports_dir": "design/figma", "exclude": ["_varmap.json"] }
+    {
+      "exports_dir": "design/figma",
+      "exclude": ["_varmap.json"],
+      "allow": [{"file": "components.json", "why": "器の特定が未了",
+                 "reviewBy": "2026-11-30"}]
+    }
+
+例外は `allow` に**理由と棚卸しの期限つきで**宣言する（期限切れは落ちる）。
 """
 
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
+
+TODAY = date.today().isoformat()
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "fingerprint"))
@@ -83,8 +93,21 @@ def main(argv=None):
         print(f"書き出しが1件もありません: {ex_dir}（空振り）", file=sys.stderr)
         return 1
 
+    allow = {}
     problems, updated, okc = [], 0, 0
+    for a in conf.get("allow", []):
+        if not isinstance(a, dict) or not a.get("why") or not a.get("reviewBy"):
+            problems.append(f"allow の「{a}」に why と reviewBy が要ります")
+            continue
+        if a["reviewBy"] < TODAY:
+            problems.append(f"allow の「{a['file']}」は期限（{a['reviewBy']}）を"
+                            f"過ぎています。**器を保存して producer を書いてください**")
+        allow[a["file"]] = a["why"]
+
     for f in files:
+        if f.name in allow and not args.update:
+            print(f"  例外: {f.name}（{allow[f.name]}）")
+            continue
         try:
             doc = json.loads(f.read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
@@ -171,6 +194,18 @@ def self_test():
         write({"producer": "design/nope.mjs"})
         if main(argv) != 1:
             print("self-test NG: 器が実在しないのに通した"); ok = False
+
+        # 期限つきの例外は通り、期限切れは落ちる
+        def with_allow(by):
+            cfg.write_text(json.dumps({"exports_dir": "design/figma", "allow": [
+                {"file": "components.json", "why": "器の特定が未了",
+                 "reviewBy": by}]}), encoding="utf-8")
+            return main(argv)
+        if with_allow("2099-01-01") != 0:
+            print("self-test NG: 期限内の例外で落ちた"); ok = False
+        if with_allow("2020-01-01") != 1:
+            print("self-test NG: 期限切れの例外を通した"); ok = False
+        cfg.write_text(json.dumps({"exports_dir": "design/figma"}), encoding="utf-8")
 
         out.unlink()
         if main(argv) != 1:

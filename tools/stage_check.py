@@ -101,11 +101,21 @@ def main(argv=None):
     exceptions = documented_exceptions(args.readme)
     problems, foreign, checked = [], [], []
 
-    for line in logical_lines(args.verify.read_text(encoding="utf-8")):
+    lines = logical_lines(args.verify.read_text(encoding="utf-8"))
+    seen_step = False
+    for line in lines:
         m = STEP_RX.match(line)
-        if not m:
-            continue
-        label, cmd = m.group(1), m.group(2)
+        if m:
+            seen_step = True
+            label, cmd = m.group(1), m.group(2)
+        else:
+            # `step "..."` の形でない verify.sh もある（案件が手で書いた場合）。
+            # **形式に依らず道具の呼び出しを拾う**（2026-08-29。それまで step 行
+            # だけを見ており、形式の違う3案件を「0段・OK」と報告していた——
+            # まさにこの道具が捕まえるはずの偽の緑だった）
+            if not TOOL_RX.search(line):
+                continue
+            label, cmd = line.strip()[:60], line
         tools = TOOL_RX.findall(cmd)
         if not tools:
             foreign.append(label)
@@ -135,6 +145,18 @@ def main(argv=None):
                                 f"      {r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr.strip()[:150]}")
             else:
                 checked.append(name)
+
+    # 空振り検知: 中身があるのに1つも拾えていないなら、読み方が合っていない
+    meaningful = [l for l in lines
+                  if l.strip() and not l.strip().startswith("#")]
+    if not checked and not foreign and len(meaningful) > 5:
+        print(f"デザインハーネス異常: {args.verify} に {len(meaningful)} 行あるのに、"
+              f"検査の段を1つも拾えませんでした。\n"
+              f"  **『0段・問題なし』は『何も見ていない』という意味です。**\n"
+              f"  ハーネスの道具を design/harness/tools/ 経由で呼ぶか、"
+              f"雛形（ci/verify.sh.template）の step 形式に寄せてください。",
+              file=sys.stderr)
+        return 2
 
     print(f"段の健全性: 道具の段 {len(checked)}件が self-test 済み / "
           f"外部・例外の段 {len(foreign)}件")
@@ -183,6 +205,19 @@ def self_test():
             print("self-test NG: self-test の無い道具を黙って通した"); ok = False
         if run('step "外部の段" flutter test\n') != 0:
             print("self-test NG: 外部コマンドの段で落ちた"); ok = False
+
+        # step 形式でない verify.sh でも道具を拾えること
+        readme.write_text("（例外表なし）\n", encoding="utf-8")
+        if run('#!/bin/sh\nset -e\n'
+               'echo "検査します"\n'
+               'python3 design/harness/tools/bad.py\n'
+               'echo "おわり"\n') != 1:
+            print("self-test NG: step 形式でない呼び出しを見逃した"); ok = False
+
+        # 中身があるのに1つも拾えないなら落ちる（偽の緑を出さない）
+        if run("#!/bin/sh\nset -e\n" + "".join(
+                f'echo "何かする {i}"\n' for i in range(8))) != 2:
+            print("self-test NG: 何も拾えないのに『問題なし』を出した"); ok = False
         if run('step "存在しない段" "$PY" "$HARNESS/tools/nope.py"\n') != 1:
             print("self-test NG: 存在しない道具を通した"); ok = False
 
