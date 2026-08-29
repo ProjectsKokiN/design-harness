@@ -1,0 +1,144 @@
+{
+  "$meta": {
+    "layer": "A: スタック共通（Web）",
+    "出どころ": "qnd-database/site/design/harness/rules.json（Web の参照実装）から 2026-08-29 に引き上げた。14ルールのうち12がスタック共通で、案件固有は no-dark-theme（QnD がダークを持たない判断）と no-removed-classes（QnD 固有の廃止クラス名）だけだった",
+    "Web に B層（生成物）が無い理由": "Web のルールは『生値を一切使わせない・必ず var() を経由させる』形なので、正規表現に段の値が入らない。Flutter の no-offscale-* のような手写しが生まれない。**そのため gen_rules.py は Web には要らない**",
+    "近傍色（ΔE）を入れない理由": "no-raw-hex ＋ no-raw-color-function ＋ no-non-token-color で**生の色表現を全部禁じている**ので、トークンに近いか遠いかを判定する余地が無い。ΔE が要るのは『生値を許したうえで、近いものを警告する』設計のツール",
+    "継承の鎖": "design-harness/rules/web.json ← <案件>/design/rules.json（案件固有）"
+  },
+  "file_extensions": [
+    ".css",
+    ".html",
+    ".mjs",
+    ".js",
+    ".svg"
+  ],
+  "exclude_paths": [
+    "dist",
+    "dist-preview",
+    "node_modules",
+    "archive",
+    "site/design/harness/harness",
+    ".obsidian",
+    ".github"
+  ],
+  "exclude_files": [
+    "tokens.css",
+    "tokens.json",
+    "explorations.html"
+  ],
+  "rules": [
+    {
+      "id": "no-raw-hex",
+      "severity": "error",
+      "pattern": "#[0-9a-fA-F]{3,8}\\b",
+      "forbidden": "色の直値（#ffffff などの hex）。Figma の変数と対応が取れず、Figma を直しても追従しない。",
+      "instead": "tokens.css の変数を使う。地の色は var(--frame-neutral-default)、文字は var(--text-neutral-default) / --text-neutral-subtle / --text-neutral-subtler、線は var(--stroke-neutral-default)。原始値が要るときは var(--c-gray-*) / var(--c-black-*) / var(--c-white-*)。",
+      "soften_without_figma": true
+    },
+    {
+      "id": "no-raw-font-size",
+      "severity": "error",
+      "pattern": "(?<![-\\w])(?:font-size|font)\\s*:\\s*[^;{}]*?\\d+(?:\\.\\d+)?(?:px|rem|em|pt)",
+      "forbidden": "文字サイズの直値。px だけでなく rem / em / pt、font ショートハンド、clamp() の中も含む。Figma のテキストスタイル12件と対応が取れなくなる。",
+      "instead": "var(--font-size-*)（xxxs 10 / xxs 12 / xs 16 / s 18 / m 24 / l 32 / xl 40 / xxl 48 / xxxl 100 / xxxxl 160）。見出しは shared.css の --fluid-display-* / --fluid-heading-* を使う。可能ならクラス（.ts-body-l など）ごと使う。",
+      "scale_prefix": "font-size",
+      "soften_without_figma": true
+    },
+    {
+      "id": "no-raw-spacing",
+      "severity": "error",
+      "pattern": "(?<![-\\w])(?:gap|row-gap|column-gap|padding|margin)(?:-(?:top|right|bottom|left|block|inline)(?:-(?:start|end))?)?\\s*:\\s*[^;{}]*?\\d+(?:\\.\\d+)?(?:px|rem|em)",
+      "forbidden": "余白の直値。論理プロパティ（padding-block / margin-inline など）と rem / em も含む。Figma の Gap 13段と対応が取れなくなる。",
+      "instead": "var(--gap-*)（xxxxxs 2 / xxxxs 4 / xxxs 8 / xxs 12 / xs 16 / s 20 / m 24 / l 32 / xl 40 / xxl 60 / xxxl 120）。画面幅に比例させる大きい余白は shared.css の --pad-side / --gap-sec / --gap-col / --gap-block / --gap-nav を使う。",
+      "scale_prefix": "gap",
+      "soften_without_figma": true
+    },
+    {
+      "id": "no-raw-border-width",
+      "severity": "error",
+      "pattern": "(?<![-\\w])(?:border(?:-(?:top|right|bottom|left|block|inline))?(?:-width)?|outline(?:-width)?)\\s*:\\s*[^;{}]*?\\d+(?:\\.\\d+)?(?:px|rem|em)",
+      "forbidden": "線幅の直値。outline も含む。Figma の Stroke 4段と対応が取れなくなる。",
+      "instead": "var(--stroke-s)（1px）。他に xs 0.5 / m 2 / l 4 がある。",
+      "scale_prefix": "stroke",
+      "soften_without_figma": true
+    },
+    {
+      "id": "no-raw-radius",
+      "severity": "error",
+      "pattern": "(?<![-\\w])border(?:-(?:top|bottom)-(?:left|right)|-(?:start|end)-(?:start|end))?-radius\\s*:\\s*[^;{}]*?\\d+(?:\\.\\d+)?(?:px|rem|em)",
+      "forbidden": "角丸の直値。Figma の CornerRadius 9段と対応が取れなくなる。",
+      "instead": "var(--radius-*)（xxs 2 / xs 4 / s 8 / m 12 / l 16 / xl 24 / xxl 32 / none 0 / infinity 9999）。チップとタブは var(--radius-infinity)。",
+      "scale_prefix": "radius",
+      "soften_without_figma": true
+    },
+    {
+      "id": "no-inline-style-values",
+      "severity": "error",
+      "pattern": "style=\"[^\"]*(?:#[0-9a-fA-F]{3,8}|\\d+px)",
+      "forbidden": "style 属性に直値を書くこと。クラスを介さないので、デザインシステムの変更が届かない。記事やページの .md に書いた場合も同じ。",
+      "instead": "クラスを当てる。どのクラスも合わないときは shared.css にコンポーネントとして足すか、ページ固有の <style> にトークン参照で書く。",
+      "extensions": [
+        ".css",
+        ".html",
+        ".mjs",
+        ".js",
+        ".md"
+      ]
+    },
+    {
+      "id": "no-raw-color-function",
+      "severity": "error",
+      "pattern": "(?<![-\\w])(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color-mix)\\s*\\(",
+      "forbidden": "色の関数表記（rgb() / hsl() / color-mix() など）。hex と同じく Figma の変数と対応が取れない。",
+      "instead": "tokens.css の変数を使う。透過が要るときは Figma に不透明度つきの色を足してもらう（勝手に rgba を作らない）。",
+      "soften_without_figma": true
+    },
+    {
+      "id": "no-js-style-values",
+      "severity": "error",
+      "pattern": "(?:\\.style\\.[A-Za-z]+\\s*=|setProperty\\s*\\(\\s*['\\\"][^'\\\"]+['\\\"]\\s*,)\\s*[^;\\n]*?(?:\\d+(?:\\.\\d+)?(?:px|rem|em)|#[0-9a-fA-F]{3,8})",
+      "forbidden": "JavaScript から style に直値を代入すること。ビューは JS で書くので、ここが抜けると制約層が意味を失う。",
+      "instead": "クラスの付け外し（classList）で表す。どうしても計算値が要るなら、CSS 変数へ代入する（el.style.setProperty('--x', 'var(--gap-s)')）か、理由つきの harness-ignore を書く。"
+    },
+    {
+      "id": "no-raw-offset",
+      "severity": "error",
+      "pattern": "(?<![-\\w])(?:inset(?:-(?:block|inline))?|top|right|bottom|left)\\s*:\\s*[^;{}]*?\\d+(?:\\.\\d+)?(?:px|rem|em)",
+      "forbidden": "位置指定（top / left / inset など）の直値。見た目は余白と同じなので、Gap の段から外れる。",
+      "instead": "var(--gap-*) を使う。sticky の逃げ幅など計算が要るときは calc(var(--gap-m) * 2 + ...) と書く。実寸が要る場合は理由つきの harness-ignore。",
+      "soften_without_figma": true
+    },
+    {
+      "id": "no-raw-stroke-width",
+      "severity": "error",
+      "pattern": "(?<![-\\w])stroke-width\\s*:\\s*(?!0\\s*[;}]|0$)[0-9.]",
+      "forbidden": "SVG の線幅の直値。単位が無いので border とは別に見る必要がある。",
+      "instead": "var(--stroke-s)（1）/ xs 0.5 / m 2 / l 4 を使う。図版固有の太さが要るなら理由つきの harness-ignore。",
+      "scale_prefix": "stroke",
+      "soften_without_figma": true
+    },
+    {
+      "id": "no-raw-font-weight",
+      "severity": "error",
+      "pattern": "(?<![-\\w])font-weight\\s*:\\s*[0-9]",
+      "scale_prefix": "font-weight",
+      "forbidden": "文字の太さの直値。Figma の Weight は4段しかなく、直値だと対応が取れない。",
+      "instead": "var(--font-weight-*)（s 300 / m 400 / l 500 / xl 600）。可能ならテキストスタイルのクラス（.ts-body-l など）ごと使う。",
+      "soften_without_figma": true
+    },
+    {
+      "id": "no-non-token-color",
+      "severity": "error",
+      "extensions": [
+        ".css",
+        ".html",
+        ".svg"
+      ],
+      "pattern": "(?<![-\\w])(?:color|background|background-color|border-color|outline-color|fill|stroke|caret-color|text-decoration-color)\\s*:\\s*(?![\\\"']?\\s*(?:var\\(\\s*--|(?:transparent|currentColor|currentcolor|inherit|none|unset|initial|revert)(?![\\w-])))",
+      "forbidden": "色にトークン以外を書くこと。色名（white / rebeccapurple …）・hex・rgb() など、許した書き方の**外側を全部**止める。列挙式だと必ず漏れるため、逆にした（2026-08-25 フェーズ6）。",
+      "instead": "var(--...) を使う。ほかに書けるのは transparent / currentColor / inherit / none / unset / initial / revert だけ。新しい色が要るときは Figma に足してもらう。",
+      "soften_without_figma": true
+    }
+  ]
+}

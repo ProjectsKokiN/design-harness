@@ -61,8 +61,45 @@ Figma で段を変えた瞬間に静かに古くなる、という「手で写�
 | **C** | `<DS>/rules/<stack>.json` | セマンティックの用途規約（`scope-*`）。DS の命名に依存 | 手（DS） |
 | **D** | `<案件>/design/rules.json` | その案件だけの禁止 | 手（案件） |
 
-engine の `extends` で D→C→B→A とたどる（**2026-08-29 に再帰化**。それまで1段しか
-読まず、A層が黙って落ちていた）。
+**案件の rules.json が A・B・C を「並べて」継承する。入れ子にしない。**
+
+```json
+"extends": [
+  "../../design-systems/<DS>/rules/flutter.json",            // C
+  "../../design-systems/<DS>/rules/flutter.generated.json",  // B
+  "../../design-harness/rules/flutter.json"                  // A
+]
+```
+
+入れ子（案件 → DS → 共通）にすると、**extends を1段しか読まないエンジンで奥の層が
+黙って落ちる**。2026-08-29 に flash-compose で実測: ルールが 12 → 7 に減り、
+**それでも「違反なし」で exit 0** だった。submodule のピンが古いだけで起きる。
+
+engine 側も再帰化した（循環検出・深さ上限つき）が、**並列に書くのが正しい**——
+古いピンでも新しいエンジンでも同じ結果になるのは並列だけ。
+同じ id が複数の層に載っても engine が1件に畳む（子が勝つ・上書きは注意を出す）。
+
+### `expected_rules`（ルール数のラチェット）
+
+```json
+"expected_rules": 11
+```
+
+読み込めたルール数の下限。**上の 12→7 は `expected_targets`（ファイル数）を
+素通りした。** 層が落ちる・パスを綴り間違える・ピンが古い、のどれでも件数が減るので、
+数で止める。
+
+### A 層に入れる基準
+
+**生値の直書きを禁じるものだけ。** どの案件でも同じ答えになるものに限る。
+
+- 入れない（建築上の好み）: import の層構造・命名・ファイル分割
+  → `rules/<stack>-optional.json`（採用したい案件が extends する）
+- 入れない（DS のトークン種に依存）: フォント・モーションのトークンが要るもの
+  → その DS の C 層
+
+**実例**: `no-direct-generated-import` を一度 A 層に上げたところ、flash-compose で
+8件の違反が出た。aub の設計判断であって、flash-compose は意図的に逆の作りだった。
 
 ## 「検査が働いているか」を見る3つ
 

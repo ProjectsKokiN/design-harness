@@ -1,0 +1,11 @@
+/* 種: CSS の生値。**わざと違反させています。** */
+.seed-raw-hex { color: #3b82f6; }
+.seed-raw-font-size { font-size: 14px; }
+.seed-raw-spacing { padding: 16px; }
+.seed-raw-border-width { border-width: 2px; }
+.seed-raw-radius { border-radius: 8px; }
+.seed-raw-color-function { background: rgba(0, 0, 0, 0.5); }
+.seed-raw-offset { top: 12px; }
+.seed-raw-stroke-width { stroke-width: 2; }
+.seed-raw-font-weight { font-weight: 600; }
+.seed-non-token-color { color: blue; }

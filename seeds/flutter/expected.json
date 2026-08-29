@@ -6,6 +6,5 @@
   "no-offscale-radius": 1,
   "no-offscale-fontweight": 1,
   "no-raw-edgeinsets": 1,
-  "no-raw-zero-spacing": 1,
-  "no-direct-generated-import": 1
+  "no-raw-zero-spacing": 1
 }

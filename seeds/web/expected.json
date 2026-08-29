@@ -1,0 +1,20 @@
+{
+  "$これは何": "Web の A層ルールが種に対して何件発火するはずかの宣言。0 になったら、そのルールは死んでいます。",
+  "$件数が1でないもの": {
+    "no-non-token-color": "色を指定する全プロパティ（color / background / fill / stroke ほか）を見る広いルールなので、seed_css.css の 2行目（hex）・7行目（rgba）・11行目（色名）の3件に重なって当たる。**重なりは正しい挙動**なので、実測値をそのまま宣言する",
+    "no-raw-spacing": "seed_css.css の padding と、seed_markup.html のインライン style の padding に当たって2件"
+  },
+  "$注意": "件数を『1にそろえる』ために種を分けない。狙いは『そのルールがまだ発火するか』であって『ちょうど1件か』ではない。ルールを直したら、この宣言も実測に合わせて更新する",
+  "no-raw-hex": 1,
+  "no-raw-font-size": 1,
+  "no-raw-spacing": 2,
+  "no-raw-border-width": 1,
+  "no-raw-radius": 1,
+  "no-raw-color-function": 1,
+  "no-raw-offset": 1,
+  "no-raw-stroke-width": 1,
+  "no-raw-font-weight": 1,
+  "no-non-token-color": 3,
+  "no-inline-style-values": 1,
+  "no-js-style-values": 1
+}

@@ -156,9 +156,31 @@ def load_rules(rules_path, _seen=None):
             merged[key] = child[key]
     merged["rules"].extend(child.get("rules", []))
 
+    # 同じ id は後勝ち（子が親を上書き）。**上書きは黙って起こさない**
+    # （2026-08-29。案件が A/B/C 層を並べて継承する形にしたため、同じ id が
+    # 複数回載りうる。重複したまま走ると同じ違反が二重に報告される）
+    seen_ids, deduped = {}, []
+    for rule in merged["rules"]:
+        rid = rule.get("id")
+        if rid is None:
+            deduped.append(rule)
+            continue
+        if rid in seen_ids:
+            prev = deduped[seen_ids[rid]]
+            if prev != rule:
+                print(f"デザインハーネス注意: ルール '{rid}' が複数の層で定義され、"
+                      f"後の定義で上書きしました（{rules_path}）。\n"
+                      f"  同じ内容なら片方を消してください。違う内容なら、"
+                      f"どちらが正かを決めてください。", file=sys.stderr)
+            deduped[seen_ids[rid]] = rule
+        else:
+            seen_ids[rid] = len(deduped)
+            deduped.append(rule)
+    merged["rules"] = deduped
+
     # 案件側の追加設定はそのまま通す
     for key in ("ignore_reason_min", "project_root", "expected_targets",
-                "ignore_requires_expiry"):
+                "expected_rules", "ignore_requires_expiry"):
         if key in child:
             merged[key] = child[key]
     return merged
@@ -547,6 +569,27 @@ def run_all(config, rules_path, project_root, hooks, log_path):
         errors_total.extend(errs)
         warns_total.extend(warns)
         write_observations(log_path, obs)
+
+    # ルール数のラチェット（2026-08-29 新設）。
+    # **実害**: 414 のルールを A/B/C 層に分けたところ、extends を1段しか読まない
+    # 古い submodule のピンでは奥の層が届かず、flash-compose のルールが 12 → 7 に
+    # 静かに減った。**それでも「違反なし」で exit 0 だった。**
+    # 対象数のラチェット（expected_targets）はファイル数しか見ないので素通りする。
+    exp_rules = config.get("expected_rules")
+    if isinstance(exp_rules, int):
+        n = len(config.get("rules", []))
+        if n < exp_rules:
+            print(f"デザインハーネス異常: 読み込めたルールが {n} 件で、"
+                  f"宣言（expected_rules: {exp_rules}）を下回りました。\n"
+                  f"  extends の参照先・submodule のピン・パスの綴りを確かめてください"
+                  f"（届かない層は黙って落ちます）。\n"
+                  f"  意図した減少なら rules.json の expected_rules を下げてください"
+                  f"（差分が git に残ります）。", file=sys.stderr)
+            return 2
+        if n > exp_rules:
+            print(f"デザインハーネス注意: ルールが {n} 件に増えています。"
+                  f"rules.json の expected_rules（{exp_rules}）を上げてください。",
+                  file=sys.stderr)
 
     expected = config.get("expected_targets")
     if isinstance(expected, int) and scanned < expected:

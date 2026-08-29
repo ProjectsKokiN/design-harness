@@ -331,6 +331,57 @@ def main():
         except RecursionError:
             FAILED.append(("extends の循環", ["無限再帰で落ちた"], ""))
 
+    # --- ルール数のラチェット（2026-08-29。flash-compose で 12→7 の実害）------
+    # extends を1段しか読まない古いピンで奥の層が届かず、ルールが静かに減っても
+    # 「違反なし」で exit 0 だった。expected_targets はファイル数しか見ない。
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        (d / "lib").mkdir()
+        (d / "lib" / "a.dart").write_text("var ok = 1;\n", encoding="utf-8")
+
+        def rules(n_rules, expected):
+            (d / "rules.json").write_text(json.dumps({
+                "file_extensions": [".dart"],
+                "expected_rules": expected,
+                "rules": [{"id": f"r{i}", "severity": "error", "pattern": f"ZZZ{i}"}
+                          for i in range(n_rules)]}), encoding="utf-8")
+            return subprocess.run(
+                [sys.executable, str(ENGINE), "--rules", str(d / "rules.json"), "--all"],
+                capture_output=True, text=True, cwd=d,
+                env={**os.environ, "HARNESS_SOURCE": "test"})
+
+        r = rules(3, 3)
+        if r.returncode == 0:
+            PASSED.append("ルール数ラチェット: 宣言どおりなら通る")
+        else:
+            FAILED.append(("ルール数ラチェット", ["宣言どおりなのに落ちた"],
+                           r.stderr[-200:]))
+        r = rules(2, 3)
+        if r.returncode == 2:
+            PASSED.append("ルール数ラチェット: 減ったら落ちる")
+        else:
+            FAILED.append(("ルール数ラチェット",
+                           [f"ルールが減ったのに落ちなかった（{r.returncode}）"],
+                           r.stderr[-200:]))
+
+    # --- 同じ id の重複（A/B/C 層を並べて継承する形にしたため起こりうる）--------
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        (d / "p.json").write_text(json.dumps({
+            "file_extensions": [".dart"],
+            "rules": [{"id": "dup", "severity": "error", "pattern": "OLD"}]}),
+            encoding="utf-8")
+        (d / "c.json").write_text(json.dumps({
+            "extends": ["p.json"],
+            "rules": [{"id": "dup", "severity": "error", "pattern": "NEW"}]}),
+            encoding="utf-8")
+        cfg = engine.load_rules(d / "c.json")
+        got = [r for r in (cfg or {}).get("rules", []) if r.get("id") == "dup"]
+        if len(got) == 1 and got[0]["pattern"] == "NEW":
+            PASSED.append("重複した id: 1件に畳まれ、子が勝つ")
+        else:
+            FAILED.append(("重複した id", [f"畳まれていない: {got}"], ""))
+
     # --- 結果 ---------------------------------------------------------------
     print(f"妨害テスト: {len(PASSED)} 件 通過 / {len(FAILED)} 件 失敗")
     for label, problems, tail in FAILED:
