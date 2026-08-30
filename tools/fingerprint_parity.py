@@ -49,10 +49,23 @@ def run(cmd, path):
         r = subprocess.run(cmd + [str(path)], capture_output=True, text=True,
                            timeout=60)
     except (OSError, subprocess.TimeoutExpired) as e:
-        return None, f"{cmd[0]} を実行できません: {e}"
+        return None, f"NOTFOUND:{cmd[0]} を実行できません: {e}"
     if r.returncode != 0:
-        return None, f"{cmd[0]} が失敗しました: {r.stderr.strip()[:200]}"
-    return r.stdout.strip(), None
+        return None, f"FAILED:{cmd[0]} が失敗しました: {r.stderr.strip()[:200]}"
+    out = r.stdout.strip()
+    # **空の出力を値として受け取らない。**
+    #
+    # 2026-08-30、Windows で `text_digest.mjs` の本体が一度も動かないのに
+    # **終了コードは 0** で、標準出力だけが空でした。ここがそれを値として
+    # 受け取ったせいで、「指紋が JS と Python で割れています / JS: （空）」と
+    # 出ていました。**割れていたのではなく、片側が何も見ていなかった**のです。
+    if not out:
+        return None, (f"EMPTY:{cmd[0]} が**何も出力しませんでした**（終了コードは 0）。\n"
+                      f"  実行したもの: {' '.join(cmd)}\n"
+                      f"  **『割れている』ではなく『片側が動いていない』です。**\n"
+                      f"  .mjs なら、本体を走らせる条件（import.meta.url の比較）を"
+                      f"確かめてください")
+    return out, None
 
 
 def main(argv=None):
@@ -72,16 +85,23 @@ def main(argv=None):
     py, err1 = run([sys.executable, str(FP / "text_digest.py")], args.fixture)
     js, err2 = run(["node", str(FP / "text_digest.mjs")], args.fixture)
 
-    if err2 and "node" in str(err2):
-        print(f"注意: node が無いので JS 側を確かめられません（{err2}）。\n"
-              f"  **確かめていないので、確かめた顔をしません。**"
-              f"書き出し器を動かすマシンでは node を入れてください。",
-              file=sys.stderr)
-        return 2
+    # **理由を取り違えないこと。** 2026-08-30 まで、言い分に "node" の字が
+    # 入っているだけで「node が無い」に化けていた。実際は node はあって、
+    # **.mjs の本体が動いていない**（Windows）ことが原因だった。
     for e in (err1, err2):
-        if e:
-            print(e, file=sys.stderr)
-            return 2
+        if not e:
+            continue
+        kind, _, body = str(e).partition(":")
+        if kind == "NOTFOUND":
+            print(f"注意: 片側を実行できません（{body}）。\n"
+                  f"  **確かめていないので、確かめた顔をしません。**"
+                  f"書き出し器を動かすマシンでは node を入れてください。",
+                  file=sys.stderr)
+        elif kind == "EMPTY":
+            print(f"[NG] {body}", file=sys.stderr)
+        else:
+            print(body, file=sys.stderr)
+        return 2
 
     if py != js:
         print(f"指紋が JS と Python で割れています。\n"
@@ -147,6 +167,19 @@ def self_test():
             print(f"self-test: node が無いので JS 側は未確認（{e2}）")
         elif py != js:
             print(f"self-test NG: 2本が割れています\n  py={py}\n  js={js}"); ok = False
+
+        # **何も出さずに 0 で終わる相手を、値として受け取らないこと。**
+        # 2026-08-30、Windows で text_digest.mjs がこの壊れ方をしていた
+        # （import.meta.url の比較が常に false）。終了コードは 0 なので、
+        # ここが空文字を受け取ると「割れています / JS:（空）」と誤診する。
+        silent = Path(td) / "silent.mjs"
+        silent.write_text("process.exit(0);\n", encoding="utf-8")
+        out, err = run(["node", str(silent)], f)
+        if err is None:
+            print("self-test NG: **何も出力しない相手を値として受け取りました。**"
+                  "『割れている』と誤診します"); ok = False
+        elif out is not None:
+            print(f"self-test NG: 空のはずが値を返しました: {out!r}"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1

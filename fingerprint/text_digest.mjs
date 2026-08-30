@@ -13,6 +13,7 @@
 
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 export function textDigest(text) {
   const lf = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -20,7 +21,16 @@ export function textDigest(text) {
   return createHash('sha256').update(Buffer.from(nfc, 'utf8')).digest('hex');
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// **`file://` を手で組み立てないこと。** Windows では左右が食い違い、
+// **常に false** になります（2026-08-30 に Windows 側で実測）。
+//
+//     import.meta.url  = file:///C:/tmp/probe.mjs
+//     process.argv[1]  = C:\tmp\probe.mjs
+//     比較結果          = false
+//
+// そのとき**終了コードは 0 のまま、標準出力が空**になります。呼び出し側は
+// 「動いた」と受け取り、指紋が空のまま「割れています」と報告していました。
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const src = process.argv[2]
     ? readFileSync(process.argv[2], 'utf8')
     : readFileSync(0, 'utf8');
