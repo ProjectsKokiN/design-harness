@@ -49,6 +49,12 @@ from pathlib import Path
 BUILDERS = {}
 
 
+#: severity は**設定から取る**（2026-08-30）。生成器が強さを決めると、
+#: 手書きから移したときに黙って error へ上がる。flash-compose の台帳テストが
+#: no-offscale-fontweight の warn → error を捕まえた。
+DEFAULT_SEVERITY = "error"
+
+
 def builder(stack, scale):
     def deco(fn):
         BUILDERS[(stack, scale)] = fn
@@ -69,10 +75,10 @@ def alts(values):
 
 
 @builder("flutter", "radius")
-def _radius(values, src):
+def _radius(values, src, severity):
     return {
         "id": "no-offscale-radius",
-        "severity": "error",
+        "severity": severity,
         "pattern": (r"BorderRadius\.circular\(\s*(?!(?:" + alts(values) +
                     r")(?:\.0)?\s*\))[0-9]"),
         "forbidden": "角丸のスケールに無い値を使うこと",
@@ -83,10 +89,10 @@ def _radius(values, src):
 
 
 @builder("flutter", "fontWeight")
-def _weight(values, src):
+def _weight(values, src, severity):
     return {
         "id": "no-offscale-fontweight",
-        "severity": "error",
+        "severity": severity,
         "pattern": (r"FontWeight\.(?:bold\b|w(?!" +
                     "|".join(fmt(v) + r"\b" for v in
                              sorted(set(values), key=float)) + r")[0-9]+)"),
@@ -127,7 +133,8 @@ def generate(conf, base):
             continue
         group, prefix = spec["group"], spec.get("prefix")
         values = pick(tokens, group, prefix)
-        rules.append(fn(values, f"{group}{'/' + prefix if prefix else ''}"))
+        rules.append(fn(values, f"{group}{'/' + prefix if prefix else ''}",
+                        spec.get("severity", DEFAULT_SEVERITY)))
 
     meta = tokens.get("$meta", {})
     doc = {
@@ -222,7 +229,9 @@ def self_test():
         (base / "tokens.json").write_text(json.dumps(tokens), encoding="utf-8")
         conf = {"stack": "flutter", "tokens": "tokens.json", "out": "gen.json",
                 "scales": {"radius": {"group": "CornerRadius"},
-                           "fontWeight": {"group": "Typography", "prefix": "Weight/"}}}
+                           "fontWeight": {"group": "Typography",
+                                          "prefix": "Weight/",
+                                          "severity": "warn"}}}
         (base / "c.json").write_text(json.dumps(conf), encoding="utf-8")
         argv = ["--config", str(base / "c.json")]
 
@@ -239,6 +248,11 @@ def self_test():
         wt = next(r for r in doc["rules"] if r["id"] == "no-offscale-fontweight")
         if "20" in wt["pattern"].replace("800", "").replace("400", ""):
             print("self-test NG: prefix が効かず Size/M が混ざった"); ok = False
+
+        # severity は設定どおりか（生成器が強さを決めない）
+        if wt.get("severity") != "warn":
+            print(f"self-test NG: severity が設定どおりでない: {wt.get('severity')}")
+            ok = False
 
         # 生成直後は --check が通る
         if main(argv + ["--check"]) != 0:
