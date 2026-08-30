@@ -60,18 +60,30 @@ step "種まき（ルールが実際に発火するか）" \
 step "ルールの生成物（段の値が tokens と一致するか）" \
   "$PY" "$HARNESS/tools/gen_rules.py" --config {{<DS>/rules/gen-rules.json}} --check
 
-# Figma 本体との鮮度は **必須段から外した**（2026-08-29 ユーザー判断）。
+# Figma 本体との鮮度。**design/ を触る機体でだけ必須**（2026-08-30 に結び直した）。
 #
-#   得るもの: 「書き出しが Figma より古い」の検出
-#   払うもの: 関門がネットワークと FIGMA_TOKEN に依存する（必須段でここだけ）
+# それまで全マシンで FIGMA_TOKEN を要求し、無ければ落としていた。しかし
+# この段が守るのは「Figma を変えたのに書き出しを取り直していない」状態で、
+# それを起こせるのは design/ を触る機体だけ。Windows（トークンが無い）と
+# Mac mini（403）は、**自分には起こせない失敗のために**止まっていた。
 #
-# 1人のデザイナーが自分の Figma を持つ構成では、更新はユーザーが伝える。
-# その1件のために関門の性質（ローカル完結・秘密情報なし）を変える価値は無い、
-# という判断。**書き出し → 生成物の鮮度差（上の staleness_check）は必須のまま**で、
-# こちらはネットワーク不要。別物なので混同しない。
-#
-# ユーザーが「Figma を更新した」と言ったとき、実装の前に手で回す:
-#   source ~/.claude/.env && python3 design/figma_freshness.py
+# **段は減らさない。責任のある機体に結び直す。** 担当外の機体では、機体名と
+# 理由を出力に残して飛ばす（黙って飛ばさない）。飛ばした穴は、次の
+# 「機体の担当」の段が塞ぐ——担当外のパスを変えていたらそこで落ちる。
+step "鮮度（Figma 本体 → 書き出し。design/ の担当機のみ）" \
+  "$PY" "$HARNESS/tools/machine_scope.py" --config design/machine-scope.json \
+    --owns design/ -- bash -c '
+      if [ -z "${FIGMA_TOKEN:-}" ]; then
+        echo "FIGMA_TOKEN がありません。鮮度を確認せずに通すことはしません。" >&2
+        echo "  source ~/.claude/.env を実行してから再実行してください。" >&2
+        exit 1
+      fi
+      '"$PY"' design/figma_freshness.py'
+
+# 上で飛ばした穴を塞ぐ対の検査。担当外と宣言した機体が担当外のパスを
+# 変えていたら落とす（Windows が design/ を触っていたら、ここで止まる）
+step "機体の担当（担当外のパスを変えていないか）" \
+  "$PY" "$HARNESS/tools/machine_scope.py" --config design/machine-scope.json --check
 
 # 見なかったものを機械が出す。完了レポートの「残っている限界」はこの出力を貼る
 # （AI の自己申告にしない。走査が空振りしていれば exit 2 で落ちる）

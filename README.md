@@ -20,6 +20,8 @@
 | **`tools/gen_rules.py`** | **B層の生成器**: 段の値が入るルールを tokens.json から作る（`--check` でズレを検出） |
 | **`tools/seed_check.py`** | **種まき欠陥テスト**: ルールが実際に発火するか（ラチェットは対象数、これは発火件数） |
 | **`seeds/<stack>/`** | 種のひな形（わざと違反させたコード）。案件の `design/seeds/` へコピーする |
+| **`tools/machine_scope.py`** | **検査の段を、その失敗を起こせる機体に結び直す**（`--owns` で段を結び、`--check` で担当外の変更を落とす） |
+| `templates/machine-scope.json` | 担当の宣言のひな形（案件の `design/` へコピーする） |
 | **`tools/gap_report.py`** | **検査が見なかったものを機械が出す**（完了レポートの「限界」を自己申告にしない） |
 | **`tools/expectation_source_check.py`** | 照合テストの期待値が書き出し由来か（手書きの期待値を禁じる） |
 | **`tools/exporter_check.py`** | 書き出しを作った器が保存され、指紋が一致するか |
