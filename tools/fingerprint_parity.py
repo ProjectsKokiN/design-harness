@@ -128,6 +128,11 @@ def self_test():
     """固定具が本当に違いを暴けるかを示す（通ることの確認では何も証明できない）。"""
     import hashlib, tempfile, unicodedata
     ok = True
+
+    def check(cond, msg):
+        nonlocal ok
+        if not cond:
+            print(f"self-test NG: {msg}"); ok = False
     # **バイトで読んで自前で復号する。** Path.read_text は Python の
     # universal newlines で CRLF を LF に直してしまい、「改行を統一しない」
     # 変種が固定具で割れなくなる（2026-08-29 に実際に踏んだ）。
@@ -180,6 +185,57 @@ def self_test():
                   "『割れている』と誤診します"); ok = False
         elif out is not None:
             print(f"self-test NG: 空のはずが値を返しました: {out!r}"); ok = False
+
+    # --- 本体（main）を通す（2026-09-02 新設）--------------------------------
+    # それまで self-test は**固定具の識別力**（変種を作って値が割れるか）だけを
+    # 見ており、**main() を1行も通していなかった**（実測 13%）。
+    # 本体が常に 0 を返すバグがあっても気づけない状態だった。
+    # この道具が守っているのは「いちばん気づきにくい食い違い」なので、
+    # 道具自身が自分を証明できていないのは噛み合わない。
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+
+        def run_main(fixture_text, py_body, js_body):
+            (d / "fx.txt").write_bytes(fixture_text)
+            (d / "text_digest.py").write_text(py_body, encoding="utf-8")
+            (d / "text_digest.mjs").write_text(js_body, encoding="utf-8")
+            global FP
+            keep, FP = FP, d
+            try:
+                return main(["--fixture", str(d / "fx.txt")])
+            finally:
+                FP = keep
+
+        SAME_PY = ("import sys,hashlib,unicodedata\n"
+                   "s=open(sys.argv[1],encoding='utf-8').read()\n"
+                   "s=s.replace('\\r\\n','\\n').replace('\\r','\\n')\n"
+                   "print(hashlib.sha256(unicodedata.normalize('NFC',s)"
+                   ".encode('utf-8')).hexdigest())\n")
+        SAME_JS = ("import fs from 'fs';import crypto from 'crypto';\n"
+                   "let s=fs.readFileSync(process.argv[2],'utf8');\n"
+                   "s=s.replace(/\\r\\n/g,'\\n').replace(/\\r/g,'\\n');\n"
+                   "console.log(crypto.createHash('sha256')"
+                   ".update(Buffer.from(s.normalize('NFC'),'utf8')).digest('hex'));\n")
+        # NFC を省いた JS。**合成済みと分解済みで値が割れる**
+        BAD_JS = SAME_JS.replace(".normalize('NFC')", "")
+
+        text = "が\nは\n".encode("utf-8")            # 合成済み
+        decomposed = unicodedata.normalize("NFD", "が\nは\n").encode("utf-8")
+
+        rc = run_main(text, SAME_PY, SAME_JS)
+        if rc == 2:
+            print("  （node が無いので本体の検査は飛ばしました）")
+        else:
+            check(rc == 0, f"両側が同じなのに落ちた（{rc}）")
+            # **割れたら落ちること**（この回の本体）
+            check(run_main(decomposed, SAME_PY, BAD_JS) == 1,
+                  "JS が NFC を省いているのに通した")
+            # 片側が実行できないときは「確かめた顔をしない」＝ 2
+            check(run_main(text, SAME_PY, "process.exit(1)\n") == 2,
+                  "片側が落ちたのに 0/1 を返した")
+            # 固定具が無ければ 2
+            check(main(["--fixture", str(d / "no_such.txt")]) == 2,
+                  "固定具が無いのに通した")
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1

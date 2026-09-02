@@ -20,7 +20,8 @@
 
 - 案件固有のコマンド（`flutter test` / `npx tsc` など）。外部の道具なので
   self-test の有無を問わない。**ただし一覧には出す**（何が無検査かを見えるように）
-- self-test の中身が薄いこと。落ちるケースを持っているかは人が見る
+- **落ちるケースが本物か**（`--min-coverage` は行数しか見ない。1行通れば
+  数には入る）。中身が正しいかは人が見る
 - 確かめた方法: --self-test（self-test の無い道具を段に足すと落ちること）
 
 ## 使い方（案件のルートで）
@@ -78,6 +79,68 @@ def documented_exceptions(readme):
     return out
 
 
+def self_test_coverage(tool_path):
+    """その道具の self-test が、本体を何行通るかを返す（2026-09-02 新設）。
+
+    **`stage_check` はそれまで「self-test を持っているか」しか見ていなかった。**
+    持っていても中身が薄ければ、何も見ていないのと同じ。実測で分かった例:
+
+      fingerprint_parity   80行中  9行（11%）… 固定具の識別力だけを見ており、
+                                              **main() を1行も通っていなかった**
+      impl_coverage_check  36行中  7行（19%）… トークン照合の本体が0行
+                                              （planttalk が 2026-09-02 に指摘）
+
+    実行行は `ast` で数える（コメントと文字列だけの行を除くため）。
+    戻りは (本体の行数, 通った行数) または None（self-test を持たない）。
+    """
+    import ast as _ast
+    import importlib.util as _ilu
+    import io as _io
+    import contextlib as _ctx
+
+    src = tool_path.read_text(encoding="utf-8")
+    try:
+        tree = _ast.parse(src)
+    except SyntaxError:
+        return None
+    st = next((n for n in _ast.walk(tree)
+               if isinstance(n, _ast.FunctionDef) and n.name == "self_test"), None)
+    if st is None:
+        return None
+    st_lines = set(range(st.lineno, (st.end_lineno or st.lineno) + 1))
+    body = {n.lineno for n in _ast.walk(tree)
+            if isinstance(n, _ast.stmt) and n.lineno not in st_lines}
+    if not body:
+        return None
+
+    spec = _ilu.spec_from_file_location(f"_cov_{tool_path.stem}", tool_path)
+    mod = _ilu.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception:
+        return None
+
+    hit = set()
+    name = tool_path.name
+
+    def tr(frame, ev, arg):
+        if ev == "line" and frame.f_code.co_filename.endswith(name):
+            hit.add(frame.f_lineno)
+        return tr
+
+    sys.settrace(tr)
+    try:
+        with _ctx.redirect_stdout(_io.StringIO()), _ctx.redirect_stderr(_io.StringIO()):
+            mod.self_test()
+    except SystemExit:
+        pass
+    except Exception:
+        pass
+    finally:
+        sys.settrace(None)
+    return len(body), len(body & hit)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="verify.sh の段が検査済みの道具か")
     ap.add_argument("--verify", type=Path, default=Path("design/verify.sh"))
@@ -86,6 +149,9 @@ def main(argv=None):
     ap.add_argument("--run", action="store_true", default=True,
                     help="self-test を実際に走らせる（既定）")
     ap.add_argument("--no-run", dest="run", action="store_false")
+    ap.add_argument("--min-coverage", type=int, metavar="N",
+                    help="self-test が道具の本体の N%% 以上を通ることを求める。"
+                         "省くと測って表示するだけ")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
@@ -162,6 +228,35 @@ def main(argv=None):
           f"外部・例外の段 {len(foreign)}件")
     for f in foreign:
         print(f"  自己検査なし（外部の道具）: {f}")
+
+    # **self-test の中身の薄さを測る**（2026-09-02 新設）。
+    # それまで「持っているか」しか見ておらず、持っていても本体を1行も
+    # 通らない道具があった（fingerprint_parity 11%・impl_coverage_check の
+    # トークン照合は 0行）
+    rows = []
+    for tp in sorted(args.tools.glob("*.py")):
+        r = self_test_coverage(tp)
+        if r is None:
+            continue
+        body, hit = r
+        rows.append((tp.stem, body, hit, hit * 100 // max(body, 1)))
+    if rows:
+        rows.sort(key=lambda x: x[3])
+        thin = [r for r in rows if args.min_coverage and r[3] < args.min_coverage]
+        print(f"\nself-test の網羅（道具 {len(rows)}本）: "
+              f"最小 {rows[0][3]}% / 中央 {sorted(r[3] for r in rows)[len(rows)//2]}% / "
+              f"最大 {rows[-1][3]}%")
+        for name, body, hit, pct in rows[:5]:
+            mark = "  ← **薄い**" if args.min_coverage and pct < args.min_coverage else ""
+            print(f"  {name:<26} {hit:>3}/{body:<3}行 {pct:>3}%{mark}")
+        if thin:
+            problems.append(
+                f"self-test が本体の {args.min_coverage}% を通らない道具が"
+                f" {len(thin)} 本あります: "
+                + " / ".join(f"{n}({p}%)" for n, _, _, p in thin)
+                + "\n    **持っているだけでは何も証明していません。**"
+                  "落ちるケースを足してください")
+
     if problems:
         print("\n落ちるところを見ていない段があります:", file=sys.stderr)
         for p in problems:

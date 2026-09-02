@@ -1,0 +1,64 @@
+{
+  "$meta": {
+    "これは何": "案件をまたぐ複製の宣言。同名で中身が違うファイルは、回収すべき共通の道具か、案件ごとに違って当然のもののどちらか。**後者は宣言する。宣言できないものが回収の候補。**",
+    "回し方": "python3 tools/duplication_check.py --config duplication.json",
+    "なぜ要るか": "このハーネスの改良は毎回『どれかの案件が既に解いていたもの』の回収だった。候補を見つけるのが手作業だったので機械にした（2026-09-02）",
+    "いま残っている候補（2026-09-02）": {
+      "figma_freshness.py": "**3案件で別物。planttalk は 80行・関数1個・self-test なし・components しか見ていない**（他は 400/320行・styles と variables も見る）。条件4 の道具なので最優先で回収する",
+      "export_io.py": "生成器の共通基盤（9関数 vs 3関数）。回収する",
+      "figma_names.py / verify.py": "aub は 2026-09-02 に共有層の薄い入口へ移した。**flash-compose がまだ自前の実装を持っている**（そちらのセッションの作業）"
+    }
+  },
+  "roots": [
+    "~/dev/aub-familywalk",
+    "~/dev/flash-compose",
+    "~/dev/planttalk"
+  ],
+  "scope": [
+    "design"
+  ],
+  "suffixes": [
+    ".py",
+    ".js",
+    ".mjs",
+    ".sh"
+  ],
+  "exclude": [
+    "harness/",
+    "__pycache__/",
+    "seeds/",
+    "figma/exporters/"
+  ],
+  "allow": [
+    {
+      "name": "gen_colors.py",
+      "why": "デザインシステムごとに色の階層が違う（414 は Prim/Sem の2層、aub は ColorSemantic のみ）",
+      "reviewBy": "2026-12-31"
+    },
+    {
+      "name": "gen_typography.py",
+      "why": "書体の枠と Text Styles の構造がデザインシステムごとに違う",
+      "reviewBy": "2026-12-31"
+    },
+    {
+      "name": "gen_surfaces.py",
+      "why": "面の作り方が component set の構造に依存する",
+      "reviewBy": "2026-12-31"
+    },
+    {
+      "name": "gen_component_specs.py",
+      "why": "変異表の畳み方が軸の構成に依存する",
+      "reviewBy": "2026-12-31"
+    },
+    {
+      "name": "design_check.py",
+      "why": "薄い入口。案件固有の HOOKS（soften の条件）を持つ",
+      "reviewBy": "2026-12-31"
+    },
+    {
+      "name": "verify.sh",
+      "why": "統合検査の入口。共通の必須段は ci/verify.sh.template から配るが、案件固有の段（同梱DB・ゴールデンの出所・カタログ）は案件が足す",
+      "reviewBy": "2026-12-31"
+    }
+  ]
+}

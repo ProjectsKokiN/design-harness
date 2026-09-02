@@ -20,6 +20,7 @@
 | **`tools/gen_rules.py`** | **B層の生成器**: 段の値が入るルールを tokens.json から作る（`--check` でズレを検出） |
 | **`tools/seed_check.py`** | **種まき欠陥テスト**: ルールが実際に発火するか（ラチェットは対象数、これは発火件数） |
 | **`seeds/<stack>/`** | 種のひな形（わざと違反させたコード）。案件の `design/seeds/` へコピーする |
+| **`tools/duplication_check.py`** | **案件をまたぐ複製を見つける**（回収の候補を機械で出す）。設定は `duplication.json` |
 | **`tools/gen_verify.py`** | **生成し直して差分が出たら落ちる**（台帳 `generators.json` が唯一の正）。案件ごとの複製を 2026-09-02 に共有化 |
 | **`exporters/_preamble.js`** | 書き出し器のひな形（許可リスト・器が数える・同名で止まる） |
 | **`tools/figma_names.py`** | **Figma 名 → 識別子の規則の正本**（2026-09-02 に aub から回収）。生成器も検査もここを import する |
@@ -43,6 +44,7 @@
 | `tools/token_query.py` | 値からトークン名の逆引き |
 | `vocab/_vocab.json` | status / blockedBy / origin の語彙の正本 |
 | `attack/engine_attack_test.py` | エンジンの妨害テスト（全機能に「落ちるケース」を持つ） |
+| `tools/stage_check.py --min-coverage N` | **self-test が本体の N% を通ることを求める**（持っているだけでは何も証明していない） |
 | `ci/` | 各リポジトリへ配る workflow の雛形 |
 
 ## 憲法の分担（2026-08-29）
@@ -150,7 +152,8 @@ git -C design/harness pull origin main
 | 検査エンジン | `engine/design_check.py` | 2026-08-28（5案件の複製・最大515行乖離） |
 | デザインの憲法 | `DESIGN.md` | 2026-08-29（案件の DESIGN.md に手写し） |
 | 段の値が入るルール | `tools/gen_rules.py` の生成物 | 2026-08-30（正規表現に手写し） |
-| **識別子の規則** | **`tools/gen_verify.py`** | **生成し直して差分が出たら落ちる**（台帳 `generators.json` が唯一の正）。案件ごとの複製を 2026-09-02 に共有化 |
+| **識別子の規則** | **`tools/duplication_check.py`** | **案件をまたぐ複製を見つける**（回収の候補を機械で出す）。設定は `duplication.json` |
+| **`tools/gen_verify.py`** | **生成し直して差分が出たら落ちる**（台帳 `generators.json` が唯一の正）。案件ごとの複製を 2026-09-02 に共有化 |
 | **`exporters/_preamble.js`** | 書き出し器のひな形（許可リスト・器が数える・同名で止まる） |
 | **`tools/figma_names.py`** | **2026-09-02**（`impl_coverage_check` が別実装を持ち、文書の「唯一の正」と食い違っていた） |
 
