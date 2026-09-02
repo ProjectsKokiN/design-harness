@@ -53,6 +53,7 @@ import argparse
 import json
 from datetime import datetime, timezone
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -208,9 +209,37 @@ def check_tokens(conf, base, today):
     """
     notes, problems = [], []
     gen = conf.get("generated_by")
-    if gen and (base / gen).exists():
-        notes.append(f"トークン・スタイル: 生成器（{gen}）が書き出しから生成しているため"
-                     f"構造的に網羅。名前の存在では見ない")
+    if gen:
+        # **生成器は自分を証明する**（2026-09-02）。それまで
+        # `(base / gen).exists()` だけを見ていたため、`design/gen/` という
+        # **空のディレクトリがあるだけでトークン網羅の検査が全部消えて**いた。
+        # 確かめていなかったのは「生成器が回されたか」「生成物がいまの
+        # 書き出しと一致するか」の2つ。gen_verify がそれを見る。
+        if not (base / gen).exists():
+            problems.append(f"generated_by が指す場所がありません: {gen}")
+            return [], notes, problems
+        man = base / (conf.get("generator_manifest") or f"{gen}/generators.json")
+        if not man.exists():
+            problems.append(
+                f"生成器の台帳がありません: {man}\n"
+                f"    **生成器があると宣言していますが、一覧が1か所にありません。**\n"
+                f"    一覧が複数あると、足し忘れた生成器を誰も回さず、生成物だけが"
+                f"古くなります（aub の 2026-08-29 の実害）")
+            return [], notes, problems
+        r = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve().parent / "gen_verify.py"),
+             "--manifest", str(man), "--root", str(base)],
+            capture_output=True, text=True)
+        if r.returncode != 0:
+            problems.append(
+                f"生成物が書き出しと一致していません（gen_verify）:\n"
+                + "\n".join("    " + l for l in
+                             (r.stdout + r.stderr).strip().splitlines()[:8]))
+            return [], notes, problems
+        n = len([l for l in r.stdout.splitlines() if "変化なし" in l or "新規" in l])
+        notes.append(f"トークン・スタイル: 生成器（{gen}）が書き出しから生成し、"
+                     f"**生成し直しても差分が出ない**ことを確認済み（生成物 {n} ファイル）。"
+                     f"名前の存在では見ない")
         return [], notes, []
 
     globs = conf.get("theme_globs")
@@ -456,6 +485,46 @@ def self_test():
                 "$meta": {"declared": {"componentSets": 1, "singleComponents": 0}}})
         if main(cfg3) != 0:
             print("self-test NG: $meta.declared の宣言を認めなかった"); ok = False
+
+    # --- generated_by が自分を証明するか（2026-09-02 新設）--------------------
+    # それまで「ディレクトリが在るか」しか見ておらず、**空のディレクトリが
+    # あるだけでトークン網羅の検査が全部消えて**いた
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        (base / "export.json").write_text(json.dumps(
+            {"componentSets": {"Buttons/M": 1}, "singleComponents": {}}),
+            encoding="utf-8")
+        (base / "map.json").write_text(json.dumps(
+            {"components": [{"figma": "Buttons/M", "impl": [{"class": "A"}]}]}),
+            encoding="utf-8")
+        gen = base / "design" / "gen"
+        gen.mkdir(parents=True)
+        (base / "out").mkdir()
+
+        def cfg4():
+            (base / "c4.json").write_text(json.dumps(
+                {"export": "export.json", "component_map": "map.json",
+                 "generated_by": "design/gen"}), encoding="utf-8")
+            return ["--config", str(base / "c4.json")]
+
+        # 空のディレクトリだけ＝台帳が無い。**落とす**（この回の本体）
+        if main(cfg4()) != 1:
+            print("self-test NG: 空の design/gen で素通りした"); ok = False
+
+        # 台帳と動く生成器がそろえば通る
+        (gen / "gen_a.py").write_text(
+            "from pathlib import Path\nPath('out/a.txt').write_text('X')\n",
+            encoding="utf-8")
+        (gen / "generators.json").write_text(json.dumps(
+            {"generators": [{"file": "gen_a.py", "out": "out/a.txt"}]}),
+            encoding="utf-8")
+        if main(cfg4()) != 0:
+            print("self-test NG: 生成器がそろっているのに落ちた"); ok = False
+
+        # 生成物を手で直したら落ちる
+        (base / "out" / "a.txt").write_text("手で直した", encoding="utf-8")
+        if main(cfg4()) != 1:
+            print("self-test NG: 生成物の手直しを通した"); ok = False
 
     # --- トークン照合の本体（2026-09-02 新設）--------------------------------
     # planttalk の実測: この分岐は 36 行のうち 7 行（2つの早期リターン）しか

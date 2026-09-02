@@ -20,6 +20,8 @@
 | **`tools/gen_rules.py`** | **B層の生成器**: 段の値が入るルールを tokens.json から作る（`--check` でズレを検出） |
 | **`tools/seed_check.py`** | **種まき欠陥テスト**: ルールが実際に発火するか（ラチェットは対象数、これは発火件数） |
 | **`seeds/<stack>/`** | 種のひな形（わざと違反させたコード）。案件の `design/seeds/` へコピーする |
+| **`tools/gen_verify.py`** | **生成し直して差分が出たら落ちる**（台帳 `generators.json` が唯一の正）。案件ごとの複製を 2026-09-02 に共有化 |
+| **`exporters/_preamble.js`** | 書き出し器のひな形（許可リスト・器が数える・同名で止まる） |
 | **`tools/figma_names.py`** | **Figma 名 → 識別子の規則の正本**（2026-09-02 に aub から回収）。生成器も検査もここを import する |
 | **`tools/machine_scope.py`** | **検査の段を、その失敗を起こせる機体に結び直す**（`--owns` で段を結び、`--check` で担当外の変更を落とす） |
 | `templates/machine-scope.json` | 担当の宣言のひな形（案件の `design/` へコピーする） |
@@ -148,7 +150,9 @@ git -C design/harness pull origin main
 | 検査エンジン | `engine/design_check.py` | 2026-08-28（5案件の複製・最大515行乖離） |
 | デザインの憲法 | `DESIGN.md` | 2026-08-29（案件の DESIGN.md に手写し） |
 | 段の値が入るルール | `tools/gen_rules.py` の生成物 | 2026-08-30（正規表現に手写し） |
-| **識別子の規則** | **`tools/figma_names.py`** | **2026-09-02**（`impl_coverage_check` が別実装を持ち、文書の「唯一の正」と食い違っていた） |
+| **識別子の規則** | **`tools/gen_verify.py`** | **生成し直して差分が出たら落ちる**（台帳 `generators.json` が唯一の正）。案件ごとの複製を 2026-09-02 に共有化 |
+| **`exporters/_preamble.js`** | 書き出し器のひな形（許可リスト・器が数える・同名で止まる） |
+| **`tools/figma_names.py`** | **2026-09-02**（`impl_coverage_check` が別実装を持ち、文書の「唯一の正」と食い違っていた） |
 
 ## self-test を持たない道具（意図的な例外）
 

@@ -147,6 +147,16 @@ def main(argv=None):
 
     if args.update:
         print(f"器の指紋を記録し直しました: {updated}件 / 全{len(files)}件")
+        # **--update でも problems を捨てない**（2026-09-02。planttalk 指摘9）。
+        # それまで producer が無い・器が実在しない・**allow の期限切れ**を
+        # 表示せずに捨てて常に成功していた。保守用のコマンドで
+        # **期限切れの棚卸しを消せてしまう**のは、この道具が守ろうとしている
+        # 規律と噛み合わない。終了コードは 0 のままにして、表示だけする
+        if problems:
+            print(f"\n**--update では直らない問題が {len(problems)} 件あります"
+                  f"（終了コードは 0 ですが、放置しないでください）:**", file=sys.stderr)
+            for m in problems:
+                print(f"  - {m}", file=sys.stderr)
         return 0
     print(f"書き出しの器: {okc}/{len(files)}件が保存済みで指紋も一致")
     if problems:

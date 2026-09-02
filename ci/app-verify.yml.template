@@ -153,10 +153,12 @@ jobs:
           fi
           exit $FAILED
 
-      # 生成物のべき等は Python だけで回る（Flutter を入れずに済む）
+      # 生成物のべき等（共有の道具。台帳 generators.json が唯一の正）。
+      # **案件ごとの verify.py の複製をやめた**（2026-09-02）。
+      # 3案件のうち台帳を持っていたのは1件だけだった
       - name: 生成物のべき等
-        if: hashFiles('design/gen/verify.py') != ''
-        run: python3 design/gen/verify.py
+        if: hashFiles('design/gen/generators.json') != ''
+        run: python3 design/harness/tools/gen_verify.py
 
   # 静的解析とテストは案件ごとに前提が違う（同梱 DB・フォント等）ので、
   # **この雛形には入れない。** 必要な案件が自分で job を足す
