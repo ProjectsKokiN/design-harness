@@ -84,6 +84,38 @@ def figma_names(export_paths):
     return names - excluded, excluded
 
 
+def declared_problems(export_paths):
+    """書き出しが**単体 component を数えたか**を見る（2026-09-02 新設）。
+
+    実害: flash-compose / 414 の器が `COMPONENT_SET` しか集めておらず、
+    単体4件（Header / Footer / BottomNavigation / EmptyStates）が書き出しに
+    1件も入っていなかった。**条件7 の分母が4件小さいまま**、どの検査からも
+    見えなかった（`$meta.declared` が同じ間違った分母を持つので、段0の
+    受け入れ条件も通る）。
+
+    **「0件」でも宣言は要ります。** 宣言が無いのと0件は別です——
+    前者は「数えていない」、後者は「数えて0だった」。
+    """
+    out = []
+    for export_path in export_paths:
+        if not export_path or not export_path.exists():
+            continue
+        doc = json.loads(export_path.read_text(encoding="utf-8"))
+        if "componentSets" not in doc:
+            continue                      # 部品の書き出しでなければ関係ない
+        declared = (doc.get("$meta") or {}).get("declared") or {}
+        if "singleComponents" not in doc and "singleComponents" not in declared:
+            out.append(
+                f"{export_path.name}: 単体の component を数えていません。\n"
+                f"    器が `COMPONENT_SET` しか集めていない可能性があります"
+                f"（2026-09-02 の実害: 単体4件が書き出しに入らず、条件7 の分母が"
+                f"4件小さいままだった）。\n"
+                f"    ひな形: design/harness/exporters/_preamble.js の collect()。\n"
+                f"    本当に0件なら `\"singleComponents\": {{}}` を書いてください"
+                f"（宣言が無いのと0件は別です）")
+    return out
+
+
 def mapped_impl(map_path):
     """対応表から name → 実装があるか の対応を返す。"""
     doc = json.loads(map_path.read_text(encoding="utf-8"))
@@ -272,6 +304,7 @@ def main(argv=None):
 
     targets, excluded = figma_names(exports)
     impl = mapped_impl(cmap)
+    export_problems = declared_problems(exports)
 
     if not targets:
         print("NG: 書き出しに component set が0件です（書き出しが空の可能性）",
@@ -308,6 +341,11 @@ def main(argv=None):
         print(f"  {n}")
 
     rc = 0
+    if export_problems:
+        print(f"\n書き出しの分母が信用できません:", file=sys.stderr)
+        for m in export_problems:
+            print(f"  - {m}", file=sys.stderr)
+        rc = 1
     if unimplemented:
         print(f"\n未実装が {len(unimplemented)} 件あります"
               f"（Figma にあるものは全部実装する規則）:")
@@ -389,13 +427,45 @@ def self_test():
         if main(cfg) != 1:
             print("self-test NG: 幽霊の名前で落ちなかった"); ok = False
 
+    # --- 書き出しの分母（2026-09-02 新設）------------------------------------
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        (base / "map.json").write_text(json.dumps(
+            {"components": [{"figma": "Buttons/M", "impl": [{"class": "A"}]}]}),
+            encoding="utf-8")
+        (base / "c3.json").write_text(json.dumps(
+            {"export": "export.json", "component_map": "map.json"}),
+            encoding="utf-8")
+        cfg3 = ["--config", str(base / "c3.json")]
+
+        def export(doc):
+            (base / "export.json").write_text(json.dumps(doc), encoding="utf-8")
+
+        # 単体を数えていない＝器の取りこぼしの可能性。**落とす**
+        export({"componentSets": {"Buttons/M": 1}})
+        if main(cfg3) != 1:
+            print("self-test NG: singleComponents を数えていないのに通した"); ok = False
+
+        # 0件でも宣言があれば通る（「数えていない」と「数えて0」は別）
+        export({"componentSets": {"Buttons/M": 1}, "singleComponents": {}})
+        if main(cfg3) != 0:
+            print("self-test NG: 単体0件の宣言があるのに落ちた"); ok = False
+
+        # $meta.declared による宣言でも通る
+        export({"componentSets": {"Buttons/M": 1},
+                "$meta": {"declared": {"componentSets": 1, "singleComponents": 0}}})
+        if main(cfg3) != 0:
+            print("self-test NG: $meta.declared の宣言を認めなかった"); ok = False
+
     # --- トークン照合の本体（2026-09-02 新設）--------------------------------
     # planttalk の実測: この分岐は 36 行のうち 7 行（2つの早期リターン）しか
     # self-test を通っておらず、**トークン照合の本体は1行も通っていなかった**。
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
+        # singleComponents を宣言する（0件でも宣言は要る）
         (base / "export.json").write_text(json.dumps(
-            {"componentSets": {"Buttons/M": 1}}), encoding="utf-8")
+            {"componentSets": {"Buttons/M": 1}, "singleComponents": {}}),
+            encoding="utf-8")
         (base / "map.json").write_text(json.dumps(
             {"components": [{"figma": "Buttons/M", "impl": [{"class": "A"}]}]}),
             encoding="utf-8")

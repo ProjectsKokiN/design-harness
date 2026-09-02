@@ -4,16 +4,36 @@
     "なぜ要るか": "verify.sh は push 前に全マシンで走る。Figma の鮮度の段は design/ を触る機体でしか意味がないのに、全マシンで FIGMA_TOKEN を要求して Windows と Mac mini が止まっていた（2026-08-30）。",
     "正本": "~/.claude/skills/machine-relay/references/worker.md。案件で役割が違うなら、この宣言を先に直す",
     "検査": "design/harness/tools/machine_scope.py（--owns で段を結び、--check で担当外の変更を落とす）",
-    "注意": "verify.sh に機体名を直接書かない。担当は案件ごとに変わりうる"
+    "注意": "verify.sh に機体名を直接書かない。担当は案件ごとに変わりうる",
+    "CI について": "CI は何も触らないので担当パスは空にする。CI 側は HARNESS_MACHINE=CI を渡す。これで design/ の担当機でしか意味がない段（Figma の鮮度）が理由つきで飛び、--check は変更0件で通る。**machines に CI が無いと機体不明で exit 2 になり、CI が全部落ちる**（2026-09-02）。"
   },
   "machines": {
-    "MacBook Air": ["lib/ui/", "lib/theme/", "design/"],
-    "Mac mini": ["ios/"],
-    "Windows": ["lib/data/", "lib/providers/", "lib/router/", "lib/main.dart", "scripts/", "build/"]
+    "MacBook Air": [
+      "lib/ui/",
+      "lib/theme/",
+      "design/"
+    ],
+    "Mac mini": [
+      "ios/"
+    ],
+    "Windows": [
+      "lib/data/",
+      "lib/providers/",
+      "lib/router/",
+      "lib/main.dart",
+      "scripts/",
+      "build/"
+    ],
+    "CI": []
   },
   "shared": [
-    "SESSION_LOG.md", "MACHINE_TASKS.md", "README.md", "docs/",
-    "pubspec.yaml", "pubspec.lock", ".gitignore"
+    "SESSION_LOG.md",
+    "MACHINE_TASKS.md",
+    "README.md",
+    "docs/",
+    "pubspec.yaml",
+    "pubspec.lock",
+    ".gitignore"
   ],
   "strict": false
 }
