@@ -27,6 +27,8 @@ figma-fullexport.md が「Figma を触る作業の前に必ず回す」と書い
 """
 
 import hashlib
+import contextlib
+import io
 import json
 import os
 import sys
@@ -39,8 +41,27 @@ ROOT = Path(__file__).resolve().parent.parent
 #: 全量書き出しの components.json。レジストリ参照の案件はレジストリ側を指す
 EXPORT = ROOT / '{{書き出しのパス。例: ../design-systems/<名前>/figma/components.json}}'
 FILE_KEY = '{{Figma の fileKey}}'
-#: 参照しないページ（書き出しと同じ。同名の component set を拾わないため）
+#: 参照しないページ（書き出しと同じ。同名の component set を拾わないため）。
+#: **PAGE_SCOPE があればそちらが優先。** 除外方式は残しているが弱い（下記）
 SKIP_PAGES = ['{{下書きページ名}}', '{{AI出力ページ名}}']
+
+#: 参照してよいページの宣言（`design/figma/page-scope.json` の `allowed`）。
+#: **許可リスト方式**。2026-09-02 に aub-familywalk から回収した。
+#:
+#: 除外方式（SKIP_PAGES）だと **Figma に新しいページが増えたとき黙って対象に入る**。
+#: しかも書き出し器は許可リスト方式なので、**器と鮮度検査が別のページを見る**状態に
+#: なる（2026-09-02 に flash-compose で実際に起きた: 器は
+#: ⚙️_Styles&Components だけ、鮮度は Sandbox / AI Output 以外の全ページ）。
+#:
+#: 案件の入口（シム）で `PAGE_SCOPE = Path(...)` を差し込む。無ければ
+#: SKIP_PAGES に落ちるが、**弱い方式であることを毎回表示する。**
+PAGE_SCOPE = None
+
+#: スタイルの鮮度を見るための書き出し（2026-09-02 に aub から回収）。
+#: 両方そろっているときだけスタイルを見る。無ければ component set だけを見て、
+#: **見ていないことを表示する**（黙って飛ばさない）。
+STYLES_EXPORT = None
+DESCS_EXPORT = None
 # ---------------------------------------------------------------------------
 
 #: 指紋に入れる項目。**並べ替えで動く値（座標）は入れない。**
@@ -98,10 +119,32 @@ def node_digest(n: dict, names: dict | None = None) -> str:
     return hashlib.sha256('|'.join(map(str, parts)).encode()).hexdigest()[:12]
 
 
+def pages_of(doc) -> tuple[list, str]:
+    """参照するページと、その選び方の説明を返す。
+
+    **許可リスト方式が本命。** PAGE_SCOPE があればそれを使う。
+    無ければ SKIP_PAGES に落ちるが、弱い方式であることを毎回言う。
+    """
+    if PAGE_SCOPE is not None and Path(PAGE_SCOPE).exists():
+        allow = json.loads(Path(PAGE_SCOPE).read_text(encoding='utf-8'))['allowed']
+        pages = [p for p in doc['children'] if p['name'] in allow]
+        if not pages:
+            print(f'許可されたページが1枚も見つかりません: {allow}\n'
+                  f'  Figma のページ: {[p["name"] for p in doc["children"]]}\n'
+                  f'  **空のまま進めると「Figma が空」に見えます。**', file=sys.stderr)
+            raise SystemExit(2)
+        return pages, f'許可リスト {allow}'
+    pages = [p for p in doc['children'] if p['name'] not in SKIP_PAGES]
+    return pages, (f'除外リスト {SKIP_PAGES}（**弱い方式**。Figma に新しいページが'
+                   f'増えたとき黙って対象に入る。page-scope.json を作って'
+                   f'PAGE_SCOPE を差し込むと許可リストになる）')
+
+
 def read_sets() -> dict:
     """参照するページの component set を name → 指紋 で返す。"""
     doc = get(f'https://api.figma.com/v1/files/{FILE_KEY}?depth=1')['document']
-    pages = [p for p in doc['children'] if p['name'] not in SKIP_PAGES]
+    pages, how = pages_of(doc)
+    print(f'ページの選び方: {how}')
     ids = ','.join(p['id'] for p in pages)
     data = get(f'https://api.figma.com/v1/files/{FILE_KEY}/nodes?ids={ids}')
     found: dict[str, str] = {}
@@ -142,6 +185,57 @@ def read_sets() -> dict:
     return found
 
 
+def read_styles() -> dict | None:
+    """**そのページで使われている**スタイルを 名前 → (種類, 説明) で返す。
+
+    2026-09-02 に aub-familywalk から回収した。
+
+    REST の nodes 応答に入るのは「実際に当たっているスタイル」だけで、
+    ファイルにある全量ではない（aub の実測: 42 件のうち 18 件）。
+    **値も読めない。** それでも名前と説明のずれは拾える。
+    全量と値は Plugin API 側（書き出し器）で見る。
+
+    STYLES_EXPORT / DESCS_EXPORT がそろっていなければ None（見ない）。
+    """
+    if not (STYLES_EXPORT and DESCS_EXPORT
+            and Path(STYLES_EXPORT).exists() and Path(DESCS_EXPORT).exists()):
+        return None
+    doc = get(f'https://api.figma.com/v1/files/{FILE_KEY}?depth=1')['document']
+    pages, _ = pages_of(doc)
+    ids = ','.join(p['id'] for p in pages)
+    data = get(f'https://api.figma.com/v1/files/{FILE_KEY}/nodes?ids={ids}')
+    out = {}
+    for _, entry in data['nodes'].items():
+        for _sid, meta in (entry.get('styles') or {}).items():
+            if isinstance(meta, dict) and meta.get('name'):
+                out[meta['name']] = (meta.get('styleType'),
+                                     (meta.get('description') or '').strip())
+    return out
+
+
+def compare_styles(now: dict) -> list[str]:
+    """スタイルの名前と説明のずれを返す。**値は見ない。**"""
+    ng = []
+    styles = json.loads(Path(STYLES_EXPORT).read_text(encoding='utf-8'))
+    descs = json.loads(Path(DESCS_EXPORT).read_text(encoding='utf-8'))
+    kind = {'TEXT': 'text', 'FILL': 'paint', 'EFFECT': 'effect'}
+    aru = {k: {x['name'] for x in styles.get(k, [])}
+           for k in ('text', 'paint', 'effect')}
+    for name, (style_type, desc) in sorted(now.items()):
+        k = kind.get(style_type)
+        if k is None:
+            ng.append(f'知らないスタイルの種類です: {style_type}（{name}）')
+            continue
+        if name not in aru[k]:
+            ng.append(f'Figma で使われている {k} スタイル「{name}」が書き出しにありません')
+            continue
+        if k == 'text':
+            kaita = (descs.get('textStyles') or {}).get(name, '')
+            if desc != kaita:
+                ng.append(f'{name} の説明が違います: Figma「{desc}」/ 書き出し「{kaita}」')
+    return ng
+
+
 def body_hash(doc: dict) -> str:
     """書き出し本体（componentSets）の指紋。
 
@@ -175,7 +269,7 @@ def compare(saved: dict, now: dict, exported: set, excluded: set) -> dict:
     }
 
 
-def selftest() -> int:
+def self_test() -> int:
     """網に触らずに [compare] の振る舞いを確かめる。"""
     cases = []
 
@@ -216,6 +310,140 @@ def selftest() -> int:
         "d['added']" in body or 'd["added"]' in body,
     ))
 
+    # --- 純粋な関数を実際に動かす（2026-09-02 新設）--------------------------
+    # それまで self-test は `compare()` の1行しか通っておらず（実測 1/203 行）、
+    # **main() の配線は「ソースを grep」して確かめていた**——コードが
+    # そう見えるかを見ており、そう動くかは見ていなかった。
+    # **条件4 の道具としては薄すぎる。**
+    import tempfile as _tf
+
+    # node_digest: 同じ木なら同じ値・1つ変えたら変わる
+    n1 = {'name': 'A', 'type': 'FRAME', 'itemSpacing': 8,
+          'children': [{'name': 'T', 'type': 'TEXT', 'children': []}]}
+    n2 = json.loads(json.dumps(n1)); n2['itemSpacing'] = 12
+    n3 = json.loads(json.dumps(n1)); n3['children'][0]['name'] = 'U'
+    cases.append(('node_digest: 同じ木なら同じ値',
+                  node_digest(n1) == node_digest(json.loads(json.dumps(n1)))))
+    cases.append(('node_digest: 余白を変えたら変わる', node_digest(n1) != node_digest(n2)))
+    cases.append(('node_digest: **子の名前を変えても変わる**',
+                  node_digest(n1) != node_digest(n3)))
+
+    # body_hash: componentSets が変われば変わる
+    d1 = {'componentSets': {'A': {'x': 1}}}
+    d2 = {'componentSets': {'A': {'x': 2}}}
+    cases.append(('body_hash: 本体が変われば変わる', body_hash(d1) != body_hash(d2)))
+    cases.append(('body_hash: 同じなら同じ', body_hash(d1) == body_hash(
+        {'componentSets': {'A': {'x': 1}}})))
+
+    # pages_of: 許可リストが除外リストより優先する
+    doc = {'children': [{'id': '1', 'name': 'Sandbox'}, {'id': '2', 'name': 'Comp'},
+                        {'id': '3', 'name': 'New'}]}
+    g = globals()
+    keep = (g['PAGE_SCOPE'], g['SKIP_PAGES'])
+    with _tf.TemporaryDirectory() as td:
+        scope = Path(td) / 'page-scope.json'
+        scope.write_text(json.dumps({'allowed': ['Comp']}), encoding='utf-8')
+        g['SKIP_PAGES'] = ['Sandbox']
+        g['PAGE_SCOPE'] = None
+        pages, how = pages_of(doc)
+        cases.append(('除外リストだと**新しいページが黙って入る**',
+                      {p['name'] for p in pages} == {'Comp', 'New'} and '弱い' in how))
+        g['PAGE_SCOPE'] = scope
+        pages, how = pages_of(doc)
+        cases.append(('許可リストなら宣言したページだけ',
+                      {p['name'] for p in pages} == {'Comp'} and '許可' in how))
+        scope.write_text(json.dumps({'allowed': ['NoSuchPage']}), encoding='utf-8')
+        try:
+            pages_of(doc)
+            cases.append(('許可ページが0枚なら止まる', False))
+        except SystemExit:
+            cases.append(('許可ページが0枚なら止まる', True))
+
+        # compare_styles: 名前の欠落・説明のずれ・知らない種類
+        g['STYLES_EXPORT'] = Path(td) / 'styles.json'
+        g['DESCS_EXPORT'] = Path(td) / 'descriptions.json'
+        g['STYLES_EXPORT'].write_text(json.dumps(
+            {'text': [{'name': 'Body/M'}], 'paint': [], 'effect': []}),
+            encoding='utf-8')
+        g['DESCS_EXPORT'].write_text(json.dumps(
+            {'textStyles': {'Body/M': '本文'}}), encoding='utf-8')
+        cases.append(('スタイルが一致すれば何も出ない',
+                      compare_styles({'Body/M': ('TEXT', '本文')}) == []))
+        cases.append(('**説明のずれを拾う**',
+                      len(compare_styles({'Body/M': ('TEXT', '違う説明')})) == 1))
+        cases.append(('書き出しに無いスタイルを拾う',
+                      len(compare_styles({'Title/L': ('TEXT', '')})) == 1))
+        cases.append(('知らない種類を拾う',
+                      len(compare_styles({'X': ('SHADOW', '')})) == 1))
+        # 設定が無ければスタイルは見ない（黙って通さず None を返す）
+        g['STYLES_EXPORT'] = None
+        cases.append(('設定が無ければスタイルを見ない（None）', read_styles() is None))
+    g['PAGE_SCOPE'], g['SKIP_PAGES'] = keep
+    g['STYLES_EXPORT'] = g['DESCS_EXPORT'] = None
+
+    # --- main() を**網に触らず実際に動かす**（2026-09-02 新設）---------------
+    # それまで main の配線は「ソースを grep」して確かめており、そう動くかは
+    # 見ていなかった。get() を差し替えれば網なしで全経路を通せる。
+    with _tf.TemporaryDirectory() as td:
+        d = Path(td)
+        SETS = {'Buttons': {'type': 'COMPONENT_SET', 'name': 'Buttons',
+                            'itemSpacing': 8, 'children': []},
+                'Header': {'type': 'COMPONENT', 'name': 'Header',
+                           'itemSpacing': 4, 'children': []}}
+
+        def fake_get(url, _sets=SETS):
+            if 'depth=1' in url:
+                return {'document': {'children': [{'id': '1', 'name': 'Comp'}]}}
+            return {'nodes': {'1': {'styles': {},
+                                    'document': {'type': 'CANVAS', 'name': 'Comp',
+                                                 'children': list(_sets.values())}}}}
+
+        def run_main(export_doc, sets=None, argv=('x',)):
+            (d / 'export.json').write_text(json.dumps(export_doc), encoding='utf-8')
+            g2 = globals()
+            keep2 = (g2['EXPORT'], g2['get'], g2['PAGE_SCOPE'], g2['SKIP_PAGES'],
+                     sys.argv)
+            g2['EXPORT'] = d / 'export.json'
+            g2['SKIP_PAGES'] = []
+            g2['PAGE_SCOPE'] = None
+            g2['get'] = (lambda u: fake_get(u, sets)) if sets else fake_get
+            sys.argv = list(argv)
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    return main()
+            finally:
+                (g2['EXPORT'], g2['get'], g2['PAGE_SCOPE'], g2['SKIP_PAGES'],
+                 sys.argv) = keep2
+
+        # いまの Figma で指紋を作り、それを書き出しに入れれば「同じ」になる
+        g3 = globals()
+        keep3 = (g3['get'], g3['SKIP_PAGES'], g3['PAGE_SCOPE'])
+        g3['get'], g3['SKIP_PAGES'], g3['PAGE_SCOPE'] = fake_get, [], None
+        now = read_sets()
+        g3['get'], g3['SKIP_PAGES'], g3['PAGE_SCOPE'] = keep3
+
+        base = {'$meta': {'restDigests': dict(now)},
+                'componentSets': {'Buttons': {}, 'Header': {}}}
+        cases.append(('main: Figma と書き出しが同じなら 0', run_main(base) == 0))
+
+        # **単体 COMPONENT も指紋の対象**（planttalk が 2026-08-28 に直した退行）
+        cases.append(('main: 単体 COMPONENT も見ている', 'Header' in now))
+
+        # 値が変わったら 1
+        moved = json.loads(json.dumps(SETS)); moved['Buttons']['itemSpacing'] = 99
+        cases.append(('main: 値が変わったら 1', run_main(base, moved) == 1))
+
+        # **名前のずれで打ち切らず、値のずれも出す**（2026-08-21 の退行）
+        base2 = {'$meta': {'restDigests': dict(now)},
+                 'componentSets': {'Buttons': {}}}          # Header が書き出しに無い
+        cases.append(('main: 名前のずれがあっても値を比べる',
+                      run_main(base2, moved) == 1))
+
+        # 書き出しが空でも「同じ」と言わない
+        cases.append(('main: 書き出しに無いセットがあれば 1',
+                      run_main({'$meta': {'restDigests': {}},
+                                'componentSets': {}}) == 1))
+
     ng = [name for name, ok in cases if not ok]
     print(f'[figma_freshness] selftest {len(cases) - len(ng)}/{len(cases)} 件パス')
     for name in ng:
@@ -223,9 +451,53 @@ def selftest() -> int:
     return 1 if ng else 0
 
 
+#: 旧名。案件の入口が `selftest()` を呼んでいる場合のため残す（2026-09-02）。
+#: 他の道具は self_test / --self-test なので、そちらへそろえた
+#: （名前が違うせいで stage_check の網羅の測定から漏れていた）
+selftest = self_test
+
+
+def load_config(path) -> None:
+    """設定ファイルから案件固有の値を入れる（2026-09-02 新設）。
+
+    それまで案件の入口は**テンプレートのソースを文字列置換**して動かしていた。
+    テンプレートの1行を直すと入口が黙って壊れる形なので、設定で渡せるようにした。
+    **旧方式の入口はそのまま動く**（モジュール変数を直に差し替えているため）。
+
+        {
+          "export": "../design-systems/<名前>/figma/components.json",
+          "fileKey": "...",
+          "pageScope": "design/figma/page-scope.json",
+          "stylesExport": "design/figma/styles.json",
+          "descsExport": "design/figma/descriptions.json"
+        }
+    """
+    g = globals()
+    conf = json.loads(Path(path).read_text(encoding='utf-8'))
+    base = Path(path).resolve().parent
+    if conf.get('export'):
+        g['EXPORT'] = (base / conf['export']).resolve()
+    if conf.get('fileKey'):
+        g['FILE_KEY'] = conf['fileKey']
+    if conf.get('skipPages') is not None:
+        g['SKIP_PAGES'] = conf['skipPages']
+    for key, var in (('pageScope', 'PAGE_SCOPE'), ('stylesExport', 'STYLES_EXPORT'),
+                     ('descsExport', 'DESCS_EXPORT')):
+        if conf.get(key):
+            g[var] = (base / conf[key]).resolve()
+    for var, label in (('EXPORT', 'export'), ('FILE_KEY', 'fileKey')):
+        v = str(g[var])
+        if '{{' in v:
+            print(f'設定に {label} がありません（テンプレートのままです）: {v}',
+                  file=sys.stderr)
+            raise SystemExit(2)
+
+
 def main() -> int:
-    if '--selftest' in sys.argv:
-        return selftest()
+    if '--selftest' in sys.argv or '--self-test' in sys.argv:
+        return self_test()
+    if '--config' in sys.argv:
+        load_config(sys.argv[sys.argv.index('--config') + 1])
     update = '--update' in sys.argv
     doc = json.loads(EXPORT.read_text(encoding='utf-8'))
     saved = (doc['$meta'].get('restDigests') or {})
@@ -257,6 +529,24 @@ def main() -> int:
         name_drift = True
     else:
         name_drift = False
+
+    # **スタイルの鮮度**（2026-09-02 に aub-familywalk から回収）。
+    # component set だけを見ていると、**スタイルの名前や説明が変わっても黙る**。
+    # 設定が無ければ「見ていない」と表示する（黙って飛ばさない）。
+    style_ng = []
+    st = read_styles()
+    if st is None:
+        print('スタイルの鮮度: **見ていません**'
+              '（STYLES_EXPORT / DESCS_EXPORT が設定されていません）')
+    else:
+        style_ng = compare_styles(st)
+        if style_ng:
+            print(f'**スタイルが書き出しと食い違っています（{len(style_ng)}件）:**')
+            for m in style_ng:
+                print(f'  - {m}')
+            print()
+        else:
+            print(f'スタイルの鮮度: 使われている {len(st)} 件の名前と説明が一致')
 
     if update:
         # **取り直し忘れを拒む。** Figma が動いているのに書き出し本体が
@@ -313,11 +603,17 @@ def main() -> int:
           'design/figma_pack_variables.py で差分を見てください')
 
     if not (added or removed or changed):
-        if name_drift:
+        if name_drift or style_ng:
+            what = []
+            if name_drift:
+                what.append('名前の食い違い')
+            if style_ng:
+                what.append(f'スタイルのずれ {len(style_ng)}件')
             print(f'値は書き出しと同じです（{len(now)} セット）。'
-                  '**名前の食い違いだけが残っています**（上の報告を見る）')
+                  f'**{" と ".join(what)}が残っています**（上の報告を見る）')
             return 1
-        print(f'Figma は書き出しと同じです（{len(now)} セット）')
+        print(f'Figma は書き出しと同じです（{len(now)} セット'
+              + (f' / スタイル {len(st)} 件' if st else '') + '）')
         return 0
 
     print('**Figma が書き出しより新しくなっています。**')
