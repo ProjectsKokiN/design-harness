@@ -42,6 +42,39 @@ jobs:
         with:
           python-version: "3.12"
 
+      # **デザインシステムのレジストリを隣に置く。**
+      #
+      # 案件の rules.json は `../../design-systems/<DS>/rules/*.json` を extends する。
+      # CI にレジストリが無いと**鎖が崩れて数件のルールだけで走る**。
+      # 2026-09-02 の planttalk で実測: 11件 → **2件**に落ちた。
+      # `expected_rules` のラチェットが捕まえて CI が赤くなる（**正しい挙動**）。
+      #
+      # レジストリは private なので、既定の GITHUB_TOKEN では読めない。
+      # `REGISTRY_TOKEN`（design-systems の contents:read を持つ細粒度 PAT）を
+      # リポジトリまたは組織のシークレットに登録する。
+      #
+      # レジストリを extends しない案件（自前のルールだけ）はこの段が空振りするが、
+      # その場合は鎖が崩れないので問題にならない。
+      - name: レジストリを隣に置く
+        if: ${{ secrets.REGISTRY_TOKEN != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: {{ProjectsKokiN/design-systems}}
+          token: ${{ secrets.REGISTRY_TOKEN }}
+          path: _registry
+      - name: レジストリを所定の位置へ
+        run: |
+          if [ -d _registry ]; then
+            mv _registry ../design-systems
+            echo "レジストリを ../design-systems に置きました"
+          else
+            echo "**レジストリがありません。**" >&2
+            echo "  rules.json が extends している場合、鎖が崩れて数件のルールだけで" >&2
+            echo "  走ります。expected_rules のラチェットが捕まえて、この後の" >&2
+            echo "  『禁止パターン（全量）』が落ちます（**それが正しい挙動です**）。" >&2
+            echo "  直すには REGISTRY_TOKEN をシークレットに登録してください。" >&2
+          fi
+
       - name: ハーネスの検査
         run: |
           set -u
