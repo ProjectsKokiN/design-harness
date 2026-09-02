@@ -72,7 +72,15 @@ jobs:
           }
 
           run "禁止パターン（全量）"          - python3 design/design_check.py --all
-          run "文脈（共通の憲法の参照）"      - python3 $H/design_md_check.py
+          # 共通の憲法への移行は、**ユーザーが案件を再開するときに行う**と
+          # 決めた（2026-08-29）。未移行の案件で関門にすると CI が入らないので、
+          # 移行済みかどうかで分ける。**黙って飛ばさず、理由と件数を出す。**
+          if grep -q "harness/DESIGN.md" DESIGN.md 2>/dev/null; then
+            run "文脈（共通の憲法の参照）" - python3 $H/design_md_check.py
+          else
+            skip "文脈（共通の憲法の参照）" \
+              "DESIGN.md が共通の憲法へ未移行（2026-08-29 の決定で、案件の再開時に移行）"
+          fi
           run "生成器の入力"                  - python3 $H/gen_input_check.py
           run "種まき（ルールが生きているか）" - python3 $H/seed_check.py
           run "段の健全性"                    - python3 $H/stage_check.py --verify design/verify.sh
