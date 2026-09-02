@@ -21,6 +21,7 @@
 | **`tools/seed_check.py`** | **種まき欠陥テスト**: ルールが実際に発火するか（ラチェットは対象数、これは発火件数） |
 | **`seeds/<stack>/`** | 種のひな形（わざと違反させたコード）。案件の `design/seeds/` へコピーする |
 | **`tools/gen_io.py`** | **生成器の入出力の基盤**（書き出しを読む・件数を照合・生成物を LF で書く・色の変換） |
+| **`tools/issue_sync.py`** | **直せていない課題を GitHub の Issue に写す**（`--check` は網なし・`--inbox` は全リポジトリ一覧） |
 | **`tools/duplication_check.py`** | **案件をまたぐ複製を見つける**（回収の候補を機械で出す）。設定は `duplication.json` |
 | **`tools/gen_verify.py`** | **生成し直して差分が出たら落ちる**（台帳 `generators.json` が唯一の正）。案件ごとの複製を 2026-09-02 に共有化 |
 | **`exporters/_preamble.js`** | 書き出し器のひな形（許可リスト・器が数える・同名で止まる） |
@@ -160,10 +161,37 @@ git -C design/harness pull origin main
 | デザインの憲法 | `DESIGN.md` | 2026-08-29（案件の DESIGN.md に手写し） |
 | 段の値が入るルール | `tools/gen_rules.py` の生成物 | 2026-08-30（正規表現に手写し） |
 | **識別子の規則** | **`tools/gen_io.py`** | **生成器の入出力の基盤**（書き出しを読む・件数を照合・生成物を LF で書く・色の変換） |
+| **`tools/issue_sync.py`** | **直せていない課題を GitHub の Issue に写す**（`--check` は網なし・`--inbox` は全リポジトリ一覧） |
 | **`tools/duplication_check.py`** | **案件をまたぐ複製を見つける**（回収の候補を機械で出す）。設定は `duplication.json` |
 | **`tools/gen_verify.py`** | **生成し直して差分が出たら落ちる**（台帳 `generators.json` が唯一の正）。案件ごとの複製を 2026-09-02 に共有化 |
 | **`exporters/_preamble.js`** | 書き出し器のひな形（許可リスト・器が数える・同名で止まる） |
 | **`tools/figma_names.py`** | **2026-09-02**（`impl_coverage_check` が別実装を持ち、文書の「唯一の正」と食い違っていた） |
+
+## 課題の流れ（2026-09-02 に決めた運用）
+
+```
+案件がハーネスで開発する
+  → 課題が見つかる
+  → 宣言する（allow / $warn_only / entries に why と期限）
+  → issue_sync が Issue に写す（--apply）
+  → **定期的に共有層のセッションがまとめて解く**（--inbox で一覧）
+  → 直したら宣言を消す → Issue が閉じる（--apply）
+```
+
+| やること | コマンド |
+|---|---|
+| 溜まった課題を見る | `issue_sync.py --inbox` |
+| 宣言を Issue に写す | `issue_sync.py --apply --root <案件>` |
+| Issue の無い課題を知らせる（CI） | `issue_sync.py --check --root .` |
+| 宣言する場所が無い課題を立てる | `issue_sync.py --new --title … --why … --closes-when …` |
+
+**課題と「期限つきの決定」は期限で分けます。** 期限が遠い宣言は「いまは決着している」、
+30日以内に近づいたら「やること」。手で印を付けないので、印の付け忘れが起きません。
+実測（2026-09-02）: 宣言67件のうち、いま課題とするものは7件。
+
+**Issue を立てる先は `blockedBy` で決まります。** 案件で見つかっても直す場所が
+共有層なら、Issue は共有層に立ちます（`blockedBy: design-harness`）。
+立てた URL は宣言に書き戻すので、同じ課題が二重に立ちません。
 
 ## self-test を持たない道具（意図的な例外）
 

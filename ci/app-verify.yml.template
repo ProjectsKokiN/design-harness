@@ -136,6 +136,14 @@ jobs:
             skip "機体の担当" "machine-scope.json がありません"
           fi
 
+          # **課題は Issue に集める**（2026-09-02 の運用）。
+          # 案件がハーネスで開発 → 課題が見つかる → 宣言する → Issue に立てる
+          #   → 定期的に共有層のセッションがまとめて解く
+          # ここは**網に触らず**「Issue の無い課題」を数えるだけ
+          #（CI から Issue を作ると、通るたびに増えて誰も読まなくなる）
+          run "課題の台帳（Issue の無い課題）" - \
+            python3 $H/issue_sync.py --check --root .
+
           if C=$(pick design/gaps.json); then
             run "見なかったもの" "$C" python3 $H/gap_report.py --config "$C"
           else
