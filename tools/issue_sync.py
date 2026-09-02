@@ -499,6 +499,76 @@ def self_test():
         check(main(["--new", "--title", "t", "--why", "w"]) == 2,
               "--closes-when が無いのに通した")
 
+        # --- 本体を網に触らず通す（gh を差し替える）------------------------
+        g = globals()
+        calls = []
+
+        def fake_gh(args, repo=None):
+            calls.append((tuple(args), repo))
+            if args[:2] == ["issue", "list"]:
+                # 既に1件立っている体（鍵つき）
+                return json.dumps([{"number": 7, "title": "既存",
+                                    "body": f"<!-- {MARK}: keep.json:entries:kept -->"}])
+            if args[:2] == ["issue", "create"]:
+                return "https://example.com/issues/9\n"
+            return ""
+
+        keep_gh = g["gh"]
+        g["gh"] = fake_gh
+        try:
+            (root / "keep.json").write_text(json.dumps({
+                "entries": [{"id": "kept", "why": "残っている理由", "expires": past}]}),
+                encoding="utf-8")
+            (root / "gone.json").write_text(json.dumps({"entries": []}),
+                                            encoding="utf-8")
+
+            # 下見では書かない
+            calls.clear()
+            rc = main(["--root", str(root), "--repo", "o/r"])
+            check(rc == 0, "下見で落ちた")
+            check(not any(a[0][:2] == ("issue", "create") for a in calls),
+                  "**下見なのに Issue を作った**")
+
+            # --apply で作り、**URL を宣言に書き戻す**
+            (root / "new.json").write_text(json.dumps({
+                "entries": [{"id": "fresh", "why": "新しい課題の理由",
+                             "expires": past}]}), encoding="utf-8")
+            calls.clear()
+            main(["--root", str(root), "--repo", "o/r", "--apply"])
+            check(any(a[0][:2] == ("issue", "create") for a in calls),
+                  "--apply で Issue を作らなかった")
+            doc = json.loads((root / "new.json").read_text(encoding="utf-8"))
+            check(doc["entries"][0].get("issue") == "https://example.com/issues/9",
+                  "**URL を宣言に書き戻していない**（次に回すと二重に立つ）")
+
+            # 書き戻した後は作り直さない
+            calls.clear()
+            main(["--root", str(root), "--repo", "o/r", "--apply"])
+            check(not any(a[0][:2] == ("issue", "create") and "fresh" in str(a)
+                          for a in calls), "書き戻した課題をもう一度立てた")
+
+            # 宣言が消えた Issue は閉じる
+            calls.clear()
+            (root / "keep.json").write_text(json.dumps({"entries": []}),
+                                            encoding="utf-8")
+            main(["--root", str(root), "--repo", "o/r", "--apply"])
+            check(any(a[0][:2] == ("issue", "close") for a in calls),
+                  "**宣言が消えたのに Issue を閉じない**")
+        finally:
+            g["gh"] = keep_gh
+
+        # 題と本文（鍵が読み戻せることは上で見た。what が題に出るか）
+        fi = {"key": "k", "file": "f.json", "kind": "entries", "name": "n",
+              "why": "理由", "due": None, "what": "何が起きているか",
+              "how": "直し方"}
+        check("何が起きているか" in title_of(fi), "what を題に使っていない")
+        check("直し方" in body_of(fi), "how を本文に出していない")
+
+        # blockedBy が owner/name ならそのまま使う
+        check(target_repo({"blockedBy": "o/r"}, "d/f") == "o/r",
+              "blockedBy を使っていない")
+        check(target_repo({}, "d/f") == "d/f", "既定に落ちていない")
+
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
 
