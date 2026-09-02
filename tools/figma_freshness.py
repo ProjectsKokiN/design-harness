@@ -245,7 +245,13 @@ def body_hash(doc: dict) -> str:
     検査は永久に緑になり、表示は「Figma は書き出しと同じです」と断言します。
     本体の指紋を並べて持ち、「Figma は動いたのに本体は動いていない」を拒みます。
     """
-    body = json.dumps(doc['componentSets'], ensure_ascii=False, sort_keys=True)
+    # **単体 component も入れる**（2026-09-02 に aub から回収）。componentSets
+    # だけを掛けていたので、Header / Footer / BottomNavigation / EmptyStates を
+    # 取り直しても本体の指紋が動かなかった——つまり「取り直し忘れの拒否」が
+    # その4件については働いていなかった
+    body = json.dumps({'componentSets': doc['componentSets'],
+                       'singleComponents': doc.get('singleComponents') or {}},
+                      ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(body.encode()).hexdigest()[:12]
 
 
@@ -426,6 +432,20 @@ def self_test() -> int:
                 'componentSets': {'Buttons': {}, 'Header': {}}}
         cases.append(('main: Figma と書き出しが同じなら 0', run_main(base) == 0))
 
+        # **単体 component を書き出し側に数える**（2026-09-02 に aub から回収）。
+        # componentSets だけを見ていたため、書き出しにある Header が
+        # 「Figma にしか無い」と報告されていた
+        split = {'$meta': {'restDigests': dict(now)},
+                 'componentSets': {'Buttons': {}},
+                 'singleComponents': {'Header': {}}}
+        cases.append(('main: 単体は singleComponents に入っていてもよい',
+                      run_main(split) == 0))
+
+        # body_hash が単体の変化でも動くこと（取り直し忘れの拒否が効く）
+        cases.append(('body_hash: 単体が変われば動く',
+                      body_hash({'componentSets': {}, 'singleComponents': {'H': 1}})
+                      != body_hash({'componentSets': {}, 'singleComponents': {'H': 2}})))
+
         # **単体 COMPONENT も指紋の対象**（planttalk が 2026-08-28 に直した退行）
         cases.append(('main: 単体 COMPONENT も見ている', 'Header' in now))
 
@@ -509,7 +529,11 @@ def main() -> int:
     # Figma 側の名前が Charts/Pie / Progress / Charts/Pie/BuildingBlocks に
     # 変わっていた。書き出しの $meta は「全量 24 set」と言っていた）。
     excluded = set(doc['$meta'].get('excluded') or {})
-    exported = set(doc['componentSets']) | excluded
+    # **単体 component も書き出し側に数える**（2026-09-02 に aub から回収）。
+    # componentSets だけを見ていたため、Header / Footer / BottomNavigation /
+    # EmptyStates が書き出しにあるのに「Figma にしか無い」と報告されていた
+    exported = (set(doc['componentSets'])
+                | set(doc.get('singleComponents') or {}) | excluded)
     d = compare(saved, now, exported, excluded)
     only_figma, only_export = d['onlyFigma'], d['onlyExport']
     if only_figma or only_export:
