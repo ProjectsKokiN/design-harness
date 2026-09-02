@@ -21,13 +21,39 @@ jobs:
       - name: ツールの構文
         run: python3 -m py_compile engine/design_check.py tools/*.py shims/*.py
 
-      - name: 検査自身の self-test
+      # **一覧を手で書かない**（2026-09-02）。それまで5本を手で並べており、
+      # 道具が22本に増えても**17本の self-test が CI で一度も走っていなかった**。
+      # このリポジトリが繰り返し潰してきた「手で保守する一覧が古くなる」の、
+      # ハーネス自身での再発。
+      - name: 検査自身の self-test（全道具）
         run: |
-          python3 tools/ci_path_check.py --self-test
-          python3 tools/impl_coverage_check.py --self-test
-          python3 tools/page_scope_check.py --self-test
-          python3 tools/gen_input_check.py --self-test
-          python3 tools/coverage_check.py --self-test
+          set -u
+          FAILED=0; RAN=0; NONE=""
+          for f in tools/*.py; do
+            grep -q "def self_test" "$f" || { NONE="$NONE $(basename $f)"; continue; }
+            RAN=$((RAN + 1))
+            python3 "$f" --self-test || FAILED=1
+          done
+          echo "self-test を持つ道具: $RAN 本 / 持たない道具:$NONE"
+          if [ "$RAN" -eq 0 ]; then
+            echo "self-test を1本も走らせていません。**空振りです。**" >&2
+            exit 1
+          fi
+          exit $FAILED
+
+      # **持っているだけでは何も証明していない。** 本体を何行通るかを見る
+      # （2026-09-02。fingerprint_parity が 11% で、main() を1行も
+      #  通っていなかったのがこれで判明した）
+      - name: self-test の中身の厚さ
+        run: |
+          python3 tools/stage_check.py --verify ci/verify.sh.template \
+            --tools tools --min-coverage 50
+
+      # **README の一覧がディスクと合っているか**（2026-09-02）。
+      # 実測で 27本中5本が README に無かった。README は人が読む地図なので、
+      # 古くなると「その道具は無い」と誤解される
+      - name: README の一覧が実在と合っているか
+        run: python3 tools/readme_check.py
 
       - name: 案内しているパスが実在するか
         # 上流なので design/ は「取り込む側」のパス。除外して自分のパスだけ見る

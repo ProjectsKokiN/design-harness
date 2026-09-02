@@ -35,6 +35,12 @@
 | **`tools/fingerprint_parity.py`** | 指紋が JS と Python で同じ値になるか（非 ASCII の固定具で照合） |
 | **`fingerprint/text_digest.{py,mjs}`** | テキスト指紋の正本（両言語）。**案件が自前で書かない** |
 | `tools/staleness_check.py` | 下流が上流より古くないか（鮮度差） |
+| `tools/impl_coverage_check.py` | **実装網羅（条件7）**: Figma にあるものが全部実装されているか。トークンは完全一致で照合 |
+| `tools/check_render_gaps.py` | **再現性の判定（条件5）**: 値が合っても描画で別物になる指定と、判定の網羅 |
+| `tools/page_scope_check.py` | 参照してよい Figma ページをフェーズで縛る |
+| `tools/pin_check.py` | submodule のピンが最新か（落とさず知らせる） |
+| `tools/ci_path_check.py` | 案内しているパスが実在するか |
+| **`tools/readme_check.py`** | **この表がディスクと合っているか**（手で保守する一覧は古くなる） |
 | `tools/figma_freshness.py` | 書き出しが Figma より古くないか（指紋） |
 | `tools/gen_input_check.py` | 生成器・照合の入力が書き出しだけか（記録層の廃止・2026-08-29） |
 | `tools/coverage_check.py` | 照合体制（条件2）: 照合相手が書き出しだけか |
