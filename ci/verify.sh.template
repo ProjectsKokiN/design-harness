@@ -70,6 +70,23 @@ step "ルールの生成物（段の値が tokens と一致するか）" \
 # **段は減らさない。責任のある機体に結び直す。** 担当外の機体では、機体名と
 # 理由を出力に残して飛ばす（黙って飛ばさない）。飛ばした穴は、次の
 # 「機体の担当」の段が塞ぐ——担当外のパスを変えていたらそこで落ちる。
+#
+# **この形（`--owns … -- <コマンド>`）を使う。`--test-owns` を素で呼ばない。**
+# `--test-owns` は担当外で **3** を返すので、`set -euo pipefail` の下では
+# `case $?` に着く前にスクリプトごと死ぬ。`exit 3` はこのファイルに1行も
+# 書かれていないので、grep しても見つからない。
+#
+#   実害（flash-compose・2026-09-03）: Mac mini と Windows が **2日間、
+#   この verify.sh の検査を一度も走らせていなかった。** 両機とも --no-verify で
+#   push していた（決まりに反する状態）。
+#
+# どうしても真偽で分岐したいときは、`if` か `|| rc=$?` で受ける:
+#
+#   if "$PY" "$HARNESS/tools/machine_scope.py" --test-owns design/; then …; fi
+#
+#   rc=0
+#   "$PY" "$HARNESS/tools/machine_scope.py" --test-owns design/ || rc=$?
+#   case $rc in 0) … ;; 3) : ;; *) exit 1 ;; esac
 step "鮮度（Figma 本体 → 書き出し。design/ の担当機のみ）" \
   "$PY" "$HARNESS/tools/machine_scope.py" --config design/machine-scope.json \
     --owns design/ -- bash -c '
