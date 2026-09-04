@@ -175,6 +175,10 @@ step "アプリアイコン（宣言どおりに揃っているか）" \
   "$PY" "$HARNESS/tools/appicon_check.py" \
     --ios ios/Runner/Assets.xcassets/AppIcon.appiconset \
     --android android/app/src/main/res
+# **実装の中の重複**（部品を直しても手組みの画面には届かない）。
+# 既存の段は分母がどれも Figma 側で、実装側から見た重複を数えるものが無かった
+step "実装の中の重複（同じ絵を2か所で組んでいないか）" \
+  "$PY" "$HARNESS/tools/impl_duplication_check.py" --config design/impl-duplication.json
 step "押した状態と変異の穴" \
   "$PY" "$HARNESS/tools/interaction_check.py" --config design/interaction.json
 step "条件9 の網羅（状態・スロットを持つセットにテストがあるか）" \

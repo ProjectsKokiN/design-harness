@@ -24,6 +24,7 @@
 | **`tools/shared_check.py`** | **「自分の機体だけ緑」を止める**: 既定ブランチとの衝突（CI が起動しない）／レジストリが枝に居る／受信箱が枝に取り残される／説明の裏取り |
 | **`tools/platform_values_check.py`** | **複数ファイル・複数担当に散る1つの値**（表示名など）の一致を見る。「変えてはいけない値」も見る。ひな形は `templates/platform-values.json.template` |
 | **`tools/decisions_check.py`** | **決定の取り消し**（`supersedes`）を機械で扱う。取り消された決定を実装が引用していたら落とす |
+| **`tools/impl_duplication_check.py`** | **実装の中の重複**（同じ絵を2か所で組んでいる）。**分母が実装側**の唯一の道具 |
 | **`tools/appicon_check.py`** | **アプリアイコン**が宣言どおりに揃っているか（iOS は `Contents.json`、Android は適応アイコンの3層）。**外周の切り落としは注意だけ**——載せ方はデザイナーの判断 |
 | **`tools/interaction_check.py`** | **押した状態を試験が描いているか**（`tap` だけの試験を落とす）と、**Figma に無い変異の組み合わせ**の一覧 |
 | **`tools/route_check.py`** | **画面をまたぐ矛盾**: どこからも行けない行き先・定義されていない行き先へ行こうとする箇所（2026-09-04 に aub から回収） |
