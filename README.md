@@ -46,7 +46,7 @@
 | `tools/impl_coverage_check.py` | **実装網羅（条件7）**: Figma にあるものが全部実装されているか。トークンは完全一致で照合 |
 | `tools/check_render_gaps.py` | **再現性の判定（条件5）**: 値が合っても描画で別物になる指定と、判定の網羅 |
 | `tools/page_scope_check.py` | 参照してよい Figma ページをフェーズで縛る |
-| `tools/pin_check.py` | submodule のピンが最新か（落とさず知らせる） |
+| **`tools/pin_check.py`** | **submodule のピンが上流の既定ブランチから遅れていないか**。枝の途中を指していたら落とす。遅れの中に**この案件が使っている道具の変更**が含まれれば名指しする |
 | `tools/ci_path_check.py` | 案内しているパスが実在するか / rules.json の extends が CI から解決できるか（`--rules`） |
 | **`tools/readme_check.py`** | **この表がディスクと合っているか**（手で保守する一覧は古くなる） |
 | `tools/figma_freshness.py` | 書き出しが Figma より古くないか（指紋） |

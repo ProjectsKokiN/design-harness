@@ -222,6 +222,44 @@ def self_test_stages():
              tpl_text=TPL + 'step "照合体制（参考: 条件2 は廃止）" '
                             '"$PY" "$HARNESS/tools/coverage_check.py"\n')
 
+        # ─── push 前のフック（#60）────────────────────────────────
+        pt = root / "pre-push-template"
+        pp = root / ".githooks" / "pre-push"
+        (root / ".githooks").mkdir(exist_ok=True)
+        pt.write_text("sh design/verify.sh\n"
+                      "python3 design/harness/tools/pin_check.py --root . || exit 1\n",
+                      encoding="utf-8")
+
+        def push_case(text, waiver=None):
+            if text is None:
+                pp.unlink(missing_ok=True)
+            else:
+                pp.write_text(text, encoding="utf-8")
+            return check_prepush(pt, pp, waiver or {})
+
+        r = push_case("sh design/verify.sh\n"
+                      "python3 design/harness/tools/pin_check.py --root . || exit 1\n")
+        if r:
+            print(f"self-test NG: そろっているのに落ちた: {r}"); ok = False
+        r = push_case("sh design/verify.sh\n")
+        if not any("pin_check.py" in m and "呼んでいません" in m for m in r):
+            print("self-test NG: フックから道具が落ちたのを見逃した"); ok = False
+        # **握り潰しの形を捕まえる**（実在した書き方そのもの）
+        r = push_case("sh design/verify.sh\n"
+                      "python3 design/harness/tools/pin_check.py 2>/dev/null || true\n")
+        if not any("握り潰して" in m for m in r):
+            print("self-test NG: 2>/dev/null || true を通した"); ok = False
+        r = push_case(None)
+        if not any("フックがありません" in m for m in r):
+            print("self-test NG: フックが無いのを見逃した"); ok = False
+        # **追跡外の場所にあるフックは「配られていない」**（planttalk の実態）
+        r = check_prepush(pt, pt, {}, shared=False)
+        if not any("配られていません" in m for m in r):
+            print("self-test NG: 追跡外のフックを通した"); ok = False
+        r = push_case("sh design/verify.sh\n", waiver={"pin_check.py": {"why": "x"}})
+        if r:
+            print(f"self-test NG: 宣言があるのに落ちた: {r}"); ok = False
+
         # 関門の条件の一覧そのものが無ければ落とす
         gate.unlink()
         buf = io.StringIO()
@@ -357,7 +395,79 @@ def _conditions_of(label):
     return set(COND_RX.findall(label))
 
 
-def check_stages(template, verify, ci_dir, waivers_path, gate_path):
+def prepush_tools(path):
+    """push 前のフックが呼んでいる道具の名前。"""
+    if not path or not path.exists():
+        return None
+    return set(FILE_RX.findall(path.read_text(encoding="utf-8", errors="ignore")))
+
+
+def resolve_prepush(root, given):
+    """この案件で実際に働く push 前フックの場所を返す。
+
+    `(パス, 配られるか)` を返す。**`.git/hooks/` に置いたフックは git の追跡外**で、
+    その機体にしか無い。実測（2026-09-04）: planttalk は `core.hooksPath` を
+    設定しておらず、フックが `.git/hooks/pre-push` にだけあった。
+    **他の機体には1行も配られていない。**
+    """
+    r = subprocess.run(["git", "-C", str(root), "config", "core.hooksPath"],
+                       capture_output=True, text=True)
+    hp = r.stdout.strip() if r.returncode == 0 else ""
+    if hp:
+        return (root / hp / "pre-push"), True
+    local = root / ".git" / "hooks" / "pre-push"
+    if local.exists():
+        return local, False
+    return (given if given else root / ".githooks" / "pre-push"), True
+
+
+def check_prepush(template, project, waivers, shared=True):
+    """元ファイルの push 前フックが呼ぶ道具が、案件のフックにもあるかを見る。
+
+    2026-09-04 新設（#60）。**`verify.sh` と CI だけを見ていたので、
+    push 前のフックから段が落ちているのが見えなかった。**
+
+    実測: `pin_check.py` を呼ぶ行を持っていたのは3案件のうち aub だけ
+    （flash-compose と planttalk は0箇所）。しかもその aub でも
+    `2>/dev/null || true` で**出力を捨てて必ず成功**していた。
+    結果、ピンが枝の途中で16コミット遅れたまま誰も気づかなかった。
+    """
+    want = prepush_tools(template)
+    if not want:
+        return []
+    got = prepush_tools(project)
+    if got is not None and not shared:
+        return [f"  push 前のフックが**追跡外の場所**にあります: {project}\n"
+                f"    `core.hooksPath` が設定されていないので、"
+                f"git の管理下にありません。\n"
+                f"    **他の機体には1行も配られていません。**\n"
+                f"    直す: cp {template} .githooks/pre-push && "
+                f"git config core.hooksPath .githooks"]
+    if got is None:
+        return [f"  push 前のフックがありません: {project}\n"
+                f"    元ファイル（{template}）は {len(want)} 本の道具を呼びます。\n"
+                f"    **押す前に何も見ていない状態です。**\n"
+                f"    入れる: cp {template} {project} && chmod +x {project}"]
+    missing = sorted(want - got)
+    errs = []
+    for name in missing:
+        if name in waivers:
+            continue
+        errs.append(f"  push 前のフックが `{name}` を呼んでいません: {project}\n"
+                    f"    元ファイルには入っています。**この案件では誰も見ていません。**")
+    # 握り潰しの形（出力を捨てて必ず成功）も見る
+    text = project.read_text(encoding="utf-8", errors="ignore")
+    for name in sorted(want & got):
+        for bad in (f"{name} 2>/dev/null", f"{name} || true"):
+            if bad in text:
+                errs.append(f"  push 前のフックが `{name}` を握り潰しています"
+                            f"（`{bad}`）。\n"
+                            f"    **回っていますが、結果を誰も見ていません。**")
+    return errs
+
+
+def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None,
+                 prepush_template=None):
     """元ファイルの段が、この案件から黙って落ちていないかを見る。"""
     if not template.exists():
         print(f"元ファイルがありません: {template}", file=sys.stderr)
@@ -443,6 +553,9 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path):
             covered |= conds
         waived.append(label)
 
+    pp, shared = resolve_prepush(verify.resolve().parent.parent, prepush)
+    errs += check_prepush(prepush_template, pp, waivers, shared)
+
     # 元ファイル自身の穴: 生きている条件なのに、どの段も測ると言っていない
     for c in sorted(live):
         if c not in claimed:
@@ -491,6 +604,9 @@ def main(argv=None):
     ap.add_argument("--ci", type=Path, default=Path(".github/workflows"))
     ap.add_argument("--waivers", type=Path, default=Path("design/stages.json"))
     ap.add_argument("--gate", type=Path, default=HERE.parent / "gate" / "conditions.json")
+    ap.add_argument("--prepush", type=Path, default=Path(".githooks/pre-push"))
+    ap.add_argument("--prepush-template", type=Path,
+                    default=HERE.parent / "ci" / "app-pre-push")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
@@ -499,7 +615,8 @@ def main(argv=None):
 
     if args.stages:
         return check_stages(args.template, args.verify, args.ci,
-                            args.waivers, args.gate)
+                            args.waivers, args.gate, args.prepush,
+                            args.prepush_template)
 
     if not args.verify.exists():
         print(f"verify.sh がありません: {args.verify}\n"

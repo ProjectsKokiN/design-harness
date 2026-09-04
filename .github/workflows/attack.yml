@@ -22,6 +22,9 @@ jobs:
       - name: 関門の集計（飛ばした条件を緑にしないか）
         run: python3 attack/gate_skip_test.py
 
+      - name: push 前のフック（削除を飛ばすか・握り潰していないか）
+        run: python3 attack/prepush_test.py
+
       - name: 関門の条件（正本と生成物のズレ）
         run: python3 tools/gen_gate.py --check
       - name: ツールの構文
