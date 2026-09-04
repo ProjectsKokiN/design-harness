@@ -71,7 +71,9 @@ def main(argv=None):
         return 2
 
     # `tools/x.py` でも **`tools/x.py`** でも拾う
-    listed = set(re.findall(r"(?:tools|engine|shims)/([a-z_]+\.py)", text))
+    # 名前に数字が入る道具（`_utf8.py`）を拾えるようにする。
+    # `[a-z_]+` だけだと**載せても永久に「未掲載」と出る**（2026-09-04 実測）
+    listed = set(re.findall(r"(?:tools|engine|shims)/([a-z_][a-z0-9_]*\.py)", text))
     missing = sorted(on_disk - listed)
     ghosts = sorted(n for n in listed - on_disk
                     if not (args.tools.parent / "engine" / n).exists()
@@ -122,6 +124,13 @@ def self_test():
         # **載っていない道具があれば落ちる**（この検査の本題）
         rm.write_text("`tools/a.py` だけ", encoding="utf-8")
         check(main(argv) == 1, "載っていない道具があるのに通した")
+
+        # **名前に数字が入る道具**（`_utf8.py`）を載せたら通ること。
+        # 拾えないと、載せても永久に「未掲載」と出て**直しようがない**
+        (tools / "_utf8.py").write_text("", encoding="utf-8")
+        rm.write_text("`tools/a.py` `tools/b.py` `tools/_utf8.py`", encoding="utf-8")
+        check(main(argv) == 0, "数字の入る名前を載せても未掲載と出た")
+        (tools / "_utf8.py").unlink()
 
         # 実在しない道具が載っていれば落ちる
         rm.write_text("`tools/a.py` `tools/b.py` `tools/ghost.py`", encoding="utf-8")

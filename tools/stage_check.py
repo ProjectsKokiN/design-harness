@@ -673,12 +673,13 @@ def self_test():
     # 53% と表示していたが、実際には 27% までしか測れていなかった）
     def _noop(frame, ev, arg):
         return None
+    outer = sys.gettrace()          # **自分が外側の計測を壊さない**（同じ穴）
     sys.settrace(_noop)
     try:
         self_test_coverage(HERE / "figma_names.py")
         restored = sys.gettrace() is _noop
     finally:
-        sys.settrace(None)
+        sys.settrace(outer)
     if not restored:
         print("self-test NG: 網羅の計測が外側の追跡係を壊した"); ok = False
 

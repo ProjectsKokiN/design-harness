@@ -123,6 +123,11 @@ step "条件9 の網羅（状態・スロットを持つセットにテストが
   "$PY" "$HARNESS/tools/tree_test_check.py" --config design/tree-tests.json
 step "指紋の一致（JS と Python で同じ値になるか）" \
   "$PY" "$HARNESS/tools/fingerprint_parity.py"
+# **検査が回っているのに何も見ていない書き方**を見る（aub 2026-09-02〜03 で
+# 2日に5件。全部緑で、うち3件は実機とユーザーが見つけた）。
+# 例外を捨てる / 期待値の自己参照 / 緩い finder / 誰も見ていない文字
+step "空振りの検査（何も見ていない書き方）" \
+  "$PY" "$HARNESS/tools/hollow_check.py" --config design/hollow.json
 step "段の健全性（落ちるところを見た道具か）" \
   "$PY" "$HARNESS/tools/stage_check.py" --verify design/verify.sh
 # **段の数**を見る。元ファイルにある段がこの案件から落ちていないか。

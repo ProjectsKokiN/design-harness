@@ -140,6 +140,10 @@ jobs:
           run "生成器の入力"                  - python3 $H/gen_input_check.py
           run "種まき（条件8: ルールが生きているか）" - python3 $H/seed_check.py
           run "段の健全性"                    - python3 $H/stage_check.py --verify design/verify.sh
+          run "段の数（元ファイルから落ちた段）" - \
+            python3 $H/stage_check.py --stages --verify design/verify.sh
+          run "空振りの検査（何も見ていない書き方）" - \
+            python3 $H/hollow_check.py --config design/hollow.json
 
           if C=$(pick design/impl-coverage.json impl-coverage.json); then
             run "実装網羅（条件7）" "$C" python3 $H/impl_coverage_check.py --config "$C"

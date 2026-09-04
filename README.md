@@ -20,6 +20,10 @@
 | **`tools/gen_rules.py`** | **B層の生成器**: 段の値が入るルールを tokens.json から作る（`--check` でズレを検出） |
 | **`tools/gen_gate.py`** | **関門の合格条件の生成器**: `production-gate.md`（正本）から`gate/conditions.json` を作る（`--check` でズレを検出）。**条件が何件かを機械で持つ** |
 | **`tools/seed_check.py`** | **種まき欠陥テスト**: ルールが実際に発火するか（ラチェットは対象数、これは発火件数） |
+| **`tools/hollow_check.py`** | **空振りの検査**: 例外を捨てる・期待値の自己参照・緩い finder・誰も見ていない文字。**検査は回っているのに中身が空**の形を見る |
+| **`tools/portable_check.py`** | **Windows でだけ落ちる書き方**（`encoding=` 抜け・素のコマンド名）と、cp932 で全道具を回して死なないか |
+| `tools/_utf8.py` | 出力の文字コードで死なないようにする（各道具が import するだけ。単体では回さない） |
+| `tools/issue_scan.py` | 前回まとめた日時以降のやりとりを取り出す（`/harness-issues` が使う） |
 | **`seeds/<stack>/`** | 種のひな形（わざと違反させたコード）。案件の `design/seeds/` へコピーする |
 | **`tools/gen_io.py`** | **生成器の入出力の基盤**（書き出しを読む・件数を照合・生成物を LF で書く・色の変換） |
 | **`tools/issue_sync.py`** | **直せていない課題を GitHub の Issue に写す**（`--check` は網なし・`--inbox` は全リポジトリ一覧） |
