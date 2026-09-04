@@ -209,10 +209,12 @@ def changed_files(root):
     """未コミットの変更 ＋ upstream に無いコミットの変更。"""
     out = set()
 
-    def git(*args):
+    def git(*args, want_code=False):
         try:
             r = subprocess.run(["git", "-C", str(root), *args],
                                capture_output=True, text=True, timeout=30)
+            if want_code:
+                return r.returncode
             return r.stdout if r.returncode == 0 else None
         except (OSError, subprocess.SubprocessError):
             return None
@@ -223,11 +225,24 @@ def changed_files(root):
     if status is None:
         return None
     for line in status.splitlines():
-        name = line[3:].strip()
+        code, name = line[:2], line[3:].strip()
         if " -> " in name:                      # rename
             name = name.split(" -> ", 1)[1]
-        if name:
-            out.add(name.strip('"'))
+        name = name.strip('"')
+        if not name:
+            continue
+        # **改行だけの差は変更と数えない。**
+        #
+        # core.autocrlf=true の作業ツリーは CRLF、リポジトリは LF。生成器が
+        # LF で書き戻すと `git status` は「変更あり」と出すが、`git diff` は
+        # 1行も差分を出さない（読むときに正規化されるため）。**中身は1バイトも
+        # 違わない。** ここを数えると、Windows は生成器を回すたびに
+        # 「担当外を変えた」で落ち、本物の NG が埋もれる（#41・aub で実測）。
+        #
+        # 未追跡（??）には差分の概念が無いので、そのまま数える。
+        if code != "??" and _no_real_diff(git, name):
+            continue
+        out.add(name)
 
     base = _base_ref(git)
     if base:
@@ -238,6 +253,20 @@ def changed_files(root):
         if diff:
             out.update(x.strip() for x in diff.splitlines() if x.strip())
     return out
+
+
+def _no_real_diff(git, path):
+    """`git status` は変更と言うが `git diff` は差分を出さない状態か。
+
+    改行の正規化（CRLF ↔ LF）だけの差がこれに当たる。
+    追跡外・判定できないときは **False**（数える側に倒す。見逃すより誤検知）。
+    """
+    for args in (("diff", "--quiet", "--", path),          # 作業ツリー vs 索引
+                 ("diff", "--quiet", "--cached", "--", path)):  # 索引 vs HEAD
+        r = git(*args, want_code=True)
+        if r is None or r != 0:
+            return False
+    return True
 
 
 def _base_ref(git):
@@ -326,7 +355,10 @@ def main(argv=None):
         if owns(machine, args.test_owns, conf):
             print(f"この機体（**{machine}**）は {args.test_owns} を担当しています。")
             return 0
-        holder = owner_of(args.test_owns, conf) or "（設定に担当なし）"
+        holder = owner_of(args.test_owns, conf)
+        if holder is None:
+            return _no_owner(args.test_owns, args.config, known)
+        holder = holder
         print(f"飛ばしました: この機体（**{machine}**）は {args.test_owns} を触りません。\n"
               f"  この段が守る失敗を起こせるのは {args.test_owns} を触る機体"
               f"（{holder}）だけです。\n"
@@ -340,7 +372,9 @@ def main(argv=None):
                 print(f"この機体（{machine}）は {args.owns} を担当しています。")
                 return 0
             return subprocess.run(cmd).returncode
-        holder = owner_of(args.owns, conf) or "（設定に担当なし）"
+        holder = owner_of(args.owns, conf)
+        if holder is None:
+            return _no_owner(args.owns, args.config, known)
         # **黙って飛ばさない。** 機体名と理由を必ず出す
         print(f"飛ばしました: この機体（**{machine}**）は {args.owns} を触りません。\n"
               f"  この段が守る失敗を起こせるのは {args.owns} を触る機体"
@@ -349,6 +383,21 @@ def main(argv=None):
         return 0
 
     ap.error("--whoami / --owns / --test-owns / --check のどれかが要ります")
+
+
+def _no_owner(path, config, known):
+    """**誰も担当していない段は落とす。** 飛ばすと、その段はどの機体でも走らない。
+
+    黙って通すのは、このハーネスが繰り返し踏んできた
+    「通ったと出るのに何も見ていない」そのもの（#37）。
+    """
+    print(f"**{path} の担当が設定にありません。**\n"
+          f"  この段は**どの機体でも走りません。**飛ばさずに落とします。\n"
+          f"  設定: {config}\n"
+          f"  いまの機体: {' / '.join(known)}\n"
+          f"  どの機体が {path} を触るかを machines に書くか、"
+          f"全機体で走らせるなら shared に入れてください。", file=sys.stderr)
+    return 2
 
 
 def do_check(machine, conf, root):
@@ -548,6 +597,57 @@ def self_test():
     finally:
         shutil.rmtree(td3, ignore_errors=True)
         shutil.rmtree(td3 + "-up", ignore_errors=True)
+
+    # ── #37: 誰も担当していない段は **落とす**（黙って飛ばさない）──────
+    c6 = {"machines": {"A": ["lib/"], "B": ["ios/"]}, "shared": ["docs/"]}
+    td6 = tempfile.mkdtemp()
+    try:
+        root = Path(td6); (root / "c.json").write_text(json.dumps(c6), encoding="utf-8")
+        C6 = ["--config", str(root / "c.json")]
+        rc = main(C6 + ["--machine", "A", "--owns", "design/figma/"])
+        check(rc == 2, f"**誰も担当していない段を黙って通した（--owns / {rc}）**")
+        rc = main(C6 + ["--machine", "A", "--test-owns", "design/figma/"])
+        check(rc == 2, f"**誰も担当していない段を黙って通した（--test-owns / {rc}）**")
+        # 担当がいるなら、担当外の機体は今までどおり飛ばす（0 / 3）
+        check(main(C6 + ["--machine", "A", "--owns", "ios/"]) == 0, "担当外で落ちた（--owns）")
+        check(main(C6 + ["--machine", "A", "--test-owns", "ios/"]) == 3, "担当外が 3 を返さない")
+        # shared に入れれば全機体で走る
+        check(main(C6 + ["--machine", "A", "--test-owns", "docs/"]) == 0, "shared が担当にならない")
+    finally:
+        shutil.rmtree(td6, ignore_errors=True)
+
+    # ── #41: 改行だけの差を「担当外を変えた」と数えない ────────────────
+    td5 = tempfile.mkdtemp()
+    try:
+        root = Path(td5)
+        def g5(*a):
+            return subprocess.run(["git", "-C", str(root), *a],
+                                  capture_output=True, text=True)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(root)], capture_output=True)
+        g5("config", "user.email", "t@t"); g5("config", "user.name", "t")
+        # **作業ツリーは CRLF・リポジトリは LF**（Windows の core.autocrlf=true）
+        g5("config", "core.autocrlf", "true")
+        (root / "c.json").write_text(json.dumps(c2), encoding="utf-8")
+        (root / "design").mkdir()
+        gen = root / "design" / "gen.svg"
+        gen.write_bytes(b"<svg>\r\n</svg>\r\n")
+        g5("add", "-A"); g5("commit", "-qm", "init")
+        # 生成器が **LF で書き戻す**（中身は1バイトも変わらない）
+        gen.write_bytes(b"<svg>\n</svg>\n")
+
+        st = g5("status", "--porcelain", "--", "design/gen.svg").stdout.strip()
+        df = g5("diff", "--", "design/gen.svg").stdout.strip()
+        if st and not df:          # この環境で CRLF の状況が作れたときだけ見る
+            C5 = ["--config", str(root / "c.json"), "--root", str(root)]
+            rc = main(C5 + ["--machine", "Windows", "--check"])
+            check(rc == 0,
+                  f"**改行だけの差を「担当外を変えた」と数えた（{rc}）**")
+            # 中身が本当に変わったら、ちゃんと落ちる
+            gen.write_bytes("<svg>ちがう</svg>\n".encode("utf-8"))
+            rc = main(C5 + ["--machine", "Windows", "--check"])
+            check(rc == 1, f"**本物の変更を見逃した（{rc}）**")
+    finally:
+        shutil.rmtree(td5, ignore_errors=True)
 
     # ── #7: --config を省くと既定の場所を試す ──────────────────────────
     td4 = tempfile.mkdtemp()
