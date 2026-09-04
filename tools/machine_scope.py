@@ -38,6 +38,35 @@
     # 真偽だけ欲しいとき（shell で分岐する。0=担当 / 3=担当外）
     machine_scope.py --config design/machine-scope.json --test-owns design/
 
+## `set -e` の下では、そのまま呼ばない
+
+`--test-owns` は担当外で **3** を返す。`set -e`（`set -euo pipefail`）の下で
+素で呼ぶと、**`case $?` に着く前にスクリプトごと死ぬ。**
+
+実害（flash-compose・2026-09-03）: Mac mini と Windows が **2日間、
+`design/verify.sh` の検査を一度も走らせていなかった。** 両機とも
+`--no-verify` で push していた（決まりに反する状態）。
+`exit 3` は `verify.sh` に1行も書かれていないので、grep しても見つからない。
+
+安全な受け方は2つ。
+
+    # (a) if で受ける（set -e は if の条件では働かない）
+    if machine_scope.py --config ... --test-owns design/; then
+      ...担当のときの処理...
+    fi
+
+    # (b) || で拾ってから分岐する
+    rc=0
+    machine_scope.py --config ... --test-owns design/ || rc=$?
+    case $rc in
+      0) ...担当... ;;
+      3) : ;;                       # 担当外。理由は道具が出している
+      *) echo "機体を判定できませんでした" >&2; exit 1 ;;
+    esac
+
+**分岐が要らないなら `--owns ... -- <コマンド>` を使う。**
+こちらは担当外でも 0 を返すので、`set -e` の影響を受けない。
+
     # 対の検査: 担当外のパスを変えていないか
     machine_scope.py --config design/machine-scope.json --check
 
@@ -106,34 +135,65 @@ def detect_machine():
     return None              # 不明。ユーザーに確認する（machine-relay と同じ）
 
 
+#: shared に当たったときの担当。**全機体が担当**を意味する
+SHARED = "（共有）"
+
+
 def norm(p):
-    return str(p).replace("\\", "/").lstrip("./")
+    """パスを比べられる形にする。
+
+    `lstrip("./")` は**文字を剥がす**ので `.harness_log.jsonl` が
+    `harness_log.jsonl` になっていた（2026-09-04 に直した）。
+    """
+    s = str(p).replace("\\", "/")
+    while s.startswith("./"):
+        s = s[2:]
+    return s.rstrip("/")
 
 
-def owns(machine, path, conf):
-    """machine が path を担当しているか。前方一致（どちら向きでも）。"""
-    target = norm(path)
-    for own in conf.get("machines", {}).get(machine, []):
-        o = norm(own)
-        if target.startswith(o) or o.startswith(target):
-            return True
-    return False
+def _under(target, own):
+    """target が own 自身か、その下にあるか。**境界を見る。**
+
+    素の `startswith` だと `design/` の宣言が `designs/x` にも当たる。
+    """
+    own = norm(own)
+    if own == "":
+        return True
+    return target == own or target.startswith(own + "/")
 
 
 def owner_of(path, conf):
-    """path を担当する機体名（見つからなければ None）。最長一致を採る。"""
+    """path の担当を1つ返す。**最長一致。** shared に当たれば SHARED。
+
+    **判定はここ1か所だけ。** 以前は `owns` が緩い前方一致（どちら向きでも）で
+    別に持っており、同じパスに違う答えを返していた（#29）。
+    """
     target, best, best_len = norm(path), None, -1
     for m, paths in conf.get("machines", {}).items():
         for own in paths:
             o = norm(own)
-            if target.startswith(o) and len(o) > best_len:
+            if _under(target, o) and len(o) > best_len:
                 best, best_len = m, len(o)
+    for s in conf.get("shared", []):
+        o = norm(s)
+        if _under(target, o) and len(o) > best_len:
+            best, best_len = SHARED, len(o)
     return best
+
+
+def owns(machine, path, conf):
+    """machine が path に責任を持つか。**owner_of と必ず同じ答えになる。**
+
+    shared は**全機体が担当**とする。以前は shared を見ていなかったので、
+    shared に結んだ段が全機体で飛んでいた（#40）。
+    """
+    holder = owner_of(path, conf)
+    return holder == machine or holder == SHARED
 
 
 def is_shared(path, conf):
     target = norm(path)
-    return any(target.startswith(norm(s)) for s in conf.get("shared", []))
+    return any(_under(target, s) for s in conf.get("shared", []))
 
 
 def changed_files(root):
@@ -160,17 +220,39 @@ def changed_files(root):
         if name:
             out.add(name.strip('"'))
 
-    if git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"):
-        diff = git("diff", "--name-only", "@{u}...HEAD")
+    base = _base_ref(git)
+    if base:
+        # **既定ブランチとの差**を見る。以前は @{u}（push した時点のリモート
+        # ブランチ）と比べていたので、rebase やマージで取り込んだ**他機体の
+        # コミット**が自分の変更として数えられ、push が止まった（#49・計5回）。
+        diff = git("diff", "--name-only", f"{base}...HEAD")
         if diff:
             out.update(x.strip() for x in diff.splitlines() if x.strip())
     return out
 
 
+def _base_ref(git):
+    """自分のコミットだけを数えるための土台。**既定ブランチ**を探す。
+
+    `origin/main...HEAD` は merge-base から HEAD までを見るので、
+    既定ブランチを取り込んでも・rebase しても、**他機体のコミットは入らない。**
+    """
+    head = git("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+    if head and head.strip():
+        return head.strip()
+    for cand in ("origin/main", "origin/master"):
+        if git("rev-parse", "--verify", "--quiet", cand):
+            return cand
+    up = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+    return up.strip() if up and up.strip() else None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="検査の段を、その失敗を起こせる機体に結び直す")
-    ap.add_argument("--config", type=Path)
+    ap.add_argument("--config", type=Path,
+                    help="既定: <--root>/design/machine-scope.json。"
+                         "--owns / --test-owns / --check には要る")
     ap.add_argument("--machine", help="機体名を明示する（試験用）")
     ap.add_argument("--whoami", action="store_true")
     ap.add_argument("--owns", metavar="PATH",
@@ -178,7 +260,9 @@ def main(argv=None):
                          "担当外なら理由を出して 0（段を通す）")
     ap.add_argument("--test-owns", metavar="PATH",
                     help="担当していれば 0・していなければ 3 を返す（shell の分岐用）。"
-                         "--owns は『段を通す』ので、真偽の判定には使えない")
+                         "--owns は『段を通す』ので、真偽の判定には使えない。"
+                         "**set -e の下では if か || で受ける**（そのまま呼ぶと "
+                         "3 でスクリプトごと死に、以降の検査が1本も走らない）")
     ap.add_argument("--check", action="store_true",
                     help="担当外のパスを変えていないか")
     ap.add_argument("--root", type=Path, default=Path("."))
@@ -195,7 +279,17 @@ def main(argv=None):
         print(machine or "不明")
         return 0 if machine else 2
     if not args.config:
-        ap.error("--config が要ります（--whoami / --self-test を除く）")
+        # **既定の場所を試す。** 以前は必ず落ちていたので、手で呼ぶと
+        # 「引数が足りない」→「--config が要る」で2回失敗していた（#7）
+        guess = args.root / "design" / "machine-scope.json"
+        if guess.exists():
+            args.config = guess
+        else:
+            # 他の設定エラーと揃えて **返す**（ap.error は SystemExit を投げるので、
+            # 呼び出し側が終了コードで分岐できない）
+            print(f"--config が要ります（--whoami / --self-test を除く）。\n"
+                  f"  既定の場所を見ましたが在りませんでした: {guess}", file=sys.stderr)
+            return 2
 
     try:
         conf = json.loads(args.config.read_text(encoding="utf-8"))
@@ -362,6 +456,107 @@ def self_test():
             check(detect_machine() == "Mac mini", f"{ENV_OVERRIDE} が効かない")
         finally:
             del os.environ[ENV_OVERRIDE]
+
+    # ── #29: owns と owner_of が同じ答えを返す ──────────────────────────
+    c2 = {"machines": {"MacBook Air": ["design/"],
+                       "Windows": ["design/emulator_runs.json"],
+                       "Mac mini": ["design/simulator_runs.json"]},
+          "shared": ["SESSION_LOG.md", "docs/"]}
+    for f in ("design/emulator_runs.json", "design/simulator_runs.json", "design/figma/x.json"):
+        holder = owner_of(f, c2)
+        for m in c2["machines"]:
+            check(owns(m, f, c2) == (m == holder),
+                  f"**{f} で owns({m}) と owner_of が食い違う**（owner={holder}）")
+    check(owner_of("design/emulator_runs.json", c2) == "Windows", "最長一致になっていない")
+    check(not owns("MacBook Air", "design/emulator_runs.json", c2),
+          "**広い宣言を持つ機体が、上書きされたファイルまで担当と出る**")
+    # 段を結ぶとき（範囲）も、担当外は False
+    check(owns("MacBook Air", "design/", c2), "範囲の担当が False になった")
+    check(not owns("Windows", "design/", c2),
+          "**1ファイルしか持たない機体が design/ の段を担当と出る**")
+    check(not owns("Windows", "design/figma/", c2), "design/figma/ でも担当と出る")
+
+    # ── #40: shared は全機体が担当 ──────────────────────────────────────
+    check(owner_of("SESSION_LOG.md", c2) == SHARED, "shared が担当なしのまま")
+    for m in c2["machines"]:
+        check(owns(m, "SESSION_LOG.md", c2),
+              f"**shared に結んだ段が {m} で飛ぶ**")
+        check(owns(m, "docs/a/b.md", c2), f"shared の下が {m} で飛ぶ")
+
+    # ── 境界を見る（design/ が designs/ に当たらない）──────────────────
+    check(owner_of("designs/x.json", c2) is None,
+          "**design/ の宣言が designs/ にも当たっている**")
+    check(norm(".harness_log.jsonl") == ".harness_log.jsonl",
+          "**先頭のドットを剥がしている**（lstrip の取りこぼし）")
+
+    # ── #49: 取り込んだ他機体のコミットを自分の変更と数えない ────────────
+    import shutil
+    td3 = tempfile.mkdtemp()
+    try:
+        root = Path(td3)
+        def g(*a, cwd=root):
+            return subprocess.run(["git", "-C", str(cwd), *a],
+                                  capture_output=True, text=True)
+        up = Path(td3 + "-up")
+        g("init", "-q", "--bare", str(up), cwd=root.parent) if False else None
+        subprocess.run(["git", "init", "-q", "--bare", str(up)], capture_output=True)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(root)], capture_output=True)
+        g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        g("remote", "add", "origin", str(up))
+        (root / "design").mkdir(); (root / "lib").mkdir()
+        (root / "c.json").write_text(json.dumps(c2), encoding="utf-8")
+        (root / "README.md").write_text("x", encoding="utf-8")
+        g("add", "-A"); g("commit", "-qm", "init"); g("push", "-q", "origin", "main")
+
+        # 他機体が main を進める（Windows 担当のファイル）
+        (root / "design/emulator_runs.json").write_text("{}", encoding="utf-8")
+        g("add", "-A"); g("commit", "-qm", "windows"); g("push", "-q", "origin", "main")
+
+        # 自分は枝を切って、自分の担当だけ触る
+        g("checkout", "-q", "-b", "mine", "HEAD~1")
+        (root / "design").mkdir(exist_ok=True)   # git は空のディレクトリを持たない
+        (root / "design/mine.json").write_text("{}", encoding="utf-8")
+        g("add", "-A"); g("commit", "-qm", "mine")
+        # **枝を push して upstream を作る。** これが無いと @{u} が引けず、
+        # 古い実装でも素通りしてしまい、この検査が意味を持たない
+        g("push", "-q", "-u", "origin", "mine")
+        g("fetch", "-q", "origin")
+        g("merge", "-q", "--no-edit", "origin/main")   # ← 他機体のコミットを取り込む
+
+        C2 = ["--config", str(root / "c.json"), "--root", str(root)]
+        rc = main(C2 + ["--machine", "MacBook Air", "--check"])
+        check(rc == 0,
+              f"**取り込んだ他機体のコミットを自分の変更と数えた（{rc}）**")
+
+        # 本当に自分が担当外を変えたら、ちゃんと落ちる
+        (root / "lib/x.dart").write_text("x", encoding="utf-8")
+        g("add", "-A"); g("commit", "-qm", "trespass")
+        c3 = dict(c2); c3["machines"] = dict(c2["machines"])
+        c3["machines"]["Windows"] = ["design/emulator_runs.json", "lib/"]
+        (root / "c.json").write_text(json.dumps(c3), encoding="utf-8")
+        rc = main(C2 + ["--machine", "MacBook Air", "--check"])
+        check(rc == 1, f"本当の越境を見逃した（{rc}）")
+    finally:
+        shutil.rmtree(td3, ignore_errors=True)
+        shutil.rmtree(td3 + "-up", ignore_errors=True)
+
+    # ── #7: --config を省くと既定の場所を試す ──────────────────────────
+    td4 = tempfile.mkdtemp()
+    try:
+        root = Path(td4); (root / "design").mkdir(parents=True)
+        (root / "design/machine-scope.json").write_text(json.dumps(c2), encoding="utf-8")
+        rc = main(["--root", str(root), "--machine", "MacBook Air", "--test-owns", "design/"])
+        check(rc == 0, f"**--config を省くと既定の場所を見ない（{rc}）**")
+        rc = main(["--root", str(Path(tempfile.mkdtemp())), "--machine", "MacBook Air",
+                   "--test-owns", "design/"])
+        check(rc == 2, "既定の場所も無いのに落ちない")
+    finally:
+        shutil.rmtree(td4, ignore_errors=True)
+
+    # ── #46: set -e の受け方が --help と docstring に書いてある ──────────
+    check("set -e" in (__doc__ or ""), "**set -e の受け方が docstring に無い**")
+    check("|| rc=$?" in (__doc__ or "") or "|| rc=" in (__doc__ or ""),
+          "安全な受け方の例が docstring に無い")
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
