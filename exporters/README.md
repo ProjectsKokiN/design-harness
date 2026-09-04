@@ -18,6 +18,20 @@ for (const [name, node] of [...c.sets, ...c.singles]) {
 return JSON.stringify({ $meta: { declared: c.declared, pages: c.pages }, result });
 ```
 
+## 置いてある器
+
+| 器 | 出すもの |
+|---|---|
+| `export_frames.js` | **画面のノード木**（1行 = 深さ\|名前\|型\|w\|h\|x\|y\|k=v…）。行形式なのは JSON がキーの繰り返しで嵩み、20KB で切られるため |
+
+`export_frames.js` の決まり:
+
+- 部品のインスタンスは `instanceOf`（セット名とバリアント）まで。**中には降りない**
+- 色・文字スタイル・効果は**変数／スタイルの名前**で書く。**解決しない**
+  （`counterAxisAlignItems: MAX` を `"bottom"` と書き写すような翻訳を挟むと、
+  **それが「正」になる**）
+- **同じ形の兄弟は畳む**（ビンゴの 5x5 は 25 行ではなく 1 行 + 位置の列）
+
 ## 検査
 
 | 何を | どこで |
@@ -25,6 +39,7 @@ return JSON.stringify({ $meta: { declared: c.declared, pages: c.pages }, result 
 | 単体 component を落としていないか | `tools/impl_coverage_check.py`（`$meta.declared.singleComponents` の宣言を要求） |
 | 参照してよいページか | `tools/page_scope_check.py` |
 | 器が保存され指紋が一致するか | `tools/exporter_check.py` |
+| **画面が全部書き出されているか**（記録層を消せる前提） | `tools/screen_export_check.py` |
 
 ## 実害の記録
 

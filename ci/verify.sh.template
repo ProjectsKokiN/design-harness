@@ -117,6 +117,11 @@ step "移植性（Windows でだけ落ちる書き方）" \
 # （AI の自己申告にしない。走査が空振りしていれば exit 2 で落ちる）
 step "期待値の出どころ（照合テストが書き出しを読んでいるか）" \
   "$PY" "$HARNESS/tools/expectation_source_check.py" --config design/expectations.json
+# 画面の書き出しが**足りている**か（記録層を消せる前提条件）。
+# 「在る」と「足りている」は違う（flash-compose の frames.json は3件で、
+#  中身は部品にならない枠。画面のノード木ではなかった）
+step "画面の書き出し（記録層を消せる前提）" \
+  "$PY" "$HARNESS/tools/screen_export_check.py" --config design/screens-check.json
 step "書き出しの器（保存されていて指紋が一致するか）" \
   "$PY" "$HARNESS/tools/exporter_check.py" --config design/exporters.json
 step "条件9 の網羅（状態・スロットを持つセットにテストがあるか）" \
