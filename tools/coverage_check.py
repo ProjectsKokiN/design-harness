@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""照合体制の検査（production-gate の条件2・2026-08-29 に全面書き換え）。
+"""照合体制の検査（**参考**。関門の条件ではない）。
+
+**2026-09-03、ユーザーの指示で条件2 は廃止しました。** 原文は「条件2は廃止で」。
+関門は 1・4・5・7・8・9 の6つ（`production-gate.md` が正本）。
+
+**この道具は消しません。** 廃止したのは「関門で機械的に落とす」ところだけで、
+検査としては有用です。ただし**落ちてもリリースは止まりません。**
+
+廃止しても残る危険（記録）: **AI が手で書いた期待値は、自分の答案の自己採点に
+なる。** aub の実測で「検査は緑なのに Figma と違う」誤り8件は全部が手書きの層から
+出ており、機械生成の層は 0 件でした。
 
 **照合相手は Figma の機械書き出し（figma/*.json）だけ。手で書いた記録層
 （design/values/）は照合相手にしない**（2026-08-29 ユーザー確定:
@@ -11,7 +21,7 @@
 （機械生成の層は0件）。記録を書いたのも AI なので、自分の答案を自分で
 採点している状態だった。
 
-## 新しい条件2の測り方（この検査は「体制」を見る）
+## 測り方（この検査は「体制」を見る）
 
 実装値が書き出しと突き合っている状態は、次の合成で成立する:
 
@@ -67,7 +77,8 @@ REQUIRED_EXPORTS = ("components.json", "variables.json", "styles.json")
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="照合体制の検査（条件2）")
+    ap = argparse.ArgumentParser(
+        description="照合体制の検査（参考。条件2 は廃止済み）")
     ap.add_argument("--config", type=Path)
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
@@ -123,7 +134,7 @@ def main(argv=None):
         notes.append(f"{gen_dir} がありません。トークン・部品仕様を書き出しから"
                      f"生成する道が無く、手で写す余地が残ります")
 
-    print("照合体制（条件2）:")
+    print("照合体制（参考。条件2 は 2026-09-03 に廃止）:")
     for n in notes:
         print(f"  注意: {n}")
     if problems:

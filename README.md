@@ -18,6 +18,7 @@
 | `tools/design_md_check.py` | 案件の DESIGN.md が共通の憲法を参照しているか・写していないか |
 | **`rules/<stack>.json`** | **A層: スタック共通の禁止ルール**（生値の直書き。DS の値に依存しない） |
 | **`tools/gen_rules.py`** | **B層の生成器**: 段の値が入るルールを tokens.json から作る（`--check` でズレを検出） |
+| **`tools/gen_gate.py`** | **関門の合格条件の生成器**: `production-gate.md`（正本）から`gate/conditions.json` を作る（`--check` でズレを検出）。**条件が何件かを機械で持つ** |
 | **`tools/seed_check.py`** | **種まき欠陥テスト**: ルールが実際に発火するか（ラチェットは対象数、これは発火件数） |
 | **`seeds/<stack>/`** | 種のひな形（わざと違反させたコード）。案件の `design/seeds/` へコピーする |
 | **`tools/gen_io.py`** | **生成器の入出力の基盤**（書き出しを読む・件数を照合・生成物を LF で書く・色の変換） |
@@ -44,7 +45,7 @@
 | **`tools/readme_check.py`** | **この表がディスクと合っているか**（手で保守する一覧は古くなる） |
 | `tools/figma_freshness.py` | 書き出しが Figma より古くないか（指紋） |
 | `tools/gen_input_check.py` | 生成器・照合の入力が書き出しだけか（記録層の廃止・2026-08-29） |
-| `tools/coverage_check.py` | 照合体制（条件2）: 照合相手が書き出しだけか |
+| `tools/coverage_check.py` | 照合体制（**参考**。条件2 は 2026-09-03 に廃止）: 照合相手が書き出しだけか |
 | `tools/sync_pending.py` | 【廃止予定】記録層とともに削除する（既存案件の移行後） |
 | `ci/verify.sh.template` | 統合検査の入口の雛形（必須段を減らさない） |
 | `tools/harness_stats.py` | 発火ログの集計（任意の道具。2026-08-29 に「仕組改善層」としては廃止） |
@@ -160,6 +161,7 @@ git -C design/harness pull origin main
 | 検査エンジン | `engine/design_check.py` | 2026-08-28（5案件の複製・最大515行乖離） |
 | デザインの憲法 | `DESIGN.md` | 2026-08-29（案件の DESIGN.md に手写し） |
 | 段の値が入るルール | `tools/gen_rules.py` の生成物 | 2026-08-30（正規表現に手写し） |
+| 関門の合格条件 | `tools/gen_gate.py` の生成物 | 2026-09-04（正本が ~/.claude にあり CI から読めない） |
 | **識別子の規則** | **`tools/gen_io.py`** | **生成器の入出力の基盤**（書き出しを読む・件数を照合・生成物を LF で書く・色の変換） |
 | **`tools/issue_sync.py`** | **直せていない課題を GitHub の Issue に写す**（`--check` は網なし・`--inbox` は全リポジトリ一覧） |
 | **`tools/duplication_check.py`** | **案件をまたぐ複製を見つける**（回収の候補を機械で出す）。設定は `duplication.json` |

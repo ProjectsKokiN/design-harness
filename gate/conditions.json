@@ -1,0 +1,45 @@
+{
+  "$生成元": "~/.claude/skills/mobile-harness-setup/references/production-gate.md",
+  "$生成元の指紋": "7b44ef64582ba7ce",
+  "$手で書き換えない": "tools/gen_gate.py が生成します",
+  "生きている条件": {
+    "1": {
+      "見出し": "禁止パターン 0・静的解析 0・テスト全通過",
+      "測る道具": [
+        "design/verify.sh"
+      ]
+    },
+    "4": {
+      "見出し": "鮮度",
+      "測る道具": [
+        "machine_scope.py"
+      ]
+    },
+    "5": {
+      "見出し": "再現性の判定に穴が無い",
+      "測る道具": [
+        "check_render_gaps.py"
+      ]
+    },
+    "7": {
+      "見出し": "実装網羅 100%",
+      "測る道具": [
+        "impl_coverage_check.py"
+      ]
+    },
+    "8": {
+      "見出し": "検査が生きている",
+      "測る道具": [
+        "gap_report.py",
+        "gen_rules.py",
+        "seed_check.py"
+      ]
+    },
+    "9": {
+      "見出し": "見本と相互作用",
+      "測る道具": [
+        "tree_test_check.py"
+      ]
+    }
+  }
+}

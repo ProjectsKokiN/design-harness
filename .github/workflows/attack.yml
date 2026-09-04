@@ -18,6 +18,12 @@ jobs:
           python-version: "3.12"
       - name: エンジンの妨害テスト
         run: python3 attack/engine_attack_test.py
+
+      - name: 関門の集計（飛ばした条件を緑にしないか）
+        run: python3 attack/gate_skip_test.py
+
+      - name: 関門の条件（正本と生成物のズレ）
+        run: python3 tools/gen_gate.py --check
       - name: ツールの構文
         run: python3 -m py_compile engine/design_check.py tools/*.py shims/*.py
 

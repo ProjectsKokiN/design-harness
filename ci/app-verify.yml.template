@@ -79,9 +79,12 @@ jobs:
         run: |
           set -u
           H=design/harness/tools
+          # <<<集計ここから>>>  attack/gate_skip_test.py がこの印で抜き出して回す。
+          # **印を消さないでください**（消すと、この集計は誰も試さなくなります）
           FAILED=0
           RAN=0
           SKIPPED=0
+          GATE_RAN=""
 
           # 設定の置き場は案件ごとに違う（root か design/ か）。**黙って飛ばさない。**
           pick() { for f in "$@"; do [ -f "$f" ] && { echo "$f"; return 0; }; done; return 1; }
@@ -90,6 +93,7 @@ jobs:
             local label="$1"; local conf="$2"; shift 2
             echo "=== $label ==="
             RAN=$((RAN + 1))
+            note_conds "$label"
             if "$@"; then return 0; fi
             if [ "$conf" != "-" ] && [ -f "$conf" ] && grep -q '"\$warn_only"' "$conf"; then
               echo "  ↑ 「知らせるだけ」の宣言があるため CI は落としません（$conf）"
@@ -98,13 +102,32 @@ jobs:
             FAILED=1
           }
 
-          skip() {  # skip <名前> <理由>
+          skip() {  # skip <名前> <理由>  ── 関門でない段。飛ばしても落とさない
             echo "=== $1 ==="
             echo "  飛ばしました: $2"
             SKIPPED=$((SKIPPED + 1))
           }
 
-          run "禁止パターン（全量）"          - python3 design/design_check.py --all
+          # 関門の条件を測る段は、飛ばしたら**落とす**。
+          # flash-compose 2026-09-03 の実害: 条件7 の段は「飛ばしました。
+          # **条件7 が誰も見ていません**」と自分で言いながら CI は緑だった。
+          # 条件5 はもっと悪く、**段そのものが無く**飛ばした記録すら残らなかった。
+          # production-gate.md は「条件は全部満たす。1つでも欠けたらリリースに
+          # 進まない」と書いているのに、**それを確かめる機械が無かった。**
+          skip_gate() {  # skip_gate <名前> <理由>
+            echo "=== $1 ==="
+            echo "  飛ばしました: $2" >&2
+            echo "  **これは関門の条件を測る段です。飛ばした = 誰も見ていません。**" >&2
+            SKIPPED=$((SKIPPED + 1))
+            FAILED=1
+          }
+
+          # 走った段の見出しから条件の番号を拾う（宣言しない。導出する）
+          note_conds() { GATE_RAN="$GATE_RAN $(printf '%s' "$1" \
+            | grep -o '条件[0-9][0-9]*' | sed 's/[^0-9]//g' | tr '\n' ' ')"; }
+
+          # <<<集計ここまで>>>
+          run "禁止パターン（全量・条件1）"   - python3 design/design_check.py --all
           # 共通の憲法への移行は、**ユーザーが案件を再開するときに行う**と
           # 決めた（2026-08-29）。未移行の案件で関門にすると CI が入らないので、
           # 移行済みかどうかで分ける。**黙って飛ばさず、理由と件数を出す。**
@@ -115,13 +138,40 @@ jobs:
               "DESIGN.md が共通の憲法へ未移行（2026-08-29 の決定で、案件の再開時に移行）"
           fi
           run "生成器の入力"                  - python3 $H/gen_input_check.py
-          run "種まき（ルールが生きているか）" - python3 $H/seed_check.py
+          run "種まき（条件8: ルールが生きているか）" - python3 $H/seed_check.py
           run "段の健全性"                    - python3 $H/stage_check.py --verify design/verify.sh
 
           if C=$(pick design/impl-coverage.json impl-coverage.json); then
             run "実装網羅（条件7）" "$C" python3 $H/impl_coverage_check.py --config "$C"
           else
-            skip "実装網羅（条件7）" "impl-coverage.json がありません。**条件7 が誰も見ていません**"
+            skip_gate "実装網羅（条件7）" "impl-coverage.json がありません。**条件7 が誰も見ていません**"
+          fi
+
+          # 条件5: 再現性の判定。**設定がレジストリ側にある案件が多い。**
+          # どこにも無ければ「誰も見ていない」ので落とす（#12）
+          if C=$(pick design/render-gaps.json "$HOME/dev/design-systems"/*/render-gaps.json); then
+            run "再現性の判定（条件5）" "$C" python3 $H/check_render_gaps.py --config "$C"
+          else
+            skip_gate "再現性の判定（条件5）" \
+              "render-gaps.json がどこにもありません（案件にもレジストリにも）"
+          fi
+
+          # 条件9: 見本と相互作用。値の検査は全部通るので AI からは気づけない
+          if C=$(pick design/tree-tests.json); then
+            run "条件9 の網羅" "$C" python3 $H/tree_test_check.py --config "$C"
+          else
+            skip_gate "条件9 の網羅" \
+              "tree-tests.json がありません。**状態・スロットを持つセットの分母が無い状態です**"
+          fi
+
+          # 条件4: 鮮度。**design/ を触る機体でだけ必須**（正本の決まり）。
+          # 担当外の機体では飛ばしてよいので skip（skip_gate ではない）
+          if [ -f design/machine-scope.json ] \
+             && python3 $H/machine_scope.py --config design/machine-scope.json \
+                  --owns design/ >/dev/null 2>&1; then
+            run "鮮度（条件4）" - python3 $H/figma_freshness.py
+          else
+            skip "鮮度（条件4）" "この機体は design/ の担当ではありません（正本の決まり）"
           fi
 
           if C=$(pick design/figma/page-scope.json); then
@@ -145,12 +195,13 @@ jobs:
             python3 $H/issue_sync.py --check --root .
 
           if C=$(pick design/gaps.json); then
-            run "見なかったもの" "$C" python3 $H/gap_report.py --config "$C"
+            run "見なかったもの（条件8）" "$C" python3 $H/gap_report.py --config "$C"
           else
-            skip "見なかったもの" "gaps.json がありません。**限界が AI の自己申告のままです**"
+            skip_gate "見なかったもの（条件8）" "gaps.json がありません。**限界が AI の自己申告のままです**"
           fi
 
           echo
+          # <<<まとめここから>>>
           echo "走らせた段: $RAN / 飛ばした段: $SKIPPED"
           if [ "$RAN" -eq 0 ]; then
             echo "段を1つも走らせていません。**通ったのではなく、何も見ていません。**" >&2
@@ -159,6 +210,25 @@ jobs:
           if [ "$SKIPPED" -gt 0 ]; then
             echo "**飛ばした段があります。** 設定を足すと関門が増えます（上の理由を参照）"
           fi
+
+          # 関門の条件が全部測られたか。**分母は生成物**（gen_gate.py が
+          # production-gate.md から作る）。ここが無いと「条件は全部満たす」は
+          # AI の自己申告のままになる（#12）
+          GATE="$H/../gate/conditions.json"
+          if [ -f "$GATE" ]; then
+            for c in $(python3 -c "import json,sys;print(' '.join(json.load(open(sys.argv[1],encoding='utf-8'))['生きている条件']))" "$GATE"); do
+              case " $GATE_RAN " in
+                *" $c "*) ;;
+                *) echo "関門の条件$c を測った段がありません。**誰も見ていません。**" >&2
+                   FAILED=1 ;;
+              esac
+            done
+          else
+            echo "関門の条件の一覧がありません: $GATE" >&2
+            echo "  条件が何件かを確かめる手段がない状態です。" >&2
+            FAILED=1
+          fi
+          # <<<まとめここまで>>>
           exit $FAILED
 
       # 生成物のべき等（共有の道具。台帳 generators.json が唯一の正）。

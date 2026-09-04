@@ -37,7 +37,7 @@ fi
 TARGET="${1:-all}"
 
 # --- 必須段（減らさない）----------------------------------------------------
-step "禁止パターン（全量）"   "$PY" design/design_check.py --all
+step "禁止パターン（全量・条件1）"   "$PY" design/design_check.py --all
 # ルールの鎖が CI でも解決できるか。**手元でだけ通る構成**を先に落とす
 # （flash-compose 2026-09-03: extends が3つともリポジトリ外を指しており、
 #  手元 70 ファイル・11 ルール、CI は走査 0 ファイル。入れた日から一度も緑が無かった）
@@ -50,7 +50,7 @@ step "文脈（共通の憲法を参照しているか・写していないか�
 
 step "実装網羅（条件7: Figma にあるものは全部実装）" \
   "$PY" "$HARNESS/tools/impl_coverage_check.py" --config impl-coverage.json
-step "照合体制（条件2: 照合相手は書き出しだけ）" \
+step "照合体制（参考: 条件2 は 2026-09-03 に廃止。検査としては有用）" \
   "$PY" "$HARNESS/tools/coverage_check.py" --config coverage.json
 step "生成器の入力（書き出し以外を読んでいないか）" \
   "$PY" "$HARNESS/tools/gen_input_check.py"
@@ -60,9 +60,9 @@ step "ページの範囲（参照してよいページか）" \
   "$PY" "$HARNESS/tools/page_scope_check.py" --config design/figma/page-scope.json
 step "再現性の判定（条件5: 値が合っても描画で別物になる指定）" \
   "$PY" "$HARNESS/tools/check_render_gaps.py" --config {{<DS>/render-gaps.json}}
-step "種まき（ルールが実際に発火するか）" \
+step "種まき（条件8: ルールが実際に発火するか）" \
   "$PY" "$HARNESS/tools/seed_check.py"
-step "ルールの生成物（段の値が tokens と一致するか）" \
+step "ルールの生成物（条件8: 段の値が tokens と一致するか）" \
   "$PY" "$HARNESS/tools/gen_rules.py" --config {{<DS>/rules/gen-rules.json}} --check
 
 # Figma 本体との鮮度。**design/ を触る機体でだけ必須**（2026-08-30 に結び直した）。
@@ -92,7 +92,7 @@ step "ルールの生成物（段の値が tokens と一致するか）" \
 #   rc=0
 #   "$PY" "$HARNESS/tools/machine_scope.py" --test-owns design/ || rc=$?
 #   case $rc in 0) … ;; 3) : ;; *) exit 1 ;; esac
-step "鮮度（Figma 本体 → 書き出し。design/ の担当機のみ）" \
+step "鮮度（条件4: Figma 本体 → 書き出し。design/ の担当機のみ）" \
   "$PY" "$HARNESS/tools/machine_scope.py" --config design/machine-scope.json \
     --owns design/ -- bash -c '
       if [ -z "${FIGMA_TOKEN:-}" ]; then
@@ -125,7 +125,13 @@ step "指紋の一致（JS と Python で同じ値になるか）" \
   "$PY" "$HARNESS/tools/fingerprint_parity.py"
 step "段の健全性（落ちるところを見た道具か）" \
   "$PY" "$HARNESS/tools/stage_check.py" --verify design/verify.sh
-step "見なかったもの（gap_report）" \
+# **段の数**を見る。元ファイルにある段がこの案件から落ちていないか。
+# 意図して当てはまらない段は design/stages.json に理由つきで宣言する
+# （flash-compose 2026-09-02: 元ファイルの18段のうち7段がどこにも無く、
+#  「意図して不在」と「黙って落ちた」が区別できなかった）
+step "段の数（元ファイルの段が落ちていないか・関門の条件が全部測られているか）" \
+  "$PY" "$HARNESS/tools/stage_check.py" --stages --verify design/verify.sh
+step "見なかったもの（条件8: gap_report）" \
   "$PY" "$HARNESS/tools/gap_report.py" --config design/gaps.json
 
 # --- 案件固有の段（{{ }} を具体化して足す）----------------------------------
