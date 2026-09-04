@@ -133,6 +133,10 @@ step "読めていないプロパティの宣言" \
 # 実装の中だけの数値（**Figma を直しても動かない値**）。
 # 記録層を消しても、手で測った値は実装の定数へ移るだけ
 # （aub: 82.4 で 440 の機体が 50px ずれ / 254 で余白が 20→45 / 138.0 は「Figma の実測」）
+# **書き出しの中だけで見つかる矛盾**を、実装の前に出す
+# （aub: 子が親の中身より広い3件が、全部実機とユーザーの指摘で戻った）
+step "書き出しの検算（子が親からはみ出していないか）" \
+  "$PY" "$HARNESS/tools/export_sanity_check.py" --frames design/figma/frames.json
 step "実装の中だけの数値" \
   "$PY" "$HARNESS/tools/impl_value_check.py" --config design/impl-values.json
 step "画面の書き出し（記録層を消せる前提）" \
