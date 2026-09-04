@@ -168,6 +168,13 @@ step "書き出しの器（保存されていて指紋が一致するか）" \
 # **押した状態が試験で一度も描かれない**（tap は down と up の間に
 # フレームを挟まない）＋ **Figma に無い組み合わせへ実装が動きうる**。
 # aub: 試験816件が緑のまま、リリース版で画面が消えた
+# **アプリアイコン**（どの関門からも見られていなかった）。
+# flash-compose 2026-08-27: 書き出しが黙って壊れ、20枚中14枚が別物のまま
+# 「成功」で終わった。2026-09-04: Android の前景が全幅に広がり左右が切れていた
+step "アプリアイコン（宣言どおりに揃っているか）" \
+  "$PY" "$HARNESS/tools/appicon_check.py" \
+    --ios ios/Runner/Assets.xcassets/AppIcon.appiconset \
+    --android android/app/src/main/res
 step "押した状態と変異の穴" \
   "$PY" "$HARNESS/tools/interaction_check.py" --config design/interaction.json
 step "条件9 の網羅（状態・スロットを持つセットにテストがあるか）" \
