@@ -165,6 +165,11 @@ step "器の書き方（figma.mixed で止まらないか）" \
   "$PY" "$HARNESS/tools/exporter_check.py" --style --config design/exporters.json
 step "書き出しの器（保存されていて指紋が一致するか）" \
   "$PY" "$HARNESS/tools/exporter_check.py" --config design/exporters.json
+# **押した状態が試験で一度も描かれない**（tap は down と up の間に
+# フレームを挟まない）＋ **Figma に無い組み合わせへ実装が動きうる**。
+# aub: 試験816件が緑のまま、リリース版で画面が消えた
+step "押した状態と変異の穴" \
+  "$PY" "$HARNESS/tools/interaction_check.py" --config design/interaction.json
 step "条件9 の網羅（状態・スロットを持つセットにテストがあるか）" \
   "$PY" "$HARNESS/tools/tree_test_check.py" --config design/tree-tests.json
 step "指紋の一致（JS と Python で同じ値になるか）" \
