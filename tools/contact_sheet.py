@@ -23,6 +23,9 @@ import hashlib
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+
 try:
     from PIL import Image, ImageDraw, ImageFont
 except ImportError:
@@ -60,7 +63,7 @@ def pick_changed(files):
     """
     prev = {}
     if HASH_CACHE.exists():
-        for line in HASH_CACHE.read_text().splitlines():
+        for line in HASH_CACHE.read_text(encoding="utf-8").splitlines():
             if "\t" in line:
                 h, name = line.split("\t", 1)
                 prev[name] = h
@@ -72,12 +75,12 @@ def pick_changed(files):
 def save_hashes(files):
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     lines = [f"{file_hash(f)}\t{f.name}" for f in files]
-    HASH_CACHE.write_text("\n".join(lines) + "\n")
+    HASH_CACHE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def make_tile(path, font):
     """1枚の golden を「画像＋ファイル名ラベル」のタイルにする。"""
-    img = Image.open(path).convert("RGBA")
+    img = Image.open(path, encoding="utf-8").convert("RGBA")
     if img.width > MAX_TILE_WIDTH:
         ratio = MAX_TILE_WIDTH / img.width
         img = img.resize((MAX_TILE_WIDTH, int(img.height * ratio)))

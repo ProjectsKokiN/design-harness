@@ -52,6 +52,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+
 DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 

@@ -22,6 +22,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+
 # config JSON（--config）から埋める。414 直下にあった実装を 2026-08-28 に
 # design-harness へ回収して案件非依存にしたもの（planttalk 第2便の提案1:
 # 「production-gate の条件5を 414 以外のどの案件も測れない」）。
@@ -125,7 +128,7 @@ def check_coverage(doc):
                     "全量書き出しが無い。判定の網羅を確かめられない"))
         return out
 
-    figma_doc = json.loads(FIGMA_COMPONENTS.read_text())
+    figma_doc = json.loads(FIGMA_COMPONENTS.read_text(encoding="utf-8"))
     figma_sets = figma_doc.get("componentSets", {})
     figma_names = set(figma_sets.keys() if isinstance(figma_sets, dict)
                       else (c.get("name") for c in figma_sets))
@@ -219,11 +222,11 @@ def main(argv=None):
         return 2
 
     findings = []
-    doc = json.loads(COMPONENTS.read_text())
+    doc = json.loads(COMPONENTS.read_text(encoding="utf-8"))
     findings += check_effect_styles(doc)
     findings += check_components(doc)
     findings += check_coverage(doc)
-    findings += check_tokens(json.loads(TOKENS.read_text()))
+    findings += check_tokens(json.loads(TOKENS.read_text(encoding="utf-8")))
 
     # 同じ指摘の重複をまとめる
     seen, uniq = set(), []

@@ -45,6 +45,9 @@ import sys
 from datetime import date
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+
 TODAY = date.today().isoformat()
 
 SUFFIXES = (".dart", ".ts", ".tsx", ".js", ".mjs", ".py")

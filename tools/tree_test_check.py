@@ -47,6 +47,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+
 SUFFIXES = (".dart", ".ts", ".tsx", ".js", ".mjs", ".py")
 DEFAULT_STATES = ["Hovered", "Pressed", "Focused"]
 

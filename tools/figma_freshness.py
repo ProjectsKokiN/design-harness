@@ -35,6 +35,9 @@ import sys
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+
 ROOT = Path(__file__).resolve().parent.parent
 
 # ---- 案件ごとに埋める（3つだけ）--------------------------------------------
@@ -277,6 +280,9 @@ def compare(saved: dict, now: dict, exported: set, excluded: set) -> dict:
 
 def self_test() -> int:
     """網に触らずに [compare] の振る舞いを確かめる。"""
+
+    import os
+    import tempfile
     cases = []
 
     # 本題の退行: 名前がずれていても値のずれを隠さない
@@ -465,6 +471,58 @@ def self_test() -> int:
                                 'componentSets': {}}) == 1))
 
     ng = [name for name, ok in cases if not ok]
+    # ── read_styles: **網に触らず**通す（ここが一番大きい未通過の塊）──────
+    g4 = globals()
+    keep4 = {k: g4.get(k) for k in ('get', 'STYLES_EXPORT', 'DESCS_EXPORT',
+                                    'SKIP_PAGES', 'PAGE_SCOPE', 'FILE_KEY')}
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            se = Path(td) / 's.json'; de = Path(td) / 'd.json'
+            se.write_text('{}', encoding='utf-8'); de.write_text('{}', encoding='utf-8')
+
+            def styles_get(url):
+                if 'depth=1' in url:
+                    return {'document': {'children': [
+                        {'id': '1:1', 'name': 'Comp', 'type': 'CANVAS'}]}}
+                return {'nodes': {'1:1': {'styles': {
+                    's1': {'name': 'Text/Body', 'styleType': 'TEXT',
+                           'description': '  本文  '},
+                    's2': {'name': 'Paint/Bg', 'styleType': 'FILL'},
+                    's3': {'noName': True},          # 名前が無いものは落とす
+                }}}}
+
+            g4['get'] = styles_get
+            g4['FILE_KEY'] = 'K'
+            g4['SKIP_PAGES'] = []
+            g4['PAGE_SCOPE'] = None
+
+            # そろっていなければ **見ない**（None）
+            g4['STYLES_EXPORT'] = None; g4['DESCS_EXPORT'] = None
+            cases.append(('設定が無いのに読みに行った', read_styles() is None))
+            g4['STYLES_EXPORT'] = str(se); g4['DESCS_EXPORT'] = str(Path(td) / 'ない.json')
+            cases.append(('**片方が無いのに読みに行った**', read_styles() is None))
+
+            g4['DESCS_EXPORT'] = str(de)
+            got = read_styles()
+            cases.append(('そろっているのに読まない', got is not None))
+            cases.append((f'**説明の前後の空白を落としていない**: {got.get("Text/Body")!r}', got.get('Text/Body') == ('TEXT', '本文')))
+            cases.append(('説明が無いスタイルを落とした', got.get('Paint/Bg') == ('FILL', '')))
+            cases.append((f'**名前の無いスタイルを拾っている**: {sorted(got)}', len(got) == 2))
+    finally:
+        for k, v in keep4.items():
+            g4[k] = v
+
+    # ── get: トークンが無ければ **手順を出して** 落ちる ────────────────
+    keep_tok = os.environ.pop('FIGMA_TOKEN', None)
+    try:
+        get('https://api.figma.com/v1/files/K')
+        cases.append(('**FIGMA_TOKEN が無いのに読みに行った**', False))
+    except SystemExit as e:
+        cases.append((f'トークン無しの終了コードが 2 でない（{e.code}）', e.code == 2))
+    finally:
+        if keep_tok is not None:
+            os.environ['FIGMA_TOKEN'] = keep_tok
+
     print(f'[figma_freshness] selftest {len(cases) - len(ng)}/{len(cases)} 件パス')
     for name in ng:
         print(f'  NG: {name}', file=sys.stderr)

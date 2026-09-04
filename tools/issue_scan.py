@@ -11,6 +11,10 @@
 import argparse, json, os, sys, tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
 
 STATE = "design/issue-scan.json"
 PROJECTS = Path.home() / ".claude" / "projects"

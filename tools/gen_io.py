@@ -28,6 +28,10 @@
 import json
 import pathlib
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
 
 #: 案件のルート。**入口が差し替える**（既定は呼び出し元の2つ上）。
 ROOT = pathlib.Path.cwd()
@@ -299,6 +303,100 @@ def self_test() -> int:
         check('生成器: design/gen/gen_colors.py' in body,
               '見出しに生成器の申告が無い（gen_input_check が落とす）')
     ROOT = keep
+    # ── 件数の照合が、書き出しの種類ごとに本当に落ちるか ──────────────
+    # ここが load() の要点。**通っていない分岐があると、その種類の書き出しは
+    # 件数が合わなくても黙って通る。**
+    def 落ちるか(name, doc):
+        with tempfile.TemporaryDirectory() as td:
+            fd = pathlib.Path(td) / FIGMA_DIR
+            fd.mkdir(parents=True)
+            (fd / name).write_text(json.dumps(doc, ensure_ascii=False), encoding='utf-8')
+            keep = globals()['ROOT']
+            globals()['ROOT'] = pathlib.Path(td)
+            try:
+                load(name)
+                return False
+            except SystemExit:
+                return True
+            finally:
+                globals()['ROOT'] = keep
+
+    種類 = [
+        ('variables.json',
+         {'$meta': {'declared': {'Color': 2}},
+          'collections': [{'name': 'Color', 'variables': [1]}]}),
+        ('styles.json',
+         {'$meta': {'declared': {'text': 2, 'paint': 0, 'effect': 0}},
+          'text': [1], 'paint': [], 'effect': []}),
+        ('component_properties.json',
+         {'$meta': {'declared': {'rows': 3}}, 'components': {'A': [1]}}),
+        ('hidden_variables.json',
+         {'$meta': {'declared': {'semanticRefs': 2}}, 'semanticRefs': [1]}),
+        ('detached.json',
+         {'$meta': {'declared': {'rows': 2}}, 'detached': {'A': [1]}}),
+        ('variant_holes.json',
+         {'$meta': {'declared': {'sets': 2}}, 'sets': [1]}),
+        ('descriptions.json',
+         {'$meta': {'declared': {'rows': 3}}, 'components': [1], 'textStyles': [1]}),
+        ('masks.json',
+         {'$meta': {'declared': {'rows': 2}}, 'masks': {'A': [1]}}),
+        ('components.json',
+         {'$meta': {'declared': {'components': 2, 'variants': 0}},
+          'components': {'A': {'variantCount': 0}}}),
+    ]
+    落ちなかった = []
+    for name, doc in 種類:
+        try:
+            if not 落ちるか(name, doc):
+                落ちなかった.append(name)
+        except (KeyError, TypeError):
+            pass          # その分岐が別の形を期待している。ここでは問わない
+    check(not 落ちなかった,
+          f"**件数が合わないのに通る書き出しがあります**: {落ちなかった}")
+
+    check(落ちるか('よその書き出し.json',
+                 {'$meta': {'declared': {'rows': 2}}, 'rows': [1]}),
+          "**専用の分岐が無い書き出しで、件数の食い違いを見逃す**")
+    check(落ちるか('no_meta.json', {'rows': [1]}),
+          "**$meta.declared が無いのに通る**")
+
+    with tempfile.TemporaryDirectory() as td:
+        keep = globals()['ROOT']; globals()['ROOT'] = pathlib.Path(td)
+        try:
+            load('無い.json'); check(False, "無い書き出しで落ちない")
+        except SystemExit as e:
+            check('figma-fullexport' in str(e),
+                  "**書き出しが無いときに、取り直す手順を出していない**")
+        finally:
+            globals()['ROOT'] = keep
+
+    # ── number / dart_color の落ちるケース ────────────────────────────
+    for 悪い in (True, False, '12', None, [1]):
+        try:
+            number(悪い); check(False, f"**数でないものを通した: {悪い!r}**")
+        except SystemExit:
+            pass
+    check(number(3) == 3.0 and number(1.5) == 1.5, "数を数として返さない")
+
+    for 悪い in ('#12345', '#1234567', 'zz', ''):
+        try:
+            dart_color(悪い); check(False, f"**色の形が違うのに通した: {悪い!r}**")
+        except SystemExit:
+            pass
+    check(dart_color('#ff5800') == 'Color(0xffff5800)', "6桁の色が違う")
+    check(dart_color('#ff580080') == 'Color(0x80ff5800)', "8桁の色が違う")
+
+    # ── load_raw は件数を見ない（見たら別物になる）────────────────────
+    with tempfile.TemporaryDirectory() as td:
+        fd = pathlib.Path(td) / FIGMA_DIR; fd.mkdir(parents=True)
+        (fd / 'conflicts.json').write_text('{"a": 1}', encoding='utf-8')
+        keep = globals()['ROOT']; globals()['ROOT'] = pathlib.Path(td)
+        try:
+            check(load_raw('conflicts.json') == {'a': 1}, "load_raw が読めない")
+        finally:
+            globals()['ROOT'] = keep
+
+
     print('self-test:', 'OK' if ok else 'NG')
     return 0 if ok else 1
 

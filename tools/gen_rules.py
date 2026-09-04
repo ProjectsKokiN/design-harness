@@ -45,6 +45,9 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+
 #: (stack, scale) -> ルールを組み立てる関数。ここに無い scale は無視して注意を出す
 BUILDERS = {}
 

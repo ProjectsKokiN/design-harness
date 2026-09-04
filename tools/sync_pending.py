@@ -19,6 +19,10 @@ import argparse
 import json
 import pathlib
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
 
 # submodule から直接呼べる（コピー不要。aub 第2便の要望3: tools がコピー配布だと
 # エンジンを一本化した理由と同じ乖離が tools で再発する）。
@@ -48,7 +52,7 @@ def main() -> int:
     for f in sorted(VALUES.glob('*.json')):
         if f.name.startswith('_'):
             continue
-        doc = json.loads(f.read_text())
+        doc = json.loads(f.read_text(encoding="utf-8"))
         entries = doc.get('entries')
         if entries is None:
             continue                      # entries を持たないファイルは対象外
@@ -76,7 +80,7 @@ def main() -> int:
     covered = len(measured) - len(uncovered)
 
     out = VALUES / '_pending.json'
-    doc = json.loads(out.read_text()) if out.exists() else {'$meta': {}}
+    doc = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {'$meta': {}}
     prev_ceiling = doc.get('$meta', {}).get('ceiling')
 
     # ラチェット（aub-familywalk 提案・2026-08-28）:
@@ -102,7 +106,7 @@ def main() -> int:
         'ceiling': ceiling,
     }
     doc['keys'] = uncovered
-    out.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + '\n')
+    out.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + '\n', encoding="utf-8")
     print(f'記録 {len(measured)} 件 / 検査あり {covered} 件 / 宣言 {len(uncovered)} 件'
           f'（上限 {ceiling}）')
     if exceeded:

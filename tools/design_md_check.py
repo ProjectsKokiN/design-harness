@@ -39,6 +39,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+
 #: 共通側にあっても、案件側に同名の見出しがあってよいもの
 ALLOW_DUP = ("案件側の DESIGN.md に必ず書くこと", "関係する正本")
 

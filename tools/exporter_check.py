@@ -56,6 +56,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "fingerprint"))
 from text_digest import text_digest  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+
 
 def digest_of(path):
     return text_digest(path.read_bytes().decode("utf-8", errors="replace"))

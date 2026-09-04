@@ -98,9 +98,13 @@ import argparse
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
 
 #: 試験と、機体判定が効かない環境のための逃げ道
 ENV_OVERRIDE = "HARNESS_MACHINE"
@@ -120,8 +124,13 @@ def detect_machine():
         return "Windows"
     if system != "Darwin":
         return None
+    # **名前のまま起動しない。** Windows で .bat/.cmd が解決されないのと同じ形を
+    # 道具の側でやらないため（この関数は Darwin でしか来ないが、規律を揃える）
+    exe = shutil.which("scutil")
+    if not exe:
+        return None
     try:
-        name = subprocess.run(["scutil", "--get", "ComputerName"],
+        name = subprocess.run([exe, "--get", "ComputerName"],
                               capture_output=True, text=True, timeout=10).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return None

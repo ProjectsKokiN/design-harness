@@ -34,6 +34,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+
 #: パスらしい文字列。拡張子つきの相対パスだけを拾う（コマンド名や URL は拾わない）
 PATH_RX = re.compile(
     r"(?<![\w/$])((?:[\w.-]+/)+[\w.-]+\.(?:py|sh|json|ya?ml|js|mjs|dart|md|txt))\b")

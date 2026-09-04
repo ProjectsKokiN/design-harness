@@ -31,6 +31,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+
 #: 読み取りの気配。open(...) / read_text / json.load(open(...)) / Path(...)
 #: `File(...)` `readAsString` は Dart、`readFileSync` は Node（2026-09-02 に追加。
 #: それまで Python の書き方しか見ておらず、**Dart の生成器が素通り**していた）。

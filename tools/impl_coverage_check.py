@@ -60,6 +60,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from figma_names import to_identifier   # noqa: E402  規則の唯一の正
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+
 
 def figma_names(export_paths):
     """書き出し（複数ファイル）から、実装すべき名前の集合を返す。

@@ -33,6 +33,9 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+
 # submodule から直接呼べる（コピー不要）。ログとルールは案件の design/ にある。
 #   python3 design/harness/tools/harness_stats.py       … cwd の design/ を見る
 #   python3 .../harness_stats.py --design <パス>        … 明示指定（path-check-ignore）

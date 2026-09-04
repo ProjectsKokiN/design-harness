@@ -65,6 +65,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+
 MARK = "harness-finding"
 MARK_RX = re.compile(rf"<!--\s*{MARK}:\s*(.+?)\s*-->")
 SKIP_DIRS = ("node_modules", "__pycache__", "/build/", ".dart_tool", "/.git/",

@@ -102,6 +102,12 @@ step "鮮度（Figma 本体 → 書き出し。design/ の担当機のみ）" \
 step "機体の担当（担当外のパスを変えていないか）" \
   "$PY" "$HARNESS/tools/machine_scope.py" --config design/machine-scope.json --check
 
+# **Windows でだけ落ちる書き方**を Mac / Linux から見つける。検査そのものが
+# macOS でしか回っていなかったため、aub では3日で5件出た（うち2件は検査自身）。
+# --style は読むだけで速い。--encoding は cp932 で全道具を回すので遅い。
+step "移植性（Windows でだけ落ちる書き方）" \
+  "$PY" "$HARNESS/tools/portable_check.py" --root "$HARNESS/tools" --style
+
 # 見なかったものを機械が出す。完了レポートの「残っている限界」はこの出力を貼る
 # （AI の自己申告にしない。走査が空振りしていれば exit 2 で落ちる）
 step "期待値の出どころ（照合テストが書き出しを読んでいるか）" \
