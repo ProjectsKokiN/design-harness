@@ -25,6 +25,8 @@
 // 読み取りの決まり:
 //   - 部品のインスタンスは `instanceOf`（セット名とバリアント）まで。**中には降りない**
 //     （部品の仕様は ⚙️_Styles&Components の定義ノードが正。画面は使われ方だけ）
+//   - **ただし寸法は画面が正。** 定義と実寸が違えば `override=48x48->360x360` を足す
+//     （余白・すき間・塗り・角丸・文字スタイルは定義が正。寸法と伸び方だけ画面が正）
 //   - 色・文字スタイル・効果は**変数／スタイルの名前**で書く。解決しない
 //   - **同じ形の兄弟は畳む**（ビンゴの 5x5 は 25 行ではなく 1 行 + 位置の列）
 function h(s){let x=0x811c9dc5;for(let i=0;i<s.length;i++){x^=s.charCodeAt(i)&0xFF;x=(x+((x<<1)+(x<<4)+(x<<7)+(x<<8)+(x<<24)))>>>0;}return x>>>0;}
@@ -94,6 +96,19 @@ async function shape(n) {
       const set = (m.parent && m.parent.type === 'COMPONENT_SET') ? m.parent.name : m.name;
       p.push('of=' + set + (m.variantProperties ? '/' + Object.values(m.variantProperties).join(',') : ''));
       if (m.remote) p.push('remote=1');
+      // **画面が寸法を上書きしていたら、そう書く**（2026-09-04・#26）。
+      //
+      // インスタンスは `of=` で止めて中に降りない。それは正しい方針だが、
+      // **寸法だけは画面が正**（Figma でインスタンスの寸法は上書きできる）。
+      // 上書きが行に出ないと、読む側は部品の定義の固定値を写す。
+      //
+      // aub の実害: `Images` の定義は固定 48。カメラは 360、スクラップボードは
+      // 334、ALBUM は別の値で上書きしていた。**画面が全部 48 で描かれ、
+      // 写真が潰れた。** 定義と実寸の両方が行にあれば気づける。
+      if (R(m.width) !== R(n.width) || R(m.height) !== R(n.height)) {
+        p.push('override=' + R(m.width) + 'x' + R(m.height) +
+               '->' + R(n.width) + 'x' + R(n.height));
+      }
     } else p.push('of=?');
   }
   return p.join('|');

@@ -34,12 +34,14 @@ flash-compose には `frames.json` が在ります（3件）。**前提条件を
 | 索引（`screens.json`）の画面が全部書き出されているか | 1枚でも欠けたら |
 | 木になっているか | 行が `MIN_ROWS` 未満の画面があれば（1行は木ではない） |
 | 宣言の件数と合うか | `$meta.declared` と実際の件数が違えば |
+| **画面ごとの書き出しが全画面を覆っているか** | `perScreenExports` の1つでも画面を取りこぼしていれば（**理由つきで宣言すれば通る**） |
 | **宣言した**記録層の値が増えていないか | `expectedHandwritten` を上回れば（ラチェット） |
 
 ## 捕まえないもの
 
 - 書き出しの中身が Figma と合っているか → 鮮度の段（`figma_freshness.py`）
 - 記録層の値が正しいか → この道具は**件数だけ**を見る
+- 画面ごとの書き出しの**中身**。ここは「その画面を見たか」だけを見る
 - **どの値が assert されているか。** 数えるのは `recordLayer` に**宣言した
   ファイルの葉の数**で、テストが実際に読んでいる数ではない。生成物
   （`figma-layout.json` など）を宣言に入れると数が跳ねるので、
@@ -76,6 +78,58 @@ def count_values(obj):
     if isinstance(obj, list):
         return sum(count_values(v) for v in obj)
     return 1
+
+
+def check_per_screen(base, conf, index):
+    """画面ごとの書き出しが、全画面を覆っているかを見る（2026-09-04・#48）。
+
+    実害（aub-familywalk・2026-09-04）: `export_instance_overrides.js` が
+    **画面フレームの直下のインスタンスだけ**を見ており、ダイアログのように
+    1段深いところにあるボタンが**4画面すべてで0行**だった。
+
+    結果、`ButtonsGroup` の中のボタンが何個で、それぞれ何色かが**どの書き出しにも
+    存在せず、実装が何でも通る**状態だった。「リセットするのボタンの文字が
+    赤くなっていない」はこれ。
+
+    器を再帰にするのは器側の直し。**こちらが本命**で、器を直しても
+    次に別の入れ子が出たらまた静かに漏れるので、**件数で押さえる**。
+    その器は `$meta` に `scanned: 140 / declared: 20` を持っていた——
+    **31画面のうち11画面ぶんが入っていないことが、数として出力に出ていた。**
+    突き合わせる検査が無かっただけ。
+    """
+    want = len(index)
+    ids = {s.get("node") or s.get("id") for s in index}
+    errs = []
+    spec = conf.get("perScreenExports", [])
+    # 一覧で書けば「全画面ぶん要る」。**部分的でよいものは理由を書かせる**
+    # （`screen_text_exclusions.json` は例外だけを並べるので全画面ぶんは要らない）。
+    # 理由が無いまま部分的なのと、意図して部分的なのを**区別できる形にする**
+    items = spec.items() if isinstance(spec, dict) else [(r, None) for r in spec]
+    for rel, decl in items:
+        if isinstance(decl, dict) and str(decl.get("why", "")).strip():
+            continue
+        f = base / rel
+        doc, e = load(f, "画面ごとの書き出し")
+        if e:
+            errs.append(f"  {e}\n    **この面は誰も見ていません。**")
+            continue
+        meta = doc.get("$meta") or {}
+        rows = {k for k in doc if not k.startswith("$")}
+        if len(rows) == 1 and isinstance(doc.get(next(iter(rows))), dict):
+            rows = {k for k in doc[next(iter(rows))] if not k.startswith("$")}
+        covered = rows & ids if ids else rows
+        dec = meta.get("declared")
+        if isinstance(dec, int) and dec != want:
+            errs.append(f"  {rel}: 宣言が {dec} で、画面は {want} 枚です。\n"
+                        f"    **{want - dec} 画面ぶんが書き出しに入っていません。**"
+                        f"（数は出力に出ていますが、突き合わせていませんでした）")
+        elif ids and len(covered) < want:
+            miss = sorted(ids - rows)
+            errs.append(f"  {rel}: {len(covered)}/{want} 画面しか入っていません。\n"
+                        f"    抜け: {' / '.join(miss[:8])}"
+                        + ("…" if len(miss) > 8 else "") +
+                        f"\n    **その画面の中身は、どの検査からも見えません。**")
+    return errs
 
 
 def main(argv=None):
@@ -142,6 +196,8 @@ def main(argv=None):
         errs.append(f"  木になっていない画面が {len(thin)} 枚あります:\n"
                     f"    " + " / ".join(thin[:10]) +
                     f"\n    行が {MIN_ROWS} 未満は「枠が在る」だけで木ではありません。")
+
+    errs += check_per_screen(base, conf, index)
 
     declared = (frames_doc.get("$meta") or {}).get("declared")
     if isinstance(declared, int) and declared != len(frames):
@@ -264,6 +320,45 @@ def self_test():
         rc, out = run(full, {**base_conf, "expectedHandwritten": 9})
         if rc != 0 or "下げてください" not in out:
             print(f"self-test NG: 記録層が減った注意が出ない（{rc}）"); ok = False
+
+        # ─── 画面ごとの書き出しの網羅（#48）────────────────────────
+        ov = root / "design" / "figma" / "overrides.json"
+        pc = {**base_conf, "perScreenExports": ["design/figma/overrides.json"]}
+        ov.write_text(json.dumps({"$meta": {"declared": 2},
+                                  "1:1": {"rows": ["x"]}, "2:2": {"rows": ["y"]}}),
+                      encoding="utf-8")
+        rc, out = run(full, pc)
+        if rc != 0:
+            print(f"self-test NG: 全画面そろっているのに落ちた（{rc}）\n   {out[:300]}")
+            ok = False
+        # **宣言が画面数より小さければ落ちる**（実害そのものの形）
+        ov.write_text(json.dumps({"$meta": {"declared": 1},
+                                  "1:1": {"rows": ["x"]}}), encoding="utf-8")
+        rc, out = run(full, pc)
+        if rc != 1 or "画面ぶんが書き出しに入っていません" not in out:
+            print(f"self-test NG: 宣言の食い違いを通した（{rc}）"); ok = False
+        # 宣言が無くても、画面の取りこぼしを名指しする
+        ov.write_text(json.dumps({"1:1": {"rows": ["x"]}}), encoding="utf-8")
+        rc, out = run(full, pc)
+        if rc != 1 or "2:2" not in out:
+            print(f"self-test NG: 抜けた画面を名指ししていない（{rc}）"); ok = False
+        # **理由つきで宣言すれば、部分的でも通る**（例外だけを並べる書き出し）
+        ov.write_text(json.dumps({"1:1": {"rows": ["x"]}}), encoding="utf-8")
+        rc, _ = run(full, {**base_conf, "perScreenExports": {
+            "design/figma/overrides.json": {"why": "例外だけを並べる"}}})
+        if rc != 0:
+            print(f"self-test NG: 理由つきの宣言があるのに落ちた（{rc}）"); ok = False
+        rc, _ = run(full, {**base_conf, "perScreenExports": {
+            "design/figma/overrides.json": {"why": "  "}}})
+        if rc != 1:
+            print(f"self-test NG: 理由が空の宣言を通した（{rc}）"); ok = False
+
+        # 書き出しそのものが無ければ落ちる
+        ov.unlink()
+        rc, out = run(full, pc)
+        if rc != 1 or "誰も見ていません" not in out:
+            print(f"self-test NG: 書き出しが無いのを通した（{rc}）"); ok = False
+        cp.write_text(json.dumps(base_conf, ensure_ascii=False), encoding="utf-8")
 
         # 設定も書き出しも無いときは落ちる（黙って通さない）
         fp.unlink()

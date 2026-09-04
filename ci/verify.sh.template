@@ -125,6 +125,11 @@ step "期待値の出どころ（照合テストが書き出しを読んでい�
 # 推測で埋める（flash-compose の誤読7件のうち3件がこの根）
 step "読めていないプロパティの宣言" \
   "$PY" "$HARNESS/tools/gen_notcaptured.py" --config design/notcaptured.json --check
+# 実装の中だけの数値（**Figma を直しても動かない値**）。
+# 記録層を消しても、手で測った値は実装の定数へ移るだけ
+# （aub: 82.4 で 440 の機体が 50px ずれ / 254 で余白が 20→45 / 138.0 は「Figma の実測」）
+step "実装の中だけの数値" \
+  "$PY" "$HARNESS/tools/impl_value_check.py" --config design/impl-values.json
 step "画面の書き出し（記録層を消せる前提）" \
   "$PY" "$HARNESS/tools/screen_export_check.py" --config design/screens-check.json
 # 器が figma.mixed を素で読んでいないか（**書き出しごと止まる**。

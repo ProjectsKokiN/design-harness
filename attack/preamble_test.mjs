@@ -63,9 +63,28 @@ check(revZ({ itemReverseZIndex: MIXED }) === null, 'mixed を真偽値にした'
 check(typeof revZ({ itemReverseZIndex: true }) === 'boolean',
       '重なり順を意味に翻訳している（生の値のままにする）');
 
+// ── #26: インスタンスの寸法の上書きが行に出るか ──────────────────
+{
+  const frames = readFileSync(join(here, '..', 'exporters', 'export_frames.js'), 'utf8');
+  const i = frames.indexOf("if (R(m.width) !== R(n.width)");
+  check(i > 0, 'export_frames.js に寸法の上書きの判定が無い');
+  // その場で同じ式を回して、行の形まで見る
+  const R = (x) => (x == null ? null : Math.round(x * 100) / 100);
+  const line = (m, n) =>
+    (R(m.width) !== R(n.width) || R(m.height) !== R(n.height))
+      ? 'override=' + R(m.width) + 'x' + R(m.height) + '->' + R(n.width) + 'x' + R(n.height)
+      : null;
+  check(line({ width: 48, height: 48 }, { width: 360, height: 360 })
+        === 'override=48x48->360x360', '上書きの行の形が違う');
+  check(line({ width: 48, height: 48 }, { width: 48, height: 48 }) === null,
+        '同じ寸法なのに上書きと書いた');
+  check(line({ width: 48, height: 48 }, { width: 48, height: 96 })
+        === 'override=48x48->48x96', '高さだけの上書きを見ていない');
+}
+
 // ── 指紋が動くこと ──────────────────────────────────────────
 check(h('a') !== h('b'), '指紋が別の文字列で同じ');
 check(h('a') === h('a'), '指紋が同じ文字列で違う');
 
-console.log(`preamble_test: ${ok ? 'OK' : 'NG'}（17 件）`);
+console.log(`preamble_test: ${ok ? 'OK' : 'NG'}（21 件）`);
 process.exit(ok ? 0 : 1);
