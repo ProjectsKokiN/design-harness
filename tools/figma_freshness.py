@@ -24,6 +24,26 @@ figma-fullexport.md が「Figma を触る作業の前に必ず回す」と書い
 
 指紋に入れる項目（[DIGEST_FIELDS]）は**色と余白と並び**に絞ります。
 座標のような、Figma で並べ替えるだけで動く値は入れません。
+
+## 3つの面を見ます
+
+| 面 | 設定 | 無いときの表示 |
+|---|---|---|
+| 部品（component set / 単体 component） | `EXPORT`（必須） | — |
+| スタイル | `stylesExport` + `descsExport` | 「**見ていません**」 |
+| **画面（ページ直下の FRAME）** | `framesExport` | 「**見ていません**」 |
+
+画面は 2026-09-04 に足しました（#25）。**それまで部品とスタイルしか見ておらず、
+画面側の Figma の変更をこちらから知る手段が1つもありませんでした。**
+aub-familywalk の実測（2026-09-02〜03）で、ユーザーが直した4件は全部
+「修正しました」と口で言ってもらえたから助かっただけでした。
+
+条件4 は「部品の仕様が動いたら気づく」ために作りました。画面は当初、変更の頻度が
+低いと想定していました。**実際は逆で、部品は安定し、画面はフィードバックのたびに
+動きます。**
+
+画面は**1枚ごとに指紋**を持ちます。「どこかが変わった」では取り直す気になりませんが、
+「ALBUM_ScrapBoard が変わった」なら、その画面の実装を見直す動機になります。
 """
 
 import hashlib
@@ -65,6 +85,8 @@ PAGE_SCOPE = None
 #: **見ていないことを表示する**（黙って飛ばさない）。
 STYLES_EXPORT = None
 DESCS_EXPORT = None
+#: 画面のノード木の書き出し（`figma/frames.json`）。無ければ画面は見ない
+FRAMES_EXPORT = None
 # ---------------------------------------------------------------------------
 
 #: 指紋に入れる項目。**並べ替えで動く値（座標）は入れない。**
@@ -186,6 +208,70 @@ def read_sets() -> dict:
               '  どちらが正かは機械で決められません。**止めます。**', file=sys.stderr)
         raise SystemExit(2)
     return found
+
+
+def read_frames() -> dict | None:
+    """参照するページの**画面**（トップレベルの FRAME）を 名前 → 指紋 で返す。
+
+    2026-09-04 新設（#25）。**それまで鮮度は部品とスタイルしか見ていなかった。**
+
+    aub-familywalk の実測（2026-09-02〜03）: ユーザーが Figma で画面を直した
+    4件（アルバムの行がフィル・カメラの正方形がフィル・シャッター 120・
+    開始と終了の黒丸）を、**こちらから知る手段が1つも無かった**。
+    毎回「修正しました」と口で言ってもらえたから助かっただけで、
+    **言い忘れれば黙って古い値で実装し続ける。**
+
+    条件4 は「部品の仕様が動いたら気づく」ために作った。画面は当初
+    変更の頻度が低いと想定していたが、**実際は逆で、部品は安定し、
+    画面はフィードバックのたびに動く。**
+
+    画面ごとの指紋にする。「どこかが変わった」では取り直す気にならないが、
+    「ALBUM_ScrapBoard が変わった」なら、その画面の実装を見直す動機になる。
+
+    FRAMES_EXPORT が無ければ None（見ない）。
+    """
+    if not (FRAMES_EXPORT and Path(FRAMES_EXPORT).exists()):
+        return None
+    doc = get(f'https://api.figma.com/v1/files/{FILE_KEY}?depth=1')['document']
+    pages, _ = pages_of(doc)
+    ids = ','.join(p['id'] for p in pages)
+    data = get(f'https://api.figma.com/v1/files/{FILE_KEY}/nodes?ids={ids}')
+    names: dict[str, str] = {}
+    varmap = ROOT / 'design' / 'figma-raw' / '_varmap.json'
+    if varmap.exists():
+        names.update(json.loads(varmap.read_text(encoding='utf-8'))['map'])
+    for nid, entry in data['nodes'].items():
+        for sid, meta in (entry.get('styles') or {}).items():
+            if isinstance(meta, dict) and meta.get('name'):
+                names[sid] = meta['name']
+    found: dict[str, str] = {}
+    for nid, entry in data['nodes'].items():
+        # **画面はページ直下の FRAME だけ。** 部品（COMPONENT / COMPONENT_SET）は
+        # 部品側の段が見るので数えない。二重に数えると、部品を直しただけで
+        # 画面が動いたことになる
+        for c in (entry['document'].get('children') or []):
+            if c['type'] == 'FRAME':
+                found[c['name']] = node_digest(c, names)
+    return found
+
+
+def compare_frames(now: dict) -> tuple[list, dict]:
+    """保存してある画面ごとの指紋と比べ、動いた画面を名指しする。"""
+    doc = json.loads(Path(FRAMES_EXPORT).read_text(encoding='utf-8'))
+    saved = (doc.get('$meta', {}).get('restDigests') or {})
+    if not saved:
+        return ['画面の指紋がまだ記録されていません（--update で記録します）'], doc
+    msgs = []
+    for name in sorted(set(now) - set(saved)):
+        msgs.append(f'Figma にしか無い画面: {name}')
+    for name in sorted(set(saved) - set(now)):
+        msgs.append(f'書き出しにしか無い画面: {name}'
+                    f'（名前が変わった／消えた可能性。**推測で直さず確認する**）')
+    for name in sorted(set(saved) & set(now)):
+        if saved[name] != now[name]:
+            msgs.append(f'**画面が変わっています: {name}**'
+                        f' → この画面の書き出しを取り直して、実装を見直す')
+    return msgs, doc
 
 
 def read_styles() -> dict | None:
@@ -459,6 +545,106 @@ def self_test() -> int:
         moved = json.loads(json.dumps(SETS)); moved['Buttons']['itemSpacing'] = 99
         cases.append(('main: 値が変わったら 1', run_main(base, moved) == 1))
 
+        # ─── 画面の鮮度（#25・2026-09-04）────────────────────────────
+        # **画面はページ直下の FRAME。** 部品と切り分けられていることまで見る
+        SCREENS = {'ALBUM_ScrapBoard': {'type': 'FRAME', 'name': 'ALBUM_ScrapBoard',
+                                        'itemSpacing': 20, 'children': []},
+                   'CAMERA': {'type': 'FRAME', 'name': 'CAMERA',
+                              'itemSpacing': 0, 'children': []}}
+
+        def fake_all(url, _s=SETS, _f=SCREENS):
+            if 'depth=1' in url:
+                return {'document': {'children': [{'id': '1', 'name': 'Comp'}]}}
+            return {'nodes': {'1': {'styles': {},
+                                    'document': {'type': 'CANVAS', 'name': 'Comp',
+                                                 'children': list(_s.values())
+                                                 + list(_f.values())}}}}
+
+        fp = d / 'frames.json'
+        g5 = globals()
+
+        def run_frames(frames_doc, screens=None, sets=None, no_config=False):
+            """main() を回して**出力ごと**返す。
+
+            run_main は内側で標準出力を飲むので、画面の報告が読めない。
+            この段は「どの画面が動いたかを名指しする」のが本題なので、
+            **文言まで見る**（名指ししないなら取り直す気にならない）。
+            """
+            if frames_doc is not None:
+                fp.write_text(json.dumps(frames_doc, ensure_ascii=False),
+                              encoding='utf-8')
+            s = sets or SETS
+            (d / 'export.json').write_text(json.dumps({
+                '$meta': {'restDigests': dict(now)},
+                'componentSets': {'Buttons': {}, 'Header': {}}}), encoding='utf-8')
+            keep5 = (g5['get'], g5['FRAMES_EXPORT'], g5['SKIP_PAGES'],
+                     g5['PAGE_SCOPE'], g5['EXPORT'], sys.argv)
+            g5['FRAMES_EXPORT'] = None if no_config else str(fp)
+            g5['SKIP_PAGES'], g5['PAGE_SCOPE'] = [], None
+            g5['EXPORT'] = d / 'export.json'
+            g5['get'] = lambda u: fake_all(u, s, screens or SCREENS)
+            sys.argv = ['x']
+            try:
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    rc = main()
+                return rc, buf.getvalue()
+            finally:
+                (g5['get'], g5['FRAMES_EXPORT'], g5['SKIP_PAGES'],
+                 g5['PAGE_SCOPE'], g5['EXPORT'], sys.argv) = keep5
+
+        # いまの画面で指紋を作る
+        keep6 = (g5['get'], g5['FRAMES_EXPORT'], g5['SKIP_PAGES'], g5['PAGE_SCOPE'])
+        fp.write_text('{}', encoding='utf-8')
+        g5['get'], g5['FRAMES_EXPORT'] = (lambda u: fake_all(u)), str(fp)
+        g5['SKIP_PAGES'], g5['PAGE_SCOPE'] = [], None
+        fnow = read_frames()
+        (g5['get'], g5['FRAMES_EXPORT'], g5['SKIP_PAGES'], g5['PAGE_SCOPE']) = keep6
+
+        cases.append(('画面: ページ直下の FRAME だけを拾う',
+                      sorted(fnow) == ['ALBUM_ScrapBoard', 'CAMERA']))
+        cases.append(('画面: 部品を画面に数えない',
+                      'Buttons' not in fnow and 'Header' not in fnow))
+
+        ok_doc = {'$meta': {'restDigests': dict(fnow)}}
+        rc, out = run_frames(ok_doc)
+        cases.append(('画面: 一致していれば 0', rc == 0 and '2 枚が一致' in out))
+
+        # 1. 指紋を1文字変える → 落ちる
+        bad = {'$meta': {'restDigests': {**fnow, 'CAMERA': 'x' + fnow['CAMERA'][1:]}}}
+        rc, out = run_frames(bad)
+        cases.append(('画面: 指紋を変えたら落ちる',
+                      rc == 1 and 'CAMERA' in out and '画面が変わっています' in out))
+
+        # 2. Figma 側で画面の余白を変える → 落ちる（**ここが本番**）
+        edited = json.loads(json.dumps(SCREENS))
+        edited['ALBUM_ScrapBoard']['itemSpacing'] = 999
+        rc, out = run_frames(ok_doc, screens=edited)
+        cases.append(('画面: Figma で余白を変えたら、その画面を名指しで落ちる',
+                      rc == 1 and 'ALBUM_ScrapBoard' in out))
+
+        # 3. 部品だけ変える → 画面の段は通る（切り分けができている）
+        movedsets = json.loads(json.dumps(SETS))
+        movedsets['Buttons']['itemSpacing'] = 77
+        rc, out = run_frames(ok_doc, sets=movedsets)
+        cases.append(('画面: 部品だけ変わっても画面の段は通る',
+                      '画面の鮮度: 2 枚が一致' in out))
+
+        # 画面が増えた／消えた
+        more = {**SCREENS, 'NEW': {'type': 'FRAME', 'name': 'NEW', 'children': []}}
+        rc, out = run_frames(ok_doc, screens=more)
+        cases.append(('画面: Figma に増えた画面を名指しする',
+                      rc == 1 and 'Figma にしか無い画面: NEW' in out))
+        rc, out = run_frames({'$meta': {'restDigests': {**fnow, 'GONE': 'z'}}})
+        cases.append(('画面: 書き出しにしか無い画面を名指しする',
+                      rc == 1 and '書き出しにしか無い画面: GONE' in out))
+
+        # 4. framesExport を設定しない案件 → 飛ばす（既存案件を壊さない）。
+        # **ただし「見ていません」と必ず言う**（黙って飛ばさない）
+        rc, out = run_frames(None, no_config=True)
+        cases.append(('画面: 設定が無ければ飛ばすが「見ていません」と言う',
+                      rc == 0 and '画面の鮮度: **見ていません**' in out))
+
         # **名前のずれで打ち切らず、値のずれも出す**（2026-08-21 の退行）
         base2 = {'$meta': {'restDigests': dict(now)},
                  'componentSets': {'Buttons': {}}}          # Header が書き出しに無い
@@ -560,7 +746,7 @@ def load_config(path) -> None:
     if conf.get('skipPages') is not None:
         g['SKIP_PAGES'] = conf['skipPages']
     for key, var in (('pageScope', 'PAGE_SCOPE'), ('stylesExport', 'STYLES_EXPORT'),
-                     ('descsExport', 'DESCS_EXPORT')):
+                     ('descsExport', 'DESCS_EXPORT'), ('framesExport', 'FRAMES_EXPORT')):
         if conf.get(key):
             g[var] = (base / conf[key]).resolve()
     for var, label in (('EXPORT', 'export'), ('FILE_KEY', 'fileKey')):
@@ -630,7 +816,35 @@ def main() -> int:
         else:
             print(f'スタイルの鮮度: 使われている {len(st)} 件の名前と説明が一致')
 
+    # **画面の鮮度**（2026-09-04 新設・#25）。部品は安定し、画面は動く。
+    frame_ng = []
+    fr = read_frames()
+    if fr is None:
+        print('画面の鮮度: **見ていません**（framesExport が設定されていません）。\n'
+              '  **画面側の Figma の変更を、こちらから知る手段がない状態です。**')
+    else:
+        frame_ng, fdoc = compare_frames(fr)
+        if frame_ng:
+            print(f'**画面が書き出しと食い違っています（{len(frame_ng)}件）:**')
+            for m in frame_ng:
+                print(f'  - {m}')
+            print()
+        else:
+            print(f'画面の鮮度: {len(fr)} 枚が一致')
+
     if update:
+        # 画面の指紋も同じときに記録する（**別々に更新すると片方だけ古くなる**）
+        if fr is not None:
+            fdoc.setdefault('$meta', {})['restDigests'] = dict(sorted(fr.items()))
+            fdoc['$meta']['restDigests とは'] = (
+                'REST API で読んだ**画面ごと**の指紋（tools/figma_freshness.py が'
+                '計算・更新する）。画面が動いたことに気づくためだけの値で、'
+                '内容の正は Plugin API の書き出し本体')
+            Path(FRAMES_EXPORT).write_text(
+                json.dumps(fdoc, ensure_ascii=False, indent=1) + '\n',
+                encoding='utf-8')
+            print(f'画面の指紋を更新しました（{len(fr)} 枚）')
+
         # **取り直し忘れを拒む。** Figma が動いているのに書き出し本体が
         # 前回の --update から1バイトも変わっていないなら、Plugin API の
         # 取り直しを忘れています（2026-08-21 の監査）。
@@ -685,17 +899,20 @@ def main() -> int:
           'design/figma_pack_variables.py で差分を見てください')
 
     if not (added or removed or changed):
-        if name_drift or style_ng:
+        if name_drift or style_ng or frame_ng:
             what = []
             if name_drift:
                 what.append('名前の食い違い')
             if style_ng:
                 what.append(f'スタイルのずれ {len(style_ng)}件')
+            if frame_ng:
+                what.append(f'画面のずれ {len(frame_ng)}件')
             print(f'値は書き出しと同じです（{len(now)} セット）。'
                   f'**{" と ".join(what)}が残っています**（上の報告を見る）')
             return 1
         print(f'Figma は書き出しと同じです（{len(now)} セット'
-              + (f' / スタイル {len(st)} 件' if st else '') + '）')
+              + (f' / スタイル {len(st)} 件' if st else '')
+              + (f' / 画面 {len(fr)} 枚' if fr else '') + '）')
         return 0
 
     print('**Figma が書き出しより新しくなっています。**')
