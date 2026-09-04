@@ -110,8 +110,14 @@ def check_style(root):
                         ng.append((f.name, node.lineno,
                                    f"`{name}(` に `encoding=` が無い。"
                                    f"日本語 Windows の既定は cp932"))
-                # 外部コマンドを名前のまま
-                if name in ("run", "Popen", "check_output", "call"):
+                # 外部コマンドを名前のまま。
+                # **`subprocess.` が付いた呼び出しだけを見る。** 素の `run(...)` は
+                # その場の補助関数であることが多く、名前だけで判定すると誤検出する
+                # （2026-09-04 実測: self-test の中の `run(["--check"])` を
+                #  「外部コマンド --check を名前のまま起動」と報告した。
+                #  **この道具自身が嘘をついた形**）
+                if (name in ("run", "Popen", "check_output", "call")
+                        and isinstance(node.func, ast.Attribute)):
                     bad = _bare_command(node)
                     if bad:
                         ng.append((f.name, node.lineno,
@@ -212,6 +218,15 @@ def self_test():
         check(any("encoding=" in w for _, _, w in r),
               "**encoding= の無い read_text を見逃した**")
         bad.unlink()
+
+        # **素の run() は外部コマンドではない**（誤検出を潰す・2026-09-04）
+        local = td / "local_run.py"
+        local.write_text("import _utf8\n"
+                         "def run(args):\n    return args\n"
+                         "run(['--check', 'x'])\n", encoding="utf-8")
+        if any("外部コマンド" in m for _, _, m in check_style(td)):
+            check(False, "その場の run() を外部コマンドと取り違えた")
+        local.unlink()
 
         # **名前のままの外部コマンドが落ちる**
         bad = td / "bad_cmd.py"

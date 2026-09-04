@@ -120,6 +120,11 @@ step "期待値の出どころ（照合テストが書き出しを読んでい�
 # 画面の書き出しが**足りている**か（記録層を消せる前提条件）。
 # 「在る」と「足りている」は違う（flash-compose の frames.json は3件で、
 #  中身は部品にならない枠。画面のノード木ではなかった）
+# 書き出しが**読まなかったプロパティ**を宣言しているか。
+# 「Figma に無い」と「器が拾っていない」が区別できないと、AI は前者だと思って
+# 推測で埋める（flash-compose の誤読7件のうち3件がこの根）
+step "読めていないプロパティの宣言" \
+  "$PY" "$HARNESS/tools/gen_notcaptured.py" --config design/notcaptured.json --check
 step "画面の書き出し（記録層を消せる前提）" \
   "$PY" "$HARNESS/tools/screen_export_check.py" --config design/screens-check.json
 step "書き出しの器（保存されていて指紋が一致するか）" \

@@ -156,6 +156,41 @@ def load_raw(name: str) -> dict:
     return json.loads((_figma() / name).read_text(encoding='utf-8'))
 
 
+#: 読めていないプロパティの宣言（tools/gen_notcaptured.py が生成する）
+NOTCAPTURED = 'notcaptured.json'
+
+
+def absent(key: str):
+    """そのプロパティが**書き出しに入っていない**なら、理由を返す。入っていれば None。
+
+    2026-09-04 新設（#21）。**「Figma に無い」と「書き出し器が拾っていない」を
+    区別できる入口。**
+
+    flash-compose の実測: AI が Figma を読み違えた7件のうち **3件が同じ根**で、
+    「書き出しに入っていない情報を、入っていないと知らずに推測で埋めた」だった。
+    `itemReverseZIndex` が無いのに `children` の並びだけで重なり順を判断して
+    **「Figma が壊れている」と誤報**した（実際は Figma が正しかった）。
+
+    **3件とも「読み直して気づいた」ものは無い。** 無い情報は、無いように
+    見えるから。**問える形になっていれば問う。問う先が無いから推測する。**
+
+        if gen_io.absent('itemReverseZIndex'):
+            raise SystemExit('重なり順は書き出しに無い。器を直すまで判断しない')
+
+    宣言そのものが無い案件では **SystemExit で止める**。「宣言が無い＝
+    読めている」と読むと、この道具は何も見ていないのと同じになる。
+    """
+    path = _figma() / NOTCAPTURED
+    if not path.exists():
+        raise SystemExit(
+            f'[NG] 読めていないプロパティの宣言がありません: {path}\n'
+            f'  **この書き出しが何を読んでいないかを、誰も宣言していません。**\n'
+            f'  `python3 <harness>/tools/gen_notcaptured.py --config '
+            f'design/notcaptured.json` で作ってください。')
+    doc = json.loads(path.read_text(encoding='utf-8'))
+    return (doc.get('notCaptured') or {}).get(key)
+
+
 def number(v) -> float:
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         raise SystemExit(f'[NG] 数ではありません: {v!r}')
@@ -396,6 +431,29 @@ def self_test() -> int:
         finally:
             globals()['ROOT'] = keep
 
+    # ── absent(): 読めていないプロパティを問える（#21）─────────────────
+    with tempfile.TemporaryDirectory() as td:
+        fd = pathlib.Path(td) / FIGMA_DIR; fd.mkdir(parents=True)
+        keep = globals()['ROOT']; globals()['ROOT'] = pathlib.Path(td)
+        try:
+            nc = fd / NOTCAPTURED
+            nc.write_text(json.dumps({"notCaptured": {
+                "itemReverseZIndex": "キャンバススタッキング。children の並びだけで"
+                                     "重なり順を判断しないこと"}}, ensure_ascii=False),
+                encoding='utf-8')
+            check('重なり順' in (absent('itemReverseZIndex') or ''),
+                  'absent() が理由を返さない')
+            check(absent('layoutMode') is None,
+                  'absent() が読めているキーに理由を返した')
+            # **宣言が無ければ止まる。** 「宣言が無い＝読めている」と読ませない
+            nc.unlink()
+            try:
+                absent('itemReverseZIndex')
+                check(False, '宣言が無いのに absent() が答えた')
+            except SystemExit:
+                pass
+        finally:
+            globals()['ROOT'] = keep
 
     print('self-test:', 'OK' if ok else 'NG')
     return 0 if ok else 1
