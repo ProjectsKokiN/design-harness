@@ -84,6 +84,12 @@ def load_engine(path=ENGINE):
     return mod
 
 
+def _decl(config, key):
+    """宣言の数を見出しに並べる。「5件」だけでは壊れていると分からない（#30 (c)）。"""
+    v = config.get(key)
+    return f"（宣言 {v}）" if isinstance(v, int) else ""
+
+
 def scan_project(engine, config, project_root):
     """実コードを走査し、ルールごとの発火件数と除外の一覧を返す。"""
     hits, ignored, read = {}, [], 0
@@ -165,6 +171,17 @@ def main(argv=None):
         print(f"ルールが読めません: {rules_path}", file=sys.stderr)
         return 2
 
+    # 入力が壊れていたら報告を出さない。**この道具の出力は完了レポートの冒頭に
+    # そのまま貼る決まり**なので、壊れた設定のまま数字を出すと、限界の報告書の
+    # ほうが嘘をつく。判定は engine 側の ratchet() に1本化してある（#30）。
+    # 走査の前にルール数だけ先に見る（5/11 で 190 ファイル走査しても無駄なため）。
+    errs, warns = engine.ratchet(config)
+    if errs:
+        print("\n".join(errs), file=sys.stderr)
+        print("  この状態の報告は数字が信用できません（除外も一緒に落ちます）。",
+              file=sys.stderr)
+        return 2
+
     hits, ignored, read = scan_project(engine, config, base)
     # 自分自身の空振りを先に潰す。読んだファイルが0なら、以下の「0件」は
     # 全部「見ていない」であって「綺麗」ではない（この道具が一番やりがちな嘘）
@@ -175,14 +192,24 @@ def main(argv=None):
               f"  --root と rules.json の対象設定（file_extensions / "
               f"exclude_paths）を確かめてください。", file=sys.stderr)
         return 2
+    errs, warns = engine.ratchet(config, read)
+    if errs:
+        print("\n".join(errs), file=sys.stderr)
+        print("  この状態の報告は数字が信用できません（除外も一緒に落ちます）。",
+              file=sys.stderr)
+        return 2
+
     seeded = seeded_rules(rel("seeds"))
     silent = sorted(r for r, n in hits.items() if n == 0)
     unproven = [r for r in silent if r not in seeded]
     missing_tests, frames_note = screens_without_test(rel("frames"), rel("tests"))
 
     lines = ["## この実装で機械が見ていないもの（gap_report.py が生成。手で縮めない）", "",
-             f"走査したファイル: {read}件 / ルール: {len(hits)}件 / "
+             f"走査したファイル: {read}件{_decl(config, 'expected_targets')} / "
+             f"ルール: {len(hits)}件{_decl(config, 'expected_rules')} / "
              f"発火: {sum(hits.values())}件", ""]
+    if warns:
+        lines += ["- " + w.replace("\n", " ") for w in warns] + [""]
 
     if unproven:
         lines.append(f"- **効いているか不明なルール（{len(unproven)}件）**: "
@@ -328,6 +355,52 @@ def self_test():
         if with_nv([{"item": "ぼかし", "why": "x", "reviewBy": "2020-01-01"}]) != 1:
             print("self-test NG: 期限切れの項目を見逃した"); ok = False
         cfgp.write_text(json.dumps({**base, "notVerifiable": []}), encoding="utf-8")
+
+        # ラチェット（#30・flash-compose 2026-09-03 の再現）。
+        # ルールが宣言を下回ったまま報告を出すと、除外も一緒に落ちるので
+        # 走査対象が膨らみ、まちがった発火が並ぶ。**報告を出さずに落とす。**
+        rulesp = root / "design" / "rules.json"
+        rules = json.loads(rulesp.read_text(encoding="utf-8"))
+
+        def with_decl(**decl):
+            rulesp.write_text(json.dumps({**rules, **decl}), encoding="utf-8")
+            gaps = root / "design" / ".gaps.md"
+            gaps.unlink(missing_ok=True)
+            buf2 = io.StringIO()
+            with contextlib.redirect_stdout(buf2):
+                rc = main(["--config", str(cfgp)])
+            return rc, buf2.getvalue(), gaps.exists()
+
+        rc3, out3, wrote3 = with_decl(expected_rules=11)
+        if rc3 != 2:
+            print(f"self-test NG: ルール 3/11 でも報告を出した（{rc3}）"); ok = False
+        if wrote3:
+            print("self-test NG: 壊れた設定のまま .gaps.md を書いた"); ok = False
+        if "発火" in out3:
+            print("self-test NG: 落ちる前に発火件数を出した"); ok = False
+
+        rc4, _, wrote4 = with_decl(expected_targets=99)
+        if rc4 != 2:
+            print(f"self-test NG: 対象 1/99 でも報告を出した（{rc4}）"); ok = False
+        if wrote4:
+            print("self-test NG: 対象が足りないのに .gaps.md を書いた"); ok = False
+
+        # 宣言が見出しに並ぶこと（#30 (c)）。「5件」だけでは壊れていると分からない
+        rc5, out5, _ = with_decl(expected_rules=3, expected_targets=1)
+        if rc5 != 0:
+            print(f"self-test NG: 宣言どおりなのに落ちた（{rc5}）"); ok = False
+        if "ルール: 3件（宣言 3）" not in out5:
+            print("self-test NG: 見出しにルールの宣言が出ていない"); ok = False
+        if "走査したファイル: 1件（宣言 1）" not in out5:
+            print("self-test NG: 見出しに対象の宣言が出ていない"); ok = False
+
+        # ルールが増えたときは注意にとどめ、報告は出す（止めるのは減ったときだけ）
+        rc6, out6, wrote6 = with_decl(expected_rules=2)
+        if rc6 != 0 or not wrote6:
+            print(f"self-test NG: ルールが増えただけで止まった（{rc6}）"); ok = False
+        if "増えています" not in out6:
+            print("self-test NG: 増えた注意が報告に出ていない"); ok = False
+        rulesp.write_text(json.dumps(rules), encoding="utf-8")
 
         # 走査が空振りしたら落ちること（この道具自身の嘘を潰す）
         (root / "lib" / "a.dart").unlink()

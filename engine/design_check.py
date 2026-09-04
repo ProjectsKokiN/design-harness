@@ -575,6 +575,60 @@ def fail_config(rules_path):
     return 2
 
 
+def ratchet(config, scanned=None):
+    """宣言（expected_rules / expected_targets）を下回っていないかを見る。
+
+    **design_check と gap_report の両方がここを呼ぶ。** 判定を2か所に書くと
+    片方だけ直る（このリポジトリが何度も踏んだ形）。
+
+    実害（2026-08-29・flash-compose）: 414 のルールを A/B/C 層に分けたところ、
+    extends を1段しか読まない古い submodule のピンでは奥の層が届かず、ルールが
+    12 → 7 に静かに減った。**それでも「違反なし」で exit 0 だった。**
+    対象数のラチェット（expected_targets）はファイル数しか見ないので素通りする。
+
+    実害（2026-09-03・flash-compose）: 同じ壊れた設定で design_check は落ちたのに、
+    **gap_report は報告を出し続けた。** ルールが 5/11 しか読めないと exclude_paths も
+    一緒に落ちるので、CI では走査 190 件・**発火 119 件（全部まちがい）**を出した。
+    この道具の出力は完了レポートの冒頭にそのまま貼る決まりなので、
+    **限界の報告書そのものが壊れた数字を出していた。**
+
+    scanned に None を渡すと、ルール数だけを見る（走査の前に呼ぶため）。
+    戻り値は (異常の文言, 注意の文言)。
+    """
+    errs, warns = [], []
+    exp_rules = config.get("expected_rules")
+    if isinstance(exp_rules, int):
+        n = len(config.get("rules", []))
+        if n < exp_rules:
+            errs.append(f"デザインハーネス異常: 読み込めたルールが {n} 件で、"
+                        f"宣言（expected_rules: {exp_rules}）を下回りました。\n"
+                        f"  extends の参照先・submodule のピン・パスの綴りを"
+                        f"確かめてください（届かない層は黙って落ちます）。\n"
+                        f"  ルールが欠けると除外（exclude_paths）も一緒に落ちるので、"
+                        f"この状態で出した件数は信用できません。\n"
+                        f"  意図した減少なら rules.json の expected_rules を"
+                        f"下げてください（差分が git に残ります）。")
+        elif n > exp_rules:
+            warns.append(f"デザインハーネス注意: ルールが {n} 件に増えています。"
+                         f"rules.json の expected_rules（{exp_rules}）を"
+                         f"上げてください。")
+
+    expected = config.get("expected_targets")
+    if isinstance(expected, int) and scanned is not None:
+        if scanned < expected:
+            errs.append(f"デザインハーネス異常: 中身を読んだファイルが {scanned} 件で、"
+                        f"宣言（expected_targets: {expected}）を下回りました。\n"
+                        f"  除外の書き方などで検査対象が黙って減っています"
+                        f"（qnd 2026-08-28: 除外1語で19ファイル減っても緑だった）。\n"
+                        f"  意図した減少なら rules.json の expected_targets を"
+                        f"下げてください（差分が git に残ります）。")
+        elif scanned > expected:
+            warns.append(f"デザインハーネス注意: 対象が {scanned} 件に増えています。"
+                         f"rules.json の expected_targets（{expected}）を"
+                         f"上げてください。")
+    return errs, warns
+
+
 def run_all(config, rules_path, project_root, hooks, log_path):
     """全走査。読んだ数と対象外の数を必ず出す（空振り検知・QnD）。"""
     errors_total, warns_total = [], []
@@ -594,40 +648,12 @@ def run_all(config, rules_path, project_root, hooks, log_path):
         warns_total.extend(warns)
         write_observations(log_path, obs)
 
-    # ルール数のラチェット（2026-08-29 新設）。
-    # **実害**: 414 のルールを A/B/C 層に分けたところ、extends を1段しか読まない
-    # 古い submodule のピンでは奥の層が届かず、flash-compose のルールが 12 → 7 に
-    # 静かに減った。**それでも「違反なし」で exit 0 だった。**
-    # 対象数のラチェット（expected_targets）はファイル数しか見ないので素通りする。
-    exp_rules = config.get("expected_rules")
-    if isinstance(exp_rules, int):
-        n = len(config.get("rules", []))
-        if n < exp_rules:
-            print(f"デザインハーネス異常: 読み込めたルールが {n} 件で、"
-                  f"宣言（expected_rules: {exp_rules}）を下回りました。\n"
-                  f"  extends の参照先・submodule のピン・パスの綴りを確かめてください"
-                  f"（届かない層は黙って落ちます）。\n"
-                  f"  意図した減少なら rules.json の expected_rules を下げてください"
-                  f"（差分が git に残ります）。", file=sys.stderr)
-            return 2
-        if n > exp_rules:
-            print(f"デザインハーネス注意: ルールが {n} 件に増えています。"
-                  f"rules.json の expected_rules（{exp_rules}）を上げてください。",
-                  file=sys.stderr)
-
-    expected = config.get("expected_targets")
-    if isinstance(expected, int) and scanned < expected:
-        print(f"デザインハーネス異常: 中身を読んだファイルが {scanned} 件で、"
-              f"宣言（expected_targets: {expected}）を下回りました。\n"
-              f"  除外の書き方などで検査対象が黙って減っています（qnd 2026-08-28:"
-              f" 除外1語で19ファイル減っても緑だった）。\n"
-              f"  意図した減少なら rules.json の expected_targets を下げてください"
-              f"（差分が git に残ります）。", file=sys.stderr)
+    errs, warns = ratchet(config, scanned)
+    for w in warns:
+        print(w, file=sys.stderr)
+    if errs:
+        print("\n".join(errs), file=sys.stderr)
         return 2
-    if isinstance(expected, int) and scanned > expected:
-        print(f"デザインハーネス注意: 対象が {scanned} 件に増えています。"
-              f"rules.json の expected_targets（{expected}）を上げてください。",
-              file=sys.stderr)
 
     if scanned == 0:
         print("デザインハーネス異常: 中身を読んだファイルが 0 です。"

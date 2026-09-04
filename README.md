@@ -40,7 +40,7 @@
 | `tools/check_render_gaps.py` | **再現性の判定（条件5）**: 値が合っても描画で別物になる指定と、判定の網羅 |
 | `tools/page_scope_check.py` | 参照してよい Figma ページをフェーズで縛る |
 | `tools/pin_check.py` | submodule のピンが最新か（落とさず知らせる） |
-| `tools/ci_path_check.py` | 案内しているパスが実在するか |
+| `tools/ci_path_check.py` | 案内しているパスが実在するか / rules.json の extends が CI から解決できるか（`--rules`） |
 | **`tools/readme_check.py`** | **この表がディスクと合っているか**（手で保守する一覧は古くなる） |
 | `tools/figma_freshness.py` | 書き出しが Figma より古くないか（指紋） |
 | `tools/gen_input_check.py` | 生成器・照合の入力が書き出しだけか（記録層の廃止・2026-08-29） |

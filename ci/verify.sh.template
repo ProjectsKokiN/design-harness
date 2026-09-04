@@ -38,6 +38,11 @@ TARGET="${1:-all}"
 
 # --- 必須段（減らさない）----------------------------------------------------
 step "禁止パターン（全量）"   "$PY" design/design_check.py --all
+# ルールの鎖が CI でも解決できるか。**手元でだけ通る構成**を先に落とす
+# （flash-compose 2026-09-03: extends が3つともリポジトリ外を指しており、
+#  手元 70 ファイル・11 ルール、CI は走査 0 ファイル。入れた日から一度も緑が無かった）
+step "ルールの鎖（extends が CI から解決できるか）" \
+  "$PY" "$HARNESS/tools/ci_path_check.py" --rules design/rules.json
 [ "$TARGET" = "quick" ] && exit $FAILED
 
 step "文脈（共通の憲法を参照しているか・写していないか）" \
