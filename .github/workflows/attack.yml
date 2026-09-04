@@ -28,6 +28,9 @@ jobs:
       - name: 書き出し器のひな形（figma.mixed で落ちないか）
         run: node attack/preamble_test.mjs
 
+      - name: 発火ログの項目表（実装と合っているか）
+        run: python3 tools/readme_check.py --log-schema
+
       - name: 関門の条件（正本と生成物のズレ）
         run: python3 tools/gen_gate.py --check
       - name: ツールの構文

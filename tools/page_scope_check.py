@@ -62,6 +62,18 @@ import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf
 PHASES = ("design-system", "screens")
 
 
+#: ページ名らしくない文字（説明が入っている印）
+PROSE_MARKS = ("（", "(", "、", "。", " のみ", "です", "ます", "ため")
+
+
+def _looks_prose(s: str) -> bool:
+    """ページ名ではなく説明に見えるか（#35）。
+
+    Figma のページ名は短く、句読点や括弧を持ちません。**長さと印で見ます。**
+    """
+    return len(s) > 24 or any(m in s for m in PROSE_MARKS)
+
+
 def load(path):
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -133,6 +145,20 @@ def main(argv=None):
         if isinstance(pages, str):
             pages = [pages]
         if isinstance(pages, list):
+            # **ページ名ではなく説明が入っていないか**（2026-09-04・#35）。
+            # qnd-database の実害: `$meta` に散文で書いた説明が、そのまま
+            # ページ名として扱われ「許可外のページを参照しています:
+            # ["⚙️_Systems のみ（変数とスタイルはファイル単位でページに属さない）"]」
+            # で落ちた。既存の案件（414・planttalk）も散文のキーを持っており、
+            # `pages` を足すときに同じ書き方をすれば同じところで落ちる。
+            prose = [x for x in pages if isinstance(x, str) and _looks_prose(x)]
+            if prose:
+                problems.append(
+                    f"{ep}: `$meta.pages` に**ページ名ではなく説明が入っていませんか**"
+                    f"\n      {prose[0][:60]}…"
+                    f"\n      `pages` は**ページ名の配列**です。"
+                    f"説明は別のキー（`なぜ` など）に書いてください。")
+                continue
             extra = [x for x in pages if x not in allowed]
             if extra:
                 problems.append(f"{ep}: 許可外のページを参照しています: {extra}")
@@ -187,6 +213,22 @@ def self_test():
                                            encoding="utf-8")
         if main(cfg({"phase": "screens"})) != 0:
             print("self-test NG: screens フェーズで画面が許されなかった"); ok = False
+
+    # ─── #35: 散文をページ名として扱わない ─────────────────────────
+    for s, want in (
+        ("⚙️_Systems のみ（変数とスタイルはファイル単位でページに属さない）", True),
+        ("参照しないページ", False),
+        ("⚙️_Styles&Components", False),
+        ("🎨_AppDesign", False),
+        ("Page 1", False),
+        ("下書き、AI出力", True),
+        ("このページだけを見ます。", True),
+        ("とても長い名前がずっと続くページの名前でページ名には見えないもの", True),
+    ):
+        got = _looks_prose(s)
+        if got != want:
+            print(f"self-test NG: 散文の見分けが違う: {s!r} → {got}（期待 {want}）")
+            ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1

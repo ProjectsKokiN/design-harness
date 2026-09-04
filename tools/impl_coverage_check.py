@@ -121,15 +121,81 @@ def declared_problems(export_paths):
 
 
 def mapped_impl(map_path):
-    """対応表から name → 実装があるか の対応を返す。"""
+    """対応表から name → 実装があるか の対応を返す。**3つの形を受けます。**
+
+    2026-09-04 に形を増やしました（#34）。それまで (1) の形しか読めず、
+    **qnd-database だけ条件7が一度も走っていませんでした**（第2便で指摘してから
+    数日間）。橋渡しの生成器を書いて通していましたが、**案件ごとに同じ生成器を
+    書くことになります。**
+
+    受ける形:
+
+    (1) 配列（Figma → 実装）
+
+        {"components": [{"figma": "Buttons/L", "impl": ["AppButtonL"]}]}
+
+    (2) **辞書（実装 → Figma）**。QnD の `class-to-figma.json` はこの向き
+
+        {"AppButton": "Buttons/L", "AppChip": ["Chips/Default", "Chips/Plain"]}
+
+    (3) 辞書（Figma → 実装）
+
+        {"Buttons/L": ["AppButtonL"], "Chips/Default": "AppChip"}
+
+    (2) と (3) は**どちらも辞書**なので、鍵と値のどちらが Figma 名かを
+    見分ける必要があります。**書き出しにある名前と照らして決めます**
+    （`--map-direction` で明示もできます）。名前の一覧は呼び出し側が渡します。
+    """
     doc = json.loads(map_path.read_text(encoding="utf-8"))
+    if isinstance(doc, dict) and isinstance(doc.get("components"), list):
+        out = {}
+        for c in doc["components"]:
+            name = c.get("figma")
+            if name:
+                out[name] = bool(c.get("impl"))
+        return out
+    return None          # 辞書の形。向きを決めるために呼び出し側で解く
+
+
+def mapped_impl_dict(map_path, figma_names_set, direction=None):
+    """辞書の形の対応表を name → 実装があるか に直す。
+
+    `direction` は `"figma-to-impl"` / `"impl-to-figma"`。省くと**書き出しの
+    名前と照らして決めます**（多く当たったほうを Figma 側とみなす）。
+    """
+    doc = json.loads(map_path.read_text(encoding="utf-8"))
+    if not isinstance(doc, dict):
+        return {}, "対応表が辞書でも配列でもありません"
+    rows = {k: v for k, v in doc.items() if not k.startswith("$")}
+    if not rows:
+        return {}, "対応表が空です"
+
+    def flat(v):
+        if isinstance(v, str):
+            return [v]
+        if isinstance(v, list):
+            return [x for x in v if isinstance(x, str)]
+        return []
+
+    if direction is None:
+        as_key = sum(1 for k in rows if k in figma_names_set)
+        as_val = sum(1 for v in rows.values() for x in flat(v)
+                     if x in figma_names_set)
+        if as_key == 0 and as_val == 0:
+            return {}, ("対応表の鍵も値も、書き出しの名前と1つも一致しません。\n"
+                        "  **向きを決められません。** --map-direction で"
+                        "指定してください。")
+        direction = "figma-to-impl" if as_key >= as_val else "impl-to-figma"
+
     out = {}
-    for c in doc.get("components", []):
-        name = c.get("figma")
-        if not name:
-            continue
-        out[name] = bool(c.get("impl"))
-    return out
+    if direction == "figma-to-impl":
+        for k, v in rows.items():
+            out[k] = bool(flat(v))
+    else:
+        for k, v in rows.items():
+            for name in flat(v):
+                out[name] = out.get(name, False) or bool(k)
+    return out, None
 
 
 #: **識別子の規則は tools/figma_names.py が唯一の正**（2026-09-02 に統合）。
@@ -336,6 +402,13 @@ def main(argv=None):
 
     targets, excluded = figma_names(exports)
     impl = mapped_impl(cmap)
+    if impl is None:
+        # 辞書の形（#34）。向きは書き出しの名前と照らして決める
+        impl, why = mapped_impl_dict(cmap, set(targets) | set(excluded),
+                                     conf.get("map_direction"))
+        if why:
+            print(f"対応表が読めません: {cmap}\n  {why}", file=sys.stderr)
+            return 2
     export_problems = declared_problems(exports)
 
     if not targets:
@@ -606,6 +679,54 @@ def self_test():
         expect(0, cfg(tokens_export="vars2.json",
                       identifier_style={"dropFirstSegment": ["Duration"]}),
                "dropFirstSegment を宣言したのに落ちた")
+
+    # ─── #34: 対応表の形を3つ受ける ─────────────────────────────
+    import tempfile as _tf
+    NAMES = {"Buttons/L", "Chips/Default", "Chips/Plain"}
+    with _tf.TemporaryDirectory() as td:
+        d = Path(td)
+        m = d / "map.json"
+
+        # (1) 配列（Figma → 実装）。従来の形
+        m.write_text(json.dumps({"components": [
+            {"figma": "Buttons/L", "impl": ["AppButtonL"]},
+            {"figma": "Chips/Default", "impl": []}]}), encoding="utf-8")
+        r = mapped_impl(m)
+        if r != {"Buttons/L": True, "Chips/Default": False}:
+            print(f"self-test NG: 配列の形が読めない: {r}"); ok = False
+
+        # (2) **辞書（実装 → Figma）**。QnD の class-to-figma.json の向き
+        m.write_text(json.dumps({"AppButton": "Buttons/L",
+                                 "AppChip": ["Chips/Default", "Chips/Plain"]}),
+                     encoding="utf-8")
+        if mapped_impl(m) is not None:
+            print("self-test NG: 辞書を配列として読んだ"); ok = False
+        r, why = mapped_impl_dict(m, NAMES)
+        if why or r != {"Buttons/L": True, "Chips/Default": True,
+                        "Chips/Plain": True}:
+            print(f"self-test NG: 実装→Figma の向きが読めない: {r} / {why}")
+            ok = False
+
+        # (3) 辞書（Figma → 実装）
+        m.write_text(json.dumps({"Buttons/L": ["AppButtonL"],
+                                 "Chips/Default": []}), encoding="utf-8")
+        r, why = mapped_impl_dict(m, NAMES)
+        if why or r != {"Buttons/L": True, "Chips/Default": False}:
+            print(f"self-test NG: Figma→実装 の向きが読めない: {r} / {why}")
+            ok = False
+
+        # **向きを明示できる**
+        m.write_text(json.dumps({"AppButton": "Buttons/L"}), encoding="utf-8")
+        r, _ = mapped_impl_dict(m, NAMES, "impl-to-figma")
+        if r != {"Buttons/L": True}:
+            print(f"self-test NG: 向きの指定が効かない: {r}"); ok = False
+
+        # **どちらの向きでも当たらなければ、決めずに落とす**
+        m.write_text(json.dumps({"なにか": "べつのなにか"}), encoding="utf-8")
+        r, why = mapped_impl_dict(m, NAMES)
+        if not why or "向きを決められません" not in why:
+            print(f"self-test NG: 向きが分からないのに決めた: {r} / {why}")
+            ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1

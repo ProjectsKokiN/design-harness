@@ -60,6 +60,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
 
 
+def _restore(path, before):
+    """実体を元に戻す。**この道具は作業ツリーを変えない**（#5）。"""
+    try:
+        if before is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(before)
+    except OSError:
+        pass
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="生成し直して差分が出たら落ちる")
     ap.add_argument("--manifest", type=Path,
@@ -103,21 +114,46 @@ def main(argv=None):
               f"**載せないと誰も回さず、生成物だけが古くなります。**", file=sys.stderr)
         return 1
     if listed - on_disk:
-        print(f"[NG] 台帳にあるのに実在しない生成器: {sorted(listed - on_disk)}",
-              file=sys.stderr)
+        # **探索の規則を文言に書く**（2026-09-04・#33）。
+        # qnd-database で `gen-tokens.py`（ハイフン）を載せて落ち続けたが、
+        # 「アンダースコアで始める」はコードを読むまで分からなかった。
+        missing = sorted(listed - on_disk)
+        hint = ""
+        for name in missing:
+            if (here / name).exists():
+                hint = (f"\n  **{name} は実在します。** ただしこの道具が探すのは"
+                        f" `gen_*.py` / `gen_*.dart` / `gen_*.mjs` / `gen_*.js` で、"
+                        f"\n  **アンダースコアで始まる名前**だけです"
+                        f"（`gen-tokens.py` のようなハイフンは拾いません）。"
+                        f"\n  生成器の名前を `gen_` で始めてください。")
+                break
+        print(f"[NG] 台帳にあるのに実在しない生成器: {missing}\n"
+              f"  この道具が探す形: `gen_*.py` / `gen_*.dart` / `gen_*.mjs` /"
+              f" `gen_*.js`（{here} の中）{hint}", file=sys.stderr)
         return 1
 
     failed, checked = [], 0
     for g in gens:
         out = root / g["out"]
-        before = out.read_text(encoding="utf-8") if out.exists() else None
+        # **バイトで読む**（2026-09-04・#2）。テキストで読んでいたので、PNG などの
+        # binary を出す生成器は台帳に載せると UnicodeDecodeError で落ちた。
+        # **載せられないものは、べき等の検査から漏れる。**
+        before = out.read_bytes() if out.exists() else None
         cmd = _command(here / g["file"])
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=root)
         if r.returncode != 0:
             print(f'[NG] {g["file"]} が落ちました:\n{r.stdout}{r.stderr}', file=sys.stderr)
+            _restore(out, before)
             failed.append(g["file"])
             continue
-        after = out.read_text(encoding="utf-8") if out.exists() else None
+        after = out.read_bytes() if out.exists() else None
+        # **実体を元に戻す**（2026-09-04・#5）。この道具は「生成し直すと変わるか」を
+        # 見るだけで、**作業ツリーを変えてよいわけではない。**
+        # 実害（Windows・2026-09-02）: 機体をまたいで同じバイト列を出さない
+        # 生成器があり、`verify.sh` を回すだけで作業ツリーが汚れた。
+        # しかも NG の文言が「**生成器を通さず手で直しています**」と
+        # **原因を誤って断定する**（手では直していない）。
+        _restore(out, before)
 
         # **生成器が何も書かなくても落とす**（2026-09-02 に塞いだ穴）。
         # それまで `before is None` を「新規」として通していたため、
@@ -133,8 +169,15 @@ def main(argv=None):
         elif before is None:
             print(f'  新規: {g["out"]}')
         elif before != after:
-            print(f'[NG] {g["out"]} が生成し直しで変わりました。'
-                  f'**生成器を通さず手で直しています。**', file=sys.stderr)
+            print(f'[NG] {g["out"]} が生成し直しで変わりました。\n'
+                  f'  次のどちらかです。**原因はこの道具には分かりません。**\n'
+                  f'    - 生成器を通さず手で直した\n'
+                  f'    - 生成器が**機体をまたいで同じバイト列を出さない**'
+                  f'（改行・並び順・時刻・浮動小数）\n'
+                  f'  前者なら生成器を回して差分をコミットし、後者なら生成器を'
+                  f'直してください\n'
+                  f'  （出力が機体で変わってよいなら台帳に "idempotent": false）。',
+                  file=sys.stderr)
             failed.append(g["out"])
         else:
             print(f'  変化なし: {g["out"]}')
@@ -219,6 +262,68 @@ def self_test():
         # 台帳が無い
         (gen / "generators.json").unlink()
         check(main(argv) == 2, "台帳が無いのに通した")
+
+    # ─── #2 binary / #5 実体を戻す / #33 名前の規則 ────────────────
+    import tempfile as _tf
+    import contextlib as _ctx
+    import io as _io
+    with _tf.TemporaryDirectory() as td:
+        root = Path(td)
+        gen = root / "design" / "gen"
+        gen.mkdir(parents=True)
+        (root / "assets").mkdir()
+        png = root / "assets" / "icon.png"
+        PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(200, 256))
+        # **binary を出す生成器**（テキストで読むと UnicodeDecodeError）
+        (gen / "gen_png.py").write_text(
+            "import pathlib\n"
+            f"pathlib.Path({str(png)!r}).write_bytes({PNG!r})\n", encoding="utf-8")
+        man = gen / "generators.json"
+        man.write_text(json.dumps({"generators": [
+            {"file": "gen_png.py", "out": "assets/icon.png"}]}), encoding="utf-8")
+        png.write_bytes(PNG)
+
+        def call():
+            b = _io.StringIO()
+            with _ctx.redirect_stdout(b), _ctx.redirect_stderr(b):
+                rc = main(["--manifest", str(man), "--root", str(root)])
+            return rc, b.getvalue()
+
+        rc, out = call()
+        check(rc == 0, f"binary の生成物で落ちた: {out[:300]}")
+
+        # **実体を戻す**（機体差で毎回変わる生成器）
+        (gen / "gen_png.py").write_text(
+            "import pathlib, random\n"
+            f"pathlib.Path({str(png)!r}).write_bytes(bytes([random.randrange(256)]*8))\n",
+            encoding="utf-8")
+        keep = png.read_bytes()
+        rc, out = call()
+        check(rc == 1, "毎回変わる生成物で落ちなかった")
+        check(png.read_bytes() == keep,
+              "**作業ツリーが汚れた**（生成物を元に戻していない）")
+        check("原因はこの道具には分かりません" in out,
+              "NG の文言が原因を断定している")
+
+        # **生成器が落ちても実体を戻す**
+        (gen / "gen_png.py").write_text(
+            "import pathlib, sys\n"
+            f"pathlib.Path({str(png)!r}).write_bytes(b'こわれた'.decode().encode())\n"
+            "sys.exit(1)\n", encoding="utf-8")
+        rc, out = call()
+        check(rc == 1, "落ちる生成器で通った")
+        check(png.read_bytes() == keep, "落ちたときに実体を戻していない")
+
+        # **名前の規則を文言に書く**（#33）
+        (gen / "gen_png.py").unlink()
+        (gen / "gen-tokens.py").write_text("pass\n", encoding="utf-8")
+        man.write_text(json.dumps({"generators": [
+            {"file": "gen-tokens.py", "out": "assets/icon.png"}]}), encoding="utf-8")
+        rc, out = call()
+        check(rc == 1, "ハイフンの生成器で通った")
+        check("アンダースコアで始まる名前" in out,
+              f"名前の規則を書いていない: {out[:250]}")
+        check("gen-tokens.py は実在します" in out, "実在することを言っていない")
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1

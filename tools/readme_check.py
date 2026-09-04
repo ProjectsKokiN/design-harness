@@ -47,15 +47,72 @@ SKIP = {
 }
 
 
+#: 発火ログを書いている場所
+LOG_WRITER = "note"
+
+
+def log_keys(engine_path):
+    """`note()` が書くキーを、実装から読み取る（2026-09-04・#39）。
+
+    **表を手で書き写す層にしない。** 書式は実装の中にしかなく、読むたびに
+    キーを当てて外していた（`rule_id` を想定して None が返る、など）。
+    """
+    import ast
+    try:
+        tree = ast.parse(engine_path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == LOG_WRITER:
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Dict):
+                    keys = [k.value for k in sub.keys
+                            if isinstance(k, ast.Constant)
+                            and isinstance(k.value, str)]
+                    if len(keys) >= 3:
+                        return keys
+    return None
+
+
+def check_log_schema(readme, engine_path):
+    """発火ログの項目表が、実装の書くキーを全部載せているか。"""
+    keys = log_keys(engine_path)
+    if keys is None:
+        print(f"発火ログを書いている場所が読めません: {engine_path}",
+              file=sys.stderr)
+        return 2
+    text = readme.read_text(encoding="utf-8")
+    if "発火ログ" not in text:
+        print("README に発火ログの項目表がありません。\n"
+              "  **書式が実装の中にしか無い状態です。**", file=sys.stderr)
+        return 1
+    missing = [k for k in keys if f"`{k}`" not in text]
+    if missing:
+        print(f"発火ログの項目表に載っていないキーがあります: {missing}\n"
+              f"  {engine_path} の {LOG_WRITER}() は {keys} を書きます。\n"
+              f"  **表が古いと、読む人はキーを当てて外します。**", file=sys.stderr)
+        return 1
+    print(f"発火ログの項目表: {len(keys)} キーすべてが載っています。")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="README の一覧がディスクと合っているか")
     ap.add_argument("--readme", type=Path, default=HERE.parent / "README.md")
     ap.add_argument("--tools", type=Path, default=HERE)
+    ap.add_argument("--log-schema", action="store_true",
+                    help="発火ログの項目表が実装と合っているかを見る")
+    ap.add_argument("--engine", type=Path,
+                    default=Path(__file__).resolve().parent.parent
+                    / "engine" / "design_check.py")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
     if args.self_test:
         return self_test()
+
+    if args.log_schema:
+        return check_log_schema(args.readme, args.engine)
 
     if not args.readme.exists():
         print(f"README がありません: {args.readme}", file=sys.stderr)
@@ -145,6 +202,30 @@ def self_test():
         # README が無い
         rm.unlink()
         check(main(argv) == 2, "README が無いのに通した")
+
+    # ─── #39: 発火ログの項目表 ────────────────────────────────
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as td2:
+        d = Path(td2)
+        eng = d / "engine.py"
+        eng.write_text(
+            "def note(rule, lineno, kind):\n"
+            "    observations.append({\n"
+            "        'ts': 1, 'rule': 2, 'severity': 3, 'kind': 4,\n"
+            "    })\n", encoding="utf-8")
+        check(log_keys(eng) == ["ts", "rule", "severity", "kind"],
+              f"実装からキーを読めない: {log_keys(eng)}")
+        rm2 = d / "README.md"
+        rm2.write_text("## 発火ログ\n`ts` `rule` `severity` `kind`\n",
+                       encoding="utf-8")
+        check(check_log_schema(rm2, eng) == 0, "全部載っているのに落ちた")
+        # **キーが増えたら落ちる**（表を手で書き写す層にしない）
+        eng.write_text(eng.read_text(encoding="utf-8").replace(
+            "'kind': 4,", "'kind': 4, 'source': 5,"), encoding="utf-8")
+        check(check_log_schema(rm2, eng) == 1, "増えたキーを見逃した")
+        # 表そのものが無ければ落ちる
+        rm2.write_text("なにもない\n", encoding="utf-8")
+        check(check_log_schema(rm2, eng) == 1, "表が無いのに通した")
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
