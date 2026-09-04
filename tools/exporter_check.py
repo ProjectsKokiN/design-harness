@@ -21,9 +21,25 @@
 指紋は `fingerprint/text_digest.py`（JS 側と同じ式）で取ります。
 案件が自前の指紋関数を書きません。
 
+## `--style`: 器の書き方（2026-09-04 新設・#32）
+
+**`figma.mixed` を返しうる値を、素で読んでいないか**を見ます。
+
+実害（qnd-database・2026-09-03）: Footer が辺ごとに違う線の太さを持っており、
+`strokeWeight` が `figma.mixed`（Symbol）を返しました。それをテンプレート文字列に
+入れた瞬間 `TypeError: cannot convert symbol to string` で**書き出しごと止まり、
+12部品のうち1件も取れませんでした。**
+
+`cornerRadius` には mixed の処理があったのに `strokeWeight` には**無く、
+同じ形の抜け**でした。**キーごとに書く限り、次のキーでまた起きます。**
+だから `exporters/_preamble.js` の `val()` / `num()` を通させます。
+
 ## 捕まえないもの
 
 - 器を**回した結果が正しいか**。それは書き出しの中身の検査（照合テスト）の領域
+- `--style` の**読み手がノードかどうか**。`s.lineHeight` の `s` が TextStyle なら
+  mixed は来ないが、行だけを見て区別できない。**だから件数のラチェットにしてある**
+  （増えたら落とす。いま在るぶんは宣言して先へ進める）
 - Figma 側が変わったこと。それは `figma_freshness.py`（条件4）
 - 確かめた方法: --self-test（器を書き換えると落ちること・producer が無いと落ちること）
 
@@ -60,6 +76,66 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
 
 
+#: `figma.mixed` を**返しうる**プロパティ。素で読むと書き出しごと止まる。
+#:
+#: **絞ってあります。** 1つのノードで値が割れるのは
+#:   - 角ごとに違う角丸（`cornerRadius`）
+#:   - 辺ごとに違う線の太さ（`strokeWeight`。**qnd の実害はこれ**）
+#:   - TEXT の**字ごとに違う**文字の指定と塗り
+#: の3種類です。`opacity` / `strokes` / `effects` / `characters` はノード1つに
+#: 対して1つなので**入れていません**（入れると誤検出が増え、この検査が読まれなくなる）。
+#: 新しい形の実害が出たらここへ足します。
+MIXED_PROPS = (
+    "strokeWeight", "cornerRadius",
+    "fontSize", "fontName", "letterSpacing", "lineHeight",
+    "textDecoration", "textCase", "fills", "fillStyleId", "textStyleId",
+)
+
+#: 素で読んでいる形。`n.strokeWeight` / `node.cornerRadius`
+BARE_RX = None
+
+
+def check_style(paths):
+    """器が figma.mixed を素で読んでいないかを見る。
+
+    **同じ行の同じキーは1件に畳む。** また、**手前3行までに同じキーの
+    mixed の見張り**（`n.fills !== figma.mixed` / `typeof … === 'symbol'`）が
+    あれば、その塊の中は守られているとみなす。
+
+    ここは**件数のラチェット**で使う（`expectedBareMixed`）。行だけを見て
+    塊の外まで正確に判定するのは無理なので、**増えたら落とす**形にする。
+    """
+    import re as _re
+    global BARE_RX
+    if BARE_RX is None:
+        BARE_RX = _re.compile(
+            r"(?<![\w.])(\w+)\.(" + "|".join(MIXED_PROPS) + r")\b")
+    ng = []
+    for f in paths:
+        if not f.exists() or f.suffix != ".js":
+            continue
+        lines = f.read_text(encoding="utf-8", errors="ignore").splitlines()
+        for i, line in enumerate(lines, 1):
+            s = line.strip()
+            if s.startswith("//") or s.startswith("*"):
+                continue
+            seen = set()
+            for m in BARE_RX.finditer(line):
+                obj, prop = m.group(1), m.group(2)
+                if prop in seen:
+                    continue                       # 同じ行の同じキーは1件
+                seen.add(prop)
+                guard = "\n".join(lines[max(0, i - 4):i])
+                if prop in guard and ("figma.mixed" in guard or "typeof" in guard):
+                    continue                       # 手前に見張りがある
+                ng.append((f.name, i,
+                           f"`{obj}.{prop}` を素で読んでいます。"
+                           f"**figma.mixed（Symbol）を返しうる値です。"
+                           f"来ると書き出しごと止まります。**"
+                           f" `val({obj}, '{prop}')` を通してください"))
+    return ng
+
+
 def digest_of(path):
     return text_digest(path.read_bytes().decode("utf-8", errors="replace"))
 
@@ -70,11 +146,59 @@ def main(argv=None):
     ap.add_argument("--root", type=Path)
     ap.add_argument("--update", action="store_true",
                     help="いまの器の指紋を書き出しに記録し直す（取り直した直後だけ）")
+    ap.add_argument("--style", action="store_true",
+                    help="器が figma.mixed を素で読んでいないかを見る")
+    ap.add_argument("--exporters", type=Path,
+                    help="--style で見る器の置き場（既定: 設定の器の親）")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
     if args.self_test:
         return self_test()
+
+    if args.style:
+        d = args.exporters or (args.config.parent / "figma" / "exporters")
+        if not d.exists():
+            print(f"器の置き場がありません: {d}\n"
+                  f"  **0件は「綺麗」ではなく「見ていない」です。**", file=sys.stderr)
+            return 2
+        files = sorted(d.glob("*.js"))
+        if not files:
+            print(f"器が1つもありません: {d}\n"
+                  f"  **0件は「綺麗」ではなく「見ていない」です。**", file=sys.stderr)
+            return 2
+        ng = check_style(files)
+        exp = None
+        if args.config.exists():
+            try:
+                exp = json.loads(args.config.read_text(
+                    encoding="utf-8")).get("expectedBareMixed")
+            except (OSError, json.JSONDecodeError):
+                exp = None
+        if isinstance(exp, int):
+            if len(ng) > exp:
+                print(f"器が figma.mixed を素で読んでいる箇所が {len(ng)} 件で、"
+                      f"宣言（expectedBareMixed: {exp}）を上回りました"
+                      f"（器 {len(files)} 本）:", file=sys.stderr)
+                for name, line, why in ng[:12]:
+                    print(f"  {name}:{line}  {why}", file=sys.stderr)
+                return 1
+            if len(ng) < exp:
+                print(f"注意: 素で読んでいる箇所が {len(ng)} 件に減りました。"
+                      f"{args.config.name} の expectedBareMixed を下げてください。")
+            print(f"器の書き方（{len(files)} 本）: 素で読んでいる箇所 {len(ng)} 件"
+                  f"（宣言 {exp}）")
+            return 0
+        if ng:
+            print(f"器が figma.mixed を素で読んでいる箇所が {len(ng)} 件あります"
+                  f"（器 {len(files)} 本）。"
+                  f"{args.config.name} に expectedBareMixed を書くと"
+                  f"**増えたときに落ちます**（いまは数えるだけ）:")
+            for name, line, why in ng[:12]:
+                print(f"  {name}:{line}  {why}")
+            return 0
+        print(f"器の書き方（{len(files)} 本）: 0 件")
+        return 0
 
     if not args.config.exists():
         print(f"設定がありません: {args.config}\n"
@@ -223,6 +347,35 @@ def self_test():
         out.unlink()
         if main(argv) != 1:
             print("self-test NG: 書き出しが0件なのに落ちなかった"); ok = False
+
+    # ─── --style（#32・qnd-database 2026-09-03 の再現）──────────────
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as td2:
+        d = Path(td2)
+        (d / "bad.js").write_text(
+            "const p = [];\n"
+            "p.push('sw=' + n.strokeWeight);\n", encoding="utf-8")
+        r = check_style([d / "bad.js"])
+        if not r or "strokeWeight" not in r[0][2]:
+            print("self-test NG: 素で読む strokeWeight を見逃した"); ok = False
+        (d / "good.js").write_text(
+            "const p = [];\n"
+            "p.push('sw=' + val(n, 'strokeWeight'));\n"
+            "p.push('r=' + num(n, 'cornerRadius'));\n", encoding="utf-8")
+        if check_style([d / "good.js"]):
+            print(f"self-test NG: val() を通した器を咎めた: "
+                  f"{check_style([d / 'good.js'])}"); ok = False
+        # 自分で mixed を見ている行は咎めない（ひな形の中身）
+        (d / "own.js").write_text(
+            "if (n.strokeWeight !== figma.mixed) { }\n"
+            "if (typeof n.cornerRadius === 'symbol') { }\n", encoding="utf-8")
+        if check_style([d / "own.js"]):
+            print("self-test NG: 自分で mixed を見ている行を咎めた"); ok = False
+        # コメント行は咎めない
+        (d / "cmt.js").write_text("// n.strokeWeight は mixed を返しうる\n",
+                                  encoding="utf-8")
+        if check_style([d / "cmt.js"]):
+            print("self-test NG: コメントを咎めた"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1

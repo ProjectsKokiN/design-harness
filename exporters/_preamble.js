@@ -35,6 +35,47 @@
 /** 参照してよいページ。案件の design/figma/page-scope.json の allowed と揃える。 */
 const ALLOW_PAGES = ['⚙️_Styles&Components'];   // ← 案件ごとに書き換える
 
+/**
+ * 値を1つ安全に読む。**`figma.mixed` を文字列に入れない。**
+ *
+ * 実害（qnd-database・2026-09-03・#32）: Footer が辺ごとに違う線の太さを
+ * 持っており `strokeWeight` が `figma.mixed`（Symbol）を返した。それを
+ * テンプレート文字列に入れた瞬間 `TypeError: cannot convert symbol to string`
+ * で**書き出しごと止まり、12部品のうち1件も取れなかった**。
+ * `cornerRadius` には mixed の処理があったのに `strokeWeight` には無く、
+ * **同じ形の抜け**だった。だから**キーごとに書かず、ここを通す。**
+ *
+ * 戻り: 値 / `'MIXED'` / `null`（無い・読めない）
+ */
+function val(n, key) {
+  let v;
+  try { v = n[key]; } catch (e) { return null; }   // getter が投げるノードがある
+  if (typeof v === 'symbol') return 'MIXED';       // figma.mixed
+  return v === undefined ? null : v;
+}
+
+/** 数として読む。mixed と不在はそのまま返す（数に潰さない）。 */
+function num(n, key) {
+  const v = val(n, key);
+  return typeof v === 'number' ? Math.round(v * 100) / 100 : v;
+}
+
+/**
+ * 重なり順の指定（`itemReverseZIndex`）。**意味に翻訳せず生の真偽値を返す。**
+ *
+ * 実害（flash-compose・2026-09-03・#10）: これが書き出しに無かったため、
+ * AI が `children` の並びだけで重なり順を判断し、**「Figma が壊れている」と
+ * 誤報**した（実際は正しかった）。`children` は**並び順であって描画順ではない**。
+ *
+ * **`true` / `false` がどちらの向きかをここで決めない。** 翻訳を挟むと
+ * それが「正」になる（`counterAxisAlignItems: MAX` を "bottom" と書き写した
+ * 前例がある）。読む側が Figma の画面と突き合わせる。
+ */
+function revZ(n) {
+  const v = val(n, 'itemReverseZIndex');
+  return typeof v === 'boolean' ? v : null;
+}
+
 /** 指紋。**気づくためだけの値**なので暗号強度は要らない（FNV-1a 32bit）。 */
 function h(s) {
   let x = 0x811c9dc5;
