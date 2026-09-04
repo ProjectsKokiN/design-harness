@@ -260,6 +260,38 @@ def self_test_stages():
         if r:
             print(f"self-test NG: 宣言があるのに落ちた: {r}"); ok = False
 
+        # ─── #13: 関門が緩和策の上に立っている宣言 ─────────────────
+        pp.write_text("sh design/verify.sh\n"
+                      "python3 design/harness/tools/pin_check.py --root . || exit 1\n",
+                      encoding="utf-8")
+        rc, out = run(full, waiver={})
+        MIT = {"what": "テストの並列度を1に落としている",
+               "why": "時間に依存する試験が1本あり、確率で落ちる",
+               "reviewBy": "2099-01-01"}
+
+        def with_mitig(m):
+            waivers.write_text(json.dumps({"notHere": {}, "緩和": m},
+                                          ensure_ascii=False), encoding="utf-8")
+            verify.write_text(full, encoding="utf-8")
+            tpl.write_text(TPL, encoding="utf-8")
+            gate.write_text(json.dumps(GATE, ensure_ascii=False), encoding="utf-8")
+            b = io.StringIO()
+            with contextlib.redirect_stdout(b), contextlib.redirect_stderr(b):
+                r = check_stages(tpl, verify, None, waivers, gate, pp, pt)
+            return r, b.getvalue()
+
+        r, o = with_mitig([MIT])
+        if r != 0 or "緩和の上に立っています" not in o:
+            print(f"self-test NG: 緩和の宣言を表示していない（{r}）\n   {o[:300]}")
+            ok = False
+        r, o = with_mitig([{**MIT, "why": "  "}])
+        if r != 1 or "why" not in o:
+            print(f"self-test NG: 理由の無い緩和を通した（{r}）"); ok = False
+        r, o = with_mitig([{**MIT, "reviewBy": "2020-01-01"}])
+        if r != 1 or "まだこの緩和の上に関門が立っていますか" not in o:
+            print(f"self-test NG: 期限切れの緩和を通した（{r}）"); ok = False
+        waivers.unlink(missing_ok=True)
+
         # 関門の条件の一覧そのものが無ければ落とす
         gate.unlink()
         buf = io.StringIO()
@@ -556,6 +588,29 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
     pp, shared = resolve_prepush(verify.resolve().parent.parent, prepush)
     errs += check_prepush(prepush_template, pp, waivers, shared)
 
+    # **関門が緩和策の上に立っていることを宣言させる**（2026-09-04・#13）。
+    # 実害（flash-compose）: 「テストの並列度を1に落として揺らぎの確率を下げる」
+    # という緩和の上に関門が立っていたが、**宣言する場所が無かった**。
+    # 並列度1でも落ちるのを実測しており、**関門が運で決まる**状態だった。
+    # 落ちたのが揺らぎか本物かを区別する仕組みも無い。
+    mitig = []
+    if waivers_path and waivers_path.exists():
+        try:
+            mitig = json.loads(waivers_path.read_text(
+                encoding="utf-8")).get("緩和") or []
+        except (OSError, json.JSONDecodeError):
+            mitig = []
+    for m in mitig:
+        miss = [k for k in ("what", "why", "reviewBy")
+                if not str(m.get(k, "")).strip()]
+        if miss:
+            errs.append(f"  緩和の宣言に {' / '.join(miss)} がありません: "
+                        f"{m.get('what') or m}")
+        elif str(m["reviewBy"]) < date.today().isoformat():
+            errs.append(f"  緩和の宣言が棚卸しの期限（{m['reviewBy']}）を"
+                        f"過ぎています: {m['what']}\n"
+                        f"    **まだこの緩和の上に関門が立っていますか。**")
+
     # 元ファイル自身の穴: 生きている条件なのに、どの段も測ると言っていない
     for c in sorted(live):
         if c not in claimed:
@@ -581,6 +636,9 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
         print("\n".join(errs), file=sys.stderr)
         return 1
     note = f" / 理由つきで不在 {len(waived)}段" if waived else ""
+    if mitig:
+        print(f"**この関門は {len(mitig)} 件の緩和の上に立っています**"
+              f"（{' / '.join(str(m.get('what')) for m in mitig[:3])}）。")
     print(f"段の数: 元ファイル {len(stages)}段 → この案件 {len(ran)}段{note}。"
           f"関門の条件 {len(live)} 件、すべて測っています。")
     return 0

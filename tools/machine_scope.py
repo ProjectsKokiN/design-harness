@@ -99,6 +99,7 @@ import json
 import os
 import platform
 import shutil
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -301,6 +302,10 @@ def main(argv=None):
                          "--owns は『段を通す』ので、真偽の判定には使えない。"
                          "**set -e の下では if か || で受ける**（そのまま呼ぶと "
                          "3 でスクリプトごと死に、以降の検査が1本も走らない）")
+    ap.add_argument("--handoff", action="store_true",
+                    help="担当外の変更を担当機への申し送りとして切り出す")
+    ap.add_argument("--apply", action="store_true",
+                    help="--handoff で作業ツリーからも外す（**変更はパッチに残る**）")
     ap.add_argument("--check", action="store_true",
                     help="担当外のパスを変えていないか")
     ap.add_argument("--root", type=Path, default=Path("."))
@@ -349,7 +354,10 @@ def main(argv=None):
         return 2
 
     if args.check:
-        return do_check(machine, conf, args.root)
+        return do_check(machine, conf, args.root, args.config)
+
+    if args.handoff:
+        return do_handoff(machine, conf, args.root, args.apply)
 
     if args.test_owns:
         if owns(machine, args.test_owns, conf):
@@ -400,7 +408,89 @@ def _no_owner(path, config, known):
     return 2
 
 
-def do_check(machine, conf, root):
+def do_handoff(machine, conf, root, apply=False):
+    """担当外の変更を、担当機への申し送りとして切り出す（2026-09-04・#13）。
+
+    実害（flash-compose・2026-09-03）: **push できない組み合わせ**に入りました。
+    テストの揺らぎの直しが担当外のファイルにあり、入れても出しても push
+    できません。出口は3つのうち2つが塞がっていました。
+
+    | 出口 | 可否 |
+    |---|---|
+    | `git push --no-verify` | **禁止**（中身を検査せずに送れる） |
+    | その機体で作業し直す | その機体が別の場所にある。**今すぐは不可能** |
+    | 担当を変える | 可能。ただし**役割の変更はユーザーの判断** |
+
+    **3つ目の道**がこれです。差分をパッチとして残し、依頼の見出しを作り、
+    `--apply` なら作業ツリーからも外します。
+
+    道具の案内は行き止まりだけを示していました。**AI が毎回この手順を
+    思いつく保証はありません**（実際、手でやってテストが落ちて振り出しに
+    戻りました）。
+    """
+    import datetime
+    files = changed_files(root)
+    others = []
+    for f in files:
+        holder = owner_of(f, conf)
+        if holder and holder != machine and holder != SHARED:
+            others.append((f, holder))
+    if not others:
+        print("担当外の変更はありません。切り出すものがありません。")
+        return 0
+
+    out_dir = root / "design" / "handoff"
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    by_holder = {}
+    for f, holder in others:
+        by_holder.setdefault(holder, []).append(f)
+
+    made = []
+    for holder, paths in sorted(by_holder.items()):
+        diff = subprocess.run(["git", "-C", str(root), "diff", "--", *paths],
+                              capture_output=True, text=True)
+        if diff.returncode != 0 or not diff.stdout.strip():
+            print(f"  {holder}: 差分が取れません（新規ファイルは "
+                  f"`git add -N` してください）: {' / '.join(paths)}",
+                  file=sys.stderr)
+            continue
+        out_dir.mkdir(parents=True, exist_ok=True)
+        safe = re.sub(r"[^\w.-]", "_", holder)
+        pf = out_dir / f"{stamp}-{safe}.patch"
+        pf.write_text(diff.stdout, encoding="utf-8")
+        made.append((holder, pf, paths))
+
+    if not made:
+        return 1
+
+    print("申し送りを作りました。**MACHINE_TASKS.md にこのまま貼ってください。**\n")
+    for holder, pf, paths in made:
+        rel = pf.relative_to(root)
+        print(f"## {holder} へ: 担当外の変更を引き取る（{machine} が作った）\n")
+        print(f"- 対象: {' / '.join(paths)}")
+        print(f"- パッチ: `{rel}`")
+        print(f"- 当て方: `git apply {rel}`")
+        print(f"- なぜ: {machine} の関門を通すために要る変更ですが、"
+              f"このパスは {holder} の担当です\n")
+
+    if not apply:
+        print("（下見です。作業ツリーからは外していません。"
+              "外すなら --apply を付けてください）")
+        return 0
+
+    for holder, pf, paths in made:
+        r = subprocess.run(["git", "-C", str(root), "checkout", "--", *paths],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"作業ツリーから外せませんでした: {' / '.join(paths)}\n"
+                  f"  {r.stderr.strip()[:200]}", file=sys.stderr)
+            return 1
+    print(f"作業ツリーから外しました（{sum(len(p) for _, _, p in made)} ファイル）。"
+          f"**変更はパッチに残っています。**")
+    return 0
+
+
+def do_check(machine, conf, root, conf_path=''):
     files = changed_files(root)
     if files is None:
         print(f"git の状態が読めません: {root}\n"
@@ -434,8 +524,16 @@ def do_check(machine, conf, root):
         for f, holder in others:
             print(f"  - {f}（担当: {holder}）", file=sys.stderr)
         print(f"  役割の正本: ~/.claude/skills/machine-relay/references/worker.md\n"
-              f"  意図した変更なら、その機体で作業し直すか、"
-              f"machine-scope.json の担当を変えてください。", file=sys.stderr)
+              f"  出口は3つです:\n"
+              f"    1. その機体で作業し直す\n"
+              f"    2. machine-scope.json の担当を変える（**役割の変更は"
+              f"ユーザーの判断**）\n"
+              f"    3. **担当機への申し送りとして切り出す**:\n"
+              f"       python3 <harness>/tools/machine_scope.py --config {conf_path} \\\n"
+              f"           --handoff --root .        # 下見（パッチを書くだけ）\n"
+              f"           --handoff --apply         # 作業ツリーからも外す\n"
+              f"  **`git push --no-verify` は使いません。**"
+              f"中身を検査せずに送れてしまうためです。", file=sys.stderr)
         return 1
     print("  OK: 担当外のパスは変更していません。")
     return 0
@@ -666,6 +764,57 @@ def self_test():
     check("set -e" in (__doc__ or ""), "**set -e の受け方が docstring に無い**")
     check("|| rc=$?" in (__doc__ or "") or "|| rc=" in (__doc__ or ""),
           "安全な受け方の例が docstring に無い")
+
+    # ─── #13: 担当外の変更を申し送りとして切り出す ─────────────────
+    import contextlib as _ctx
+    import io as _io
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(root)])
+        for kv in (("user.email", "t@t"), ("user.name", "t")):
+            subprocess.run(["git", "-C", str(root), "config", *kv])
+        (root / "lib").mkdir()
+        (root / "lib" / "mine.dart").write_text("1\n", encoding="utf-8")
+        (root / "lib" / "theirs.dart").write_text("1\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "-A"])
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "1"])
+        cf = {"machines": {"わたし": ["lib/mine.dart"],
+                           "あいて": ["lib/theirs.dart"]}}
+
+        def hand(*a):
+            b = _io.StringIO()
+            with _ctx.redirect_stdout(b), _ctx.redirect_stderr(b):
+                rc = do_handoff("わたし", cf, root, *a)
+            return rc, b.getvalue()
+
+        rc, out = hand()
+        if rc != 0 or "切り出すものがありません" not in out:
+            print(f"self-test NG: 担当外が無いのに切り出した（{rc}）"); ok = False
+
+        (root / "lib" / "theirs.dart").write_text("2\n", encoding="utf-8")
+        rc, out = hand()
+        if rc != 0 or "あいて へ" not in out or "git apply" not in out:
+            print(f"self-test NG: 申し送りを作れない（{rc}）\n   {out[:300]}")
+            ok = False
+        pf = sorted((root / "design" / "handoff").glob("*.patch"))
+        if not pf or "theirs.dart" not in pf[0].read_text(encoding="utf-8"):
+            print("self-test NG: パッチに差分が入っていない"); ok = False
+        # **下見では作業ツリーを触らない**
+        if (root / "lib" / "theirs.dart").read_text(encoding="utf-8") != "2\n":
+            print("self-test NG: 下見なのに作業ツリーを変えた"); ok = False
+
+        rc, out = hand(True)
+        if rc != 0 or "作業ツリーから外しました" not in out:
+            print(f"self-test NG: --apply が効かない（{rc}）"); ok = False
+        if (root / "lib" / "theirs.dart").read_text(encoding="utf-8") != "1\n":
+            print("self-test NG: 作業ツリーから外れていない"); ok = False
+        # **変更はパッチに残っている**（当て直せる）
+        latest = sorted((root / "design" / "handoff").glob("*.patch"))[-1]
+        r = subprocess.run(["git", "-C", str(root), "apply", str(latest)],
+                           capture_output=True, text=True)
+        if r.returncode != 0 or \
+                (root / "lib" / "theirs.dart").read_text(encoding="utf-8") != "2\n":
+            print(f"self-test NG: パッチを当て直せない: {r.stderr[:150]}"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
