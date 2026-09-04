@@ -35,6 +35,7 @@
 | 4 緩い finder | 何百個もある widget（`SizedBox` `Container` …）で探して `.first` / `.at(n)` を当てている |
 | 5 誰も見ていない文字 | 画面に直書きされていて、試験にも書き出しにも1度も出てこない文字（**件数のラチェット**） |
 | 6 1つの幅でしか回らない検査 | 案件が宣言した画面幅のうち、**2つ以上を試験が使っていない** |
+| 7 文字幅を素のスタイルで測る | `TextPainter` に `DefaultTextStyle` を混ぜず、文字倍率も落としている |
 
 形6 の実害（aub-familywalk・2026-09-02）: 画面のコードが Figma の幅 390 に
 焼き付いていた（`MediaQuery` の使用が **0件**）。**照合は 390 の1点だけ**なので、
@@ -390,6 +391,62 @@ def check_widths(tests, widths):
             f"    aub の実測: 390 の1点だけで回していて、実機で14件出ました。"]
 
 
+#: 文字幅を測っている箇所
+PAINTER_RX = re.compile(r"TextPainter\s*\(")
+
+
+def check_text_measure(files, base):
+    """形7: 文字幅を素のスタイルで測っていないか（2026-09-04・#54）。
+
+    flash-compose の実害: **同じ 2px の誤りを2箇所で独立にやりました。**
+
+    | 場所 | 素の style で測ると | 実際の描画 |
+    |---|---|---|
+    | シートの上タブ | 96.0 | **98.0** |
+    | 下部ナビ | 80.0 | **82.0** |
+
+    `MaterialApp` の既定が `letterSpacing: 0.25` を持ち、8文字で **+2.0** に
+    なります。案件のスタイルは `letterSpacing` を `null` にしているので
+    `DefaultTextStyle` から継ぎます。**`Text` は継ぐのに、`TextPainter` に
+    素のスタイルを渡すと継ぎません。**
+
+    **文字倍率（`textScaler`）も落としていました。** OS の文字拡大を上げると
+    必要な幅は増えるのに、素の `TextPainter` は 1.0 で測ります。
+
+    正しい測り方:
+
+        final effective = DefaultTextStyle.of(context).style.merge(myStyle);
+        TextPainter(text: TextSpan(text: label, style: effective),
+                    textDirection: TextDirection.ltr,
+                    textScaler: MediaQuery.textScalerOf(context))..layout();
+
+    **翻訳規則に書いていなかったので、AI は毎回素の `TextPainter` を書きます。**
+    """
+    out = []
+    for f in files:
+        text = f.read_text(encoding="utf-8", errors="ignore")
+        if not PAINTER_RX.search(text):
+            continue
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            if not PAINTER_RX.search(line):
+                continue
+            # 呼び出しは複数行にまたがる。前後8行をひとまとまりで見る
+            blob = "\n".join(lines[max(0, i - 4):i + 9])
+            miss = []
+            if "DefaultTextStyle" not in blob:
+                miss.append("`DefaultTextStyle.of(context).style.merge(…)` を"
+                            "混ぜていません（**字間が落ちて短く出ます**）")
+            if "textScaler" not in blob:
+                miss.append("`textScaler` を渡していません"
+                            "（**OS の文字拡大で必要な幅が増えます**）")
+            if miss and not ignored(lines, i + 1):
+                out.append((f.relative_to(base), i + 1,
+                            "文字幅を素のスタイルで測っています。"
+                            + " / ".join(miss)))
+    return out
+
+
 def check_sabotage(config_path, base):
     """仕込み試験の記録が、検査の最後の変更より古くないか。
 
@@ -472,6 +529,9 @@ def main(argv=None):
     ):
         for path, ln, why in hits:
             findings.append(f"  [{label}] {path}:{ln} {why}")
+
+    for path, ln, why in check_text_measure(dart_files(lib_dir) + tests, base):
+        findings.append(f"  [文字幅の測り方] {path}:{ln} {why}")
 
     strings = check_unmatched_strings(lib_dir, tests, exports, base)
     decl = conf.get("文字の照合", {}).get("expectedUnmatched")
@@ -618,6 +678,34 @@ def self_test():
         if rc != 0:
             print(f"self-test NG: 検査が突き合わせているのに落ちた（{rc}）\n   {out[:300]}")
             ok = False
+
+        # ─── 形7: 文字幅を素のスタイルで測る（#54）────────────────
+        # ここまでで文字が2件になっているので、宣言を合わせてから見る
+        conf.write_text(json.dumps({"文字の照合": {"expectedUnmatched": 2}}),
+                        encoding="utf-8")
+        WRONG = ("final tp = TextPainter(\n"
+                 "  text: TextSpan(text: label, style: AppText.labelBoldMedium),\n"
+                 "  textDirection: TextDirection.ltr,\n"
+                 ")..layout();\n")
+        RIGHT = ("final e = DefaultTextStyle.of(context).style.merge(s);\n"
+                 "final tp = TextPainter(\n"
+                 "  text: TextSpan(text: label, style: e),\n"
+                 "  textDirection: TextDirection.ltr,\n"
+                 "  textScaler: MediaQuery.textScalerOf(context),\n"
+                 ")..layout();\n")
+        lib.write_text(lib.read_text(encoding="utf-8") + WRONG, encoding="utf-8")
+        rc, out = run(CLEAN)
+        if rc != 1 or "文字幅の測り方" not in out:
+            print(f"self-test NG: 素の TextPainter を見逃した（{rc}）"); ok = False
+        if "字間が落ちて短く出ます" not in out or "文字拡大" not in out:
+            print("self-test NG: 何が落ちるかを書いていない"); ok = False
+        base_lib = lib.read_text(encoding="utf-8").replace(WRONG, "")
+        lib.write_text(base_lib + RIGHT, encoding="utf-8")
+        rc, out = run(CLEAN)
+        if rc != 0:
+            print(f"self-test NG: 正しい測り方で落ちた（{rc}）\n   {out[:300]}")
+            ok = False
+        lib.write_text(base_lib, encoding="utf-8")
 
         # ─── 形6: 1つの幅でしか回らない検査（#8）──────────────────
         dev = root / "design" / "devices.json"
