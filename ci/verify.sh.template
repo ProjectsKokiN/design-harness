@@ -134,6 +134,10 @@ step "画面の書き出し（記録層を消せる前提）" \
   "$PY" "$HARNESS/tools/screen_export_check.py" --config design/screens-check.json
 # 器が figma.mixed を素で読んでいないか（**書き出しごと止まる**。
 # qnd 2026-09-03: 辺ごとに違う線の太さで12部品のうち1件も取れなかった）
+# 見本の変異が子を隠していないか（#22: アイコンの寸法がどこにも無かった）
+# {{書き出しのパス}} はレジストリ参照の案件ではレジストリ側を指す
+step "見本の変異（子を隠していないか）" \
+  "$PY" "$HARNESS/tools/exporter_check.py" --samples design/figma/components.json
 step "器の書き方（figma.mixed で止まらないか）" \
   "$PY" "$HARNESS/tools/exporter_check.py" --style --config design/exporters.json
 step "書き出しの器（保存されていて指紋が一致するか）" \

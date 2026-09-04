@@ -34,6 +34,19 @@
 | 3 期待値の自己参照 | `expect(実際, 期待)` の**期待の側**が `lib/` の手書きの識別子を呼んでいる（生成物 `.g.dart` は書き出しなので除く） |
 | 4 緩い finder | 何百個もある widget（`SizedBox` `Container` …）で探して `.first` / `.at(n)` を当てている |
 | 5 誰も見ていない文字 | 画面に直書きされていて、試験にも書き出しにも1度も出てこない文字（**件数のラチェット**） |
+| 6 1つの幅でしか回らない検査 | 案件が宣言した画面幅のうち、**2つ以上を試験が使っていない** |
+
+形6 の実害（aub-familywalk・2026-09-02）: 画面のコードが Figma の幅 390 に
+焼き付いていた（`MediaQuery` の使用が **0件**）。**照合は 390 の1点だけ**なので、
+伸びるべきものを固定値で書いても**必ず通る**。ユーザーが4機種で確認して
+**14件**のずれが出た。個別の不具合ではなく、**写し方の誤りが14通りに現れたもの**。
+
+> Figmaの幅390に焼き付いてしまうのはかなり問題です。基本的にFigmaで設定している
+> FigHugFixedの分類は私の方で適切に行うので、それに合わせて描画内もデバイスに
+> 応じて縦幅横幅を変更するようにしてほしいです。（2026-09-02 ユーザー）
+
+守るべき幅は案件が宣言する（`design/devices.json`）。**形は案件によって違う**
+（aub は `min` / `max`、flash-compose は `widths`）ので、**数だけを拾う**。
 
 形2（空の状態しか描かない）は静的には見つからない。`--sabotage` の記録で見る。
 
@@ -321,6 +334,62 @@ def check_unmatched_strings(lib, tests, exports, base):
     return out
 
 
+def declared_widths(path):
+    """案件が宣言した画面幅を集める。**形は案件によって違うので数だけ拾う。**
+
+    aub:            {"min": [{"size": [360, 640]}], "max": [...]}
+    flash-compose:  {"widths": [{"dp": 320}, ...], "height": {"dp": 844}}
+
+    どちらの形も「幅らしい数」を拾えばよい。**共通の形を決めない**
+    （決めると片方が書き換えになり、決定の記録が散る）。
+    """
+    if not path or not path.exists():
+        return None
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    out = set()
+
+    def walk(o, key=None):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k.startswith("$"):
+                    continue
+                walk(v, k)
+        elif isinstance(o, list):
+            # size: [w, h] は先頭が幅
+            if o and all(isinstance(x, (int, float)) for x in o):
+                out.add(int(o[0]))
+                return
+            for v in o:
+                walk(v, key)
+        elif isinstance(o, (int, float)) and not isinstance(o, bool):
+            if key in ("dp", "width", "w") and 200 <= o <= 2000:
+                out.add(int(o))
+    walk(doc)
+    return sorted(out)
+
+
+def check_widths(tests, widths):
+    """試験が、宣言した幅を2つ以上使っているかを見る。
+
+    **1つの幅でしか回らない検査は、伸びるべきものを固定値で写しても通る。**
+    """
+    if not widths or len(widths) < 2:
+        return []
+    blob = "\n".join(f.read_text(encoding="utf-8", errors="ignore") for f in tests)
+    used = [w for w in widths if re.search(r"(?<![\w.])" + str(w) + r"(?:\.\d+)?(?![\w.])",
+                                           blob)]
+    if len(used) >= 2:
+        return []
+    return [f"  [1つの幅でしか回らない] 宣言した幅 {widths} のうち、"
+            f"試験が使っているのは {used or 'なし'} だけです。\n"
+            f"    **1点でしか測らない照合は、伸びるべきものを固定値で写しても"
+            f"必ず通ります。**\n"
+            f"    aub の実測: 390 の1点だけで回していて、実機で14件出ました。"]
+
+
 def check_sabotage(config_path, base):
     """仕込み試験の記録が、検査の最後の変更より古くないか。
 
@@ -424,6 +493,22 @@ def main(argv=None):
 
     sab = check_sabotage(base / conf["sabotage"], base) if conf.get("sabotage") else []
     findings.extend(sab)
+
+    dev = conf.get("devices")
+    if dev:
+        widths = declared_widths(base / dev)
+        if widths is None:
+            findings.append(f"  [1つの幅でしか回らない] 画面幅の宣言が読めません: {dev}")
+        elif len(widths) < 2:
+            findings.append(
+                f"  [1つの幅でしか回らない] 宣言された幅が {widths} だけです。\n"
+                f"    **どの幅で成り立てばよいのかが決まっていません。**"
+                f"最小と最大を書いてください。")
+        else:
+            findings.extend(check_widths(tests, widths))
+    else:
+        warns.append("画面幅の宣言（devices）が設定にありません。"
+                     "**検査が1つの幅でしか回っていないかを見ていません。**")
 
     for w in warns:
         print(f"注意: {w}")
@@ -533,6 +618,43 @@ def self_test():
         if rc != 0:
             print(f"self-test NG: 検査が突き合わせているのに落ちた（{rc}）\n   {out[:300]}")
             ok = False
+
+        # ─── 形6: 1つの幅でしか回らない検査（#8）──────────────────
+        dev = root / "design" / "devices.json"
+        conf.write_text(json.dumps({"文字の照合": {"expectedUnmatched": 2},
+                                    "devices": "design/devices.json"}),
+                        encoding="utf-8")
+        # aub の形（min / max に size: [w, h]）
+        dev.write_text(json.dumps({"min": [{"size": [360, 640]}],
+                                   "max": [{"size": [440, 956]}]}), encoding="utf-8")
+        if declared_widths(dev) != [360, 440]:
+            print(f"self-test NG: aub の形から幅を拾えない: {declared_widths(dev)}")
+            ok = False
+        rc, out = run(CLEAN + "// 360 だけ\n    expect(w, 360.0);\n")
+        if rc != 1 or "1つの幅でしか回らない" not in out:
+            print(f"self-test NG: 1つの幅だけの試験を通した（{rc}）"); ok = False
+        rc, out = run(CLEAN.replace("expect(w, 100.0);",
+                                    "expect(w, 360.0);\n    expect(w2, 440.0);"))
+        if rc != 0:
+            print(f"self-test NG: 2つの幅を使っているのに落ちた（{rc}）\n   {out[:300]}")
+            ok = False
+        # flash-compose の形（widths に dp）
+        dev.write_text(json.dumps({"widths": [{"dp": 320}, {"dp": 390}, {"dp": 430}],
+                                   "height": {"dp": 844}}), encoding="utf-8")
+        if declared_widths(dev) != [320, 390, 430, 844]:
+            print(f"self-test NG: flash の形から幅を拾えない: {declared_widths(dev)}")
+            ok = False
+        # 宣言が1つしか無ければ落ちる（どの幅で成り立てばよいか決まっていない）
+        dev.write_text(json.dumps({"widths": [{"dp": 390}]}), encoding="utf-8")
+        rc, out = run(CLEAN)
+        if rc != 1 or "決まっていません" not in out:
+            print(f"self-test NG: 幅の宣言が1つなのに通した（{rc}）"); ok = False
+        # 宣言そのものが無ければ注意を出す（黙って飛ばさない）
+        conf.write_text(json.dumps({"文字の照合": {"expectedUnmatched": 2}}),
+                        encoding="utf-8")
+        rc, out = run(CLEAN)
+        if "1つの幅でしか回っていないかを見ていません" not in out:
+            print("self-test NG: 幅の宣言が無いことを言っていない"); ok = False
 
         # 仕込みの記録
         sab = root / "design" / "sabotage.json"

@@ -41,6 +41,10 @@ return JSON.stringify({ $meta: { declared: c.declared, pages: c.pages }, result 
   （#48: 4画面すべてで0行だった）
 - **数えた画面の数を `$meta` に書く。** 器が「31画面のうち20画面ぶん」と
   自分で言えていても、突き合わせる検査が無ければ誰も気づかない
+- **見本は1変異で済ませない。** 子は変異によって在ったり無かったりする。
+  全変異を見て子の union を取るか、**子を持つ変異を見本にする**
+  （#22: `Buttons/L` の見本が `Icon=False, PrependIcon=False, AppendIcon=False`
+  だったため、アイコンの寸法がどこにも無く、名前から 36 と当てた。Figma は 32）
 - **意味に翻訳しない。** 重なり順は `revZ()` が真偽値のまま返す。
   `counterAxisAlignItems: MAX` を "bottom" と書き写した前例がある
 
