@@ -31,6 +31,52 @@ def encoded_dirs(root: Path):
             if d.is_dir() and (d.name == want or d.name.startswith(want + "-"))]
 
 
+def sessions_by_cwd(root: Path, limit_days=30):
+    """**案件の外で開いたセッション**を、記録の中身から見つける（2026-09-04・#31）。
+
+    実害（2026-09-03）: qnd-database の作業を `~/.claude` で開いたセッションから
+    行ったため、記録は `projects/-Users-nishikawakoki--claude/` に入った。
+    `--status` は「この案件の会話記録が見つかりません」で止まり、
+    **「どこまで見たかを機械が持つ」という肝が働かなかった。** 結果、課題を
+    人が思い出して立てることになった。
+
+    `CLAUDE.md` は「ハーネスのある案件は原則そのプロジェクト直下で開く」と
+    定めているが、**外から触ることは実際に起きる。**
+
+    置き場の名前（cwd の符号化）ではなく、**記録の中の `cwd`** で判定する。
+    走査が重くなるので、直近に触られたファイルだけを見る。
+    """
+    if not PROJECTS.is_dir():
+        return []
+    import time
+    want = str(root.resolve())
+    cutoff = time.time() - limit_days * 86400
+    mine = {d.resolve() for d in encoded_dirs(root)}
+    out = []
+    for d in PROJECTS.iterdir():
+        if not d.is_dir() or d.resolve() in mine:
+            continue
+        for f in d.glob("*.jsonl"):
+            try:
+                if f.stat().st_mtime < cutoff:
+                    continue
+                with f.open(encoding="utf-8", errors="ignore") as fh:
+                    for line in fh:
+                        if '"cwd"' not in line:
+                            continue
+                        try:
+                            rec = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        cwd = rec.get("cwd") or ""
+                        if cwd == want or cwd.startswith(want + "/"):
+                            out.append(f)
+                            break
+            except OSError:
+                continue
+    return sorted(set(out))
+
+
 def load_state(root: Path):
     f = root / STATE
     if not f.exists():
@@ -55,12 +101,17 @@ def text_of(rec):
     return ""
 
 
-def collect(root: Path, since):
-    """(記録の一覧, 読めなかった置き場) を返す。時刻順に並べる。"""
+def collect(root: Path, since, extra=None):
+    """(記録の一覧, 読めなかった置き場) を返す。時刻順に並べる。
+
+    `extra` は**案件の外で開いたセッション**の記録（#31）。
+    """
     dirs = encoded_dirs(root)
+    files = [f for d in dirs for f in sorted(d.glob("*.jsonl"))]
+    files += [f for f in (extra or []) if f not in files]
     out, unreadable = [], []
-    for d in dirs:
-        for f in sorted(d.glob("*.jsonl")):
+    for f in files:
+        if True:
             try:
                 lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError as e:
@@ -118,6 +169,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="前回の走査以降の会話を切り出す")
     ap.add_argument("--root", default=".")
     ap.add_argument("--collect", action="store_true", help="会話を切り出してファイルに出す")
+    ap.add_argument("--transcript", nargs="*",
+                    help="会話記録を明示する（案件の外で開いたセッションを渡す）")
     ap.add_argument("--mark", metavar="TS", help="ここまで走査したと記録する（--collect が出した時刻）")
     ap.add_argument("--filed", type=int, default=0, help="--mark と一緒に、立てた課題の数を残す")
     ap.add_argument("--status", action="store_true")
@@ -139,10 +192,17 @@ def main(argv=None):
             print(f"  {h['at'][:19]}  〜{h['scanned_until'][:19]}  "
                   f"記録{h['records']}件 / 課題{h.get('issues_filed', 0)}件")
         dirs = encoded_dirs(root)
-        if not dirs:
-            print("**この案件の会話記録が見つかりません。**", file=sys.stderr)
+        outside = sessions_by_cwd(root)
+        if not dirs and not outside:
+            print("**この案件の会話記録が見つかりません。**\n"
+                  "  この案件で開いたセッションも、外から触ったセッションも"
+                  "ありません。", file=sys.stderr)
             return 2
-        print(f"会話記録の置き場: {len(dirs)} 箇所")
+        print(f"会話記録の置き場: {len(dirs)} 箇所"
+              + (f" / **案件の外で開いたセッション {len(outside)} 本**"
+                 if outside else ""))
+        for f in outside[:5]:
+            print(f"  外: {f.parent.name}/{f.name}")
         return 0
 
     if a.mark:
@@ -163,13 +223,20 @@ def main(argv=None):
 
     since = a.since or st["last_scanned"]
     dirs = encoded_dirs(root)
-    if not dirs:
+    # **案件の外で開いたセッションも拾う**（#31）。`--transcript` があればそれを足す
+    outside = [Path(x) for x in (a.transcript or [])] or sessions_by_cwd(root)
+    if not dirs and not outside:
         print(f"**{root} の会話記録が見つかりません。**\n"
-              f"  {PROJECTS} に置き場がありません。この案件のセッションで実行してください。",
-              file=sys.stderr)
+              f"  {PROJECTS} に置き場が無く、記録の中に cwd が {root} のものも"
+              f"ありません。\n"
+              f"  この案件のセッションで実行するか、--transcript で記録を"
+              f"指してください。", file=sys.stderr)
         return 2
+    if outside and not a.transcript:
+        print(f"**案件の外で開いたセッション {len(outside)} 本も見ます**"
+              f"（記録の中の cwd で判定）。")
 
-    recs, unreadable = collect(root, since)
+    recs, unreadable = collect(root, since, outside)
     if not recs:
         print(f"前回の走査（{since}）以降、新しい発言はありません。")
         return 0
@@ -226,6 +293,29 @@ def self_test():
         try:
             # 置き場を2つとも拾う
             check(len(encoded_dirs(root)) == 2, "サブディレクトリの置き場を拾えていない")
+
+            # **案件の外で開いたセッションを、記録の中の cwd で見つける**（#31）
+            outside = PROJECTS / "-Users-someone--claude"
+            outside.mkdir(parents=True, exist_ok=True)
+            (outside / "s.jsonl").write_text(
+                json.dumps({"type": "user", "timestamp": "2026-03-01T00:00:00Z",
+                            "cwd": str(root.resolve()),
+                            "message": {"content": "外から触った"}},
+                           ensure_ascii=False) + "\n", encoding="utf-8")
+            found = sessions_by_cwd(root)
+            check(len(found) == 1 and found[0].name == "s.jsonl",
+                  f"外で開いたセッションを見つけられない: {found}")
+            # **別の案件のセッションは拾わない**
+            (outside / "other.jsonl").write_text(
+                json.dumps({"type": "user", "timestamp": "2026-03-01T00:00:00Z",
+                            "cwd": "/どこか/別の案件",
+                            "message": {"content": "無関係"}},
+                           ensure_ascii=False) + "\n", encoding="utf-8")
+            check(len(sessions_by_cwd(root)) == 1, "別の案件のセッションを拾った")
+            # collect が外の記録も読む
+            recs, _ = collect(root, None, sessions_by_cwd(root))
+            check(any("外から触った" in (r.get("text") or "") for r in recs),
+                  "外で開いたセッションの中身を読めていない")
 
             # --since より後だけ、時刻順に出る
             recs, bad = collect(root, "2026-01-15T00:00:00Z")

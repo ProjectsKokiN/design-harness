@@ -101,7 +101,10 @@ DIGEST_FIELDS = [
 def get(url: str) -> dict:
     token = os.environ.get('FIGMA_TOKEN')
     if not token:
-        print('FIGMA_TOKEN がありません。`source ~/.claude/.env` を先に実行してください',
+        print('FIGMA_TOKEN がありません。`source ~/.claude/.env` を先に実行してください。\n'
+              '  入ったかどうかは `--has-token` で確かめます。\n'
+              '  **値を出力しないでください**（シェルで確かめようとして、'
+              'トークンがセッションの記録に残った事故があります・2026-09-03）。',
               file=sys.stderr)
         raise SystemExit(2)
     req = urllib.request.Request(url, headers={'X-Figma-Token': token})
@@ -545,6 +548,39 @@ def self_test() -> int:
         moved = json.loads(json.dumps(SETS)); moved['Buttons']['itemSpacing'] = 99
         cases.append(('main: 値が変わったら 1', run_main(base, moved) == 1))
 
+        # ─── --has-token（#15・2026-09-04）──────────────────────────
+        # **値に触らない。長さも出さない。** ここが無いと AI がシェルを書き、
+        # トークンがセッションの記録に残る（2026-09-03 の事故）
+        keep_tok = os.environ.get('FIGMA_TOKEN')
+        try:
+            os.environ['FIGMA_TOKEN'] = 'secret-value-xyz'
+            b = io.StringIO()
+            with contextlib.redirect_stdout(b):
+                rc = has_token()
+            cases.append(('--has-token: 在れば 0 と「あり」',
+                          rc == 0 and 'あり' in b.getvalue()))
+            cases.append(('--has-token: **値を出さない**',
+                          'secret-value-xyz' not in b.getvalue()))
+            cases.append(('--has-token: 長さも出さない',
+                          '16' not in b.getvalue()))
+            os.environ['FIGMA_TOKEN'] = '   '
+            b = io.StringIO()
+            with contextlib.redirect_stdout(b):
+                rc = has_token()
+            cases.append(('--has-token: 空白だけなら「なし」',
+                          rc == 1 and 'なし' in b.getvalue()))
+            del os.environ['FIGMA_TOKEN']
+            b = io.StringIO()
+            with contextlib.redirect_stdout(b):
+                rc = has_token()
+            cases.append(('--has-token: 無ければ 1 と「なし」',
+                          rc == 1 and 'なし' in b.getvalue()))
+        finally:
+            if keep_tok is None:
+                os.environ.pop('FIGMA_TOKEN', None)
+            else:
+                os.environ['FIGMA_TOKEN'] = keep_tok
+
         # ─── 画面の鮮度（#25・2026-09-04）────────────────────────────
         # **画面はページ直下の FRAME。** 部品と切り分けられていることまで見る
         SCREENS = {'ALBUM_ScrapBoard': {'type': 'FRAME', 'name': 'ALBUM_ScrapBoard',
@@ -757,9 +793,37 @@ def load_config(path) -> None:
             raise SystemExit(2)
 
 
+def has_token() -> int:
+    """トークンが**在るかどうかだけ**を言う（2026-09-04 新設・#15）。
+
+    実害（flash-compose・2026-09-03）: 「入れてから再実行してください」と
+    言われた AI が、入ったかを確かめようとしてシェルを書きました。
+
+        echo "${FIGMA_TOKEN:+あり}${FIGMA_TOKEN:-なし}"
+
+    `:+` と `:-` を並べたので、**設定されているときは「あり」に続けて値そのものが
+    出ます。** トークンがセッションの出力に残りました。
+
+    **書き間違いですが、書かせているのは道具の案内です。** 確かめ方が用意されて
+    いないので、その場でシェルを書きます。**ここが用意されていれば書きません。**
+
+    値には触りません。長さも出しません。
+    """
+    v = os.environ.get('FIGMA_TOKEN')
+    if v and v.strip():
+        print('FIGMA_TOKEN: あり')
+        return 0
+    print('FIGMA_TOKEN: なし')
+    print('  `source ~/.claude/.env` を実行してください。'
+          '**値を出力しないでください。**')
+    return 1
+
+
 def main() -> int:
     if '--selftest' in sys.argv or '--self-test' in sys.argv:
         return self_test()
+    if '--has-token' in sys.argv:
+        return has_token()
     if '--config' in sys.argv:
         load_config(sys.argv[sys.argv.index('--config') + 1])
     update = '--update' in sys.argv

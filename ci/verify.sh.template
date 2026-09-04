@@ -104,6 +104,11 @@ step "鮮度（条件4: Figma 本体 → 書き出し。design/ の担当機の�
 
 # 上で飛ばした穴を塞ぐ対の検査。担当外と宣言した機体が担当外のパスを
 # 変えていたら落とす（Windows が design/ を触っていたら、ここで止まる）
+# **自分の機体だけ緑**を止める（衝突で CI が起動しない／レジストリが枝に居る／
+# 受信箱が枝に取り残される）。ネットワークも認証も要らない
+step "共有されているか（衝突・レジストリ・受信箱）" \
+  "$PY" "$HARNESS/tools/shared_check.py" --conflict \
+    --shared design/machine-scope.json --registry "$HOME/dev/design-systems"
 step "機体の担当（担当外のパスを変えていないか）" \
   "$PY" "$HARNESS/tools/machine_scope.py" --config design/machine-scope.json --check
 

@@ -164,6 +164,10 @@ def is_open(fi, due_within):
     return (d - date.today()).days <= due_within
 
 
+#: 仕組みの課題の行き先。`--new` の既定（#31）
+HARNESS_REPO = "ProjectsKokiN/design-harness"
+
+
 def target_repo(fi, default=None):
     """`blockedBy` から Issue を立てるリポジトリを決める。
 
@@ -236,7 +240,9 @@ def title_of(fi):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="直せていない課題を Issue に写す")
     ap.add_argument("--root", type=Path, default=Path("."))
-    ap.add_argument("--repo", help="owner/name（省くと origin）")
+    ap.add_argument("--repo",
+                    help=f"owner/name（省くと origin。ただし --new は "
+                         f"{HARNESS_REPO}）")
     ap.add_argument("--apply", action="store_true", help="実際に書く（既定は下見）")
     ap.add_argument("--due-within", type=int, default=30, metavar="N",
                     help="期限が N 日以内か過ぎたものを課題とする（既定30）。"
@@ -317,11 +323,20 @@ def main(argv=None):
             return 2
         body = (f"## なぜ\n\n{args.why}\n\n## 閉じ方\n\n{args.closes_when}\n\n"
                 f"*(宣言する場所が無い課題として `issue_sync.py --new` で作成)*\n")
+        # **仕組みの課題は、仕組みのリポジトリへ立てる**（2026-09-04・#31）。
+        # 既定が origin（案件のリポジトリ）だったため、`--repo` を付け忘れて
+        # 仕組みの課題が案件側に立った（実際に1件立ててから閉じた）。
+        # `--new` は「宣言する場所が無い＝仕組みの側の話」なので、
+        # **既定を design-harness にする。** 案件へ立てたいときは --repo で明示する。
+        repo = args.repo or HARNESS_REPO
         if not args.apply:
-            print(f"[下見] 作る: {args.title}\n{body}")
+            print(f"[下見] 作る（{repo}）: {args.title}\n{body}")
             return 0
+        if not args.repo:
+            print(f"（--repo がありません。**仕組みのリポジトリ {repo} に立てます。**"
+                  f"案件へ立てるなら --repo で指してください）")
         print(gh(["issue", "create", "--title", args.title, "--body", body],
-                 args.repo).strip())
+                 repo).strip())
         return 0
 
     root = args.root.resolve()
@@ -571,6 +586,19 @@ def self_test():
         check(target_repo({"blockedBy": "o/r"}, "d/f") == "o/r",
               "blockedBy を使っていない")
         check(target_repo({}, "d/f") == "d/f", "既定に落ちていない")
+
+        # **--new の既定は仕組みのリポジトリ**（#31。案件側に立てた事故がある）
+        import io as _io, contextlib as _ctx
+        b = _io.StringIO()
+        with _ctx.redirect_stdout(b):
+            main(["--new", "--title", "t", "--why", "w", "--closes-when", "c"])
+        check(HARNESS_REPO in b.getvalue(),
+              f"--new の既定が仕組みのリポジトリでない: {b.getvalue()[:120]}")
+        b = _io.StringIO()
+        with _ctx.redirect_stdout(b):
+            main(["--new", "--title", "t", "--why", "w", "--closes-when", "c",
+                  "--repo", "o/proj"])
+        check("o/proj" in b.getvalue(), "--repo の指定が効いていない")
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
