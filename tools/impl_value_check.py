@@ -20,6 +20,7 @@
 | `screen_export_check` | 宣言した記録層のファイル | 実装の定数なので**外** |
 | `expectation_source_check` | 照合テストが書き出しを読むか | 期待値ではないので**外** |
 | `hollow_check` | 検査の書き方 | 実装なので**外** |
+| 案件の `component_spec_test` | 3つの正規表現 | **`size:` を見ておらず、名前付き定数で回避できた**（#23） |
 | 禁止パターン | 生値の直書き | トークンに無い画面固有の値は禁止できない |
 
 **分母がどれも「Figma 側」か「検査側」で、実装側から見たものがありません。**
@@ -59,6 +60,32 @@ NUM_RX = re.compile(r"(?<![\w.])(\d{2,}(?:\.\d+)?)(?![\w.])")
 TOKEN_RX = re.compile(r"\bApp[A-Z]\w*\.([a-zA-Z_]\w*)")
 #: 行のコメント（この道具は「書いてある値」ではなく「使う値」を見る）
 COMMENT_RX = re.compile(r"//.*")
+
+#: 見た目に効く名前付き引数・代入。ここに数を直接書くと Figma と切れる
+STYLE_KEYS = (
+    "size", "width", "height", "radius", "elevation", "blurRadius",
+    "spreadRadius", "strokeWidth", "fontSize", "letterSpacing", "lineHeight",
+    "left", "top", "right", "bottom", "horizontal", "vertical", "gap",
+    "minWidth", "maxWidth", "minHeight", "maxHeight", "thickness",
+)
+#: `size: 32` / `width: 48.0` の形
+STYLE_ARG_RX = re.compile(
+    r"\b(" + "|".join(STYLE_KEYS) + r")\s*:\s*(\d+(?:\.\d+)?)\b")
+#: `static const double _iconSize = 32;` の形（**名前に入れて逃げるのを止める**）
+STYLE_CONST_RX = re.compile(
+    r"\b(?:static\s+)?(?:const|final)\s+(?:double|int|num)?\s*"
+    r"([A-Za-z_]\w*(?:" + "|".join(k.capitalize() for k in STYLE_KEYS) + r"|"
+    + "|".join(STYLE_KEYS) + r")\w*)\s*=\s*(\d+(?:\.\d+)?)\b")
+
+
+def code_files(root, suffixes=(".dart",)):
+    """その置き場のソースを返す。**生成物（`.g.dart`）は除く。**"""
+    if not root or not root.exists():
+        return []
+    return [f for f in sorted(root.rglob("*"))
+            if f.is_file() and f.suffix in suffixes
+            and not f.name.endswith(".g.dart")
+            and ".dart_tool" not in f.parts and "build" not in f.parts]
 
 
 def norm(n):
@@ -103,10 +130,48 @@ def scan(impl_dirs, blob, suffixes):
     return found, files
 
 
+def check_components(files):
+    """部品の実装が、Figma 由来の数値を自分で持っていないか（2026-09-04・#23）。
+
+    案件側の検査（`component_spec_test.dart`）は3つの正規表現しか見ておらず、
+    **`size:` を見ていないうえ、名前付き定数に入れると `height:` / `width:` も
+    回避できました。**
+
+        static const double _iconSize = 32;   // ← どのパターンにも当たらない
+        AppIcon(prependIcon!, size: _iconSize, …)
+
+    **インラインに書いたときだけ落ちる検査**でした。定数に切り出すと静かに通ります。
+    避ける動機は誰にも無いので意図的ではありませんが、**読みやすくしただけで
+    見張りが外れる**のは検査の穴です。
+
+    ここは**名前付き引数と、名前に見た目の語が入る定数**の両方を見ます。
+    """
+    out = []
+    for f in files:
+        text = f.read_text(encoding="utf-8", errors="ignore")
+        lines = COMMENT_RX.sub("", text).splitlines()
+        for i, line in enumerate(lines, 1):
+            for m in STYLE_ARG_RX.finditer(line):
+                key, val = m.group(1), m.group(2)
+                if float(val) in (0.0, 1.0):
+                    continue          # 0 と 1 は寸法ではないことが多い
+                out.append((f, i, f"`{key}: {val}`",
+                            "名前付き引数に数を直接書いています"))
+            for m in STYLE_CONST_RX.finditer(line):
+                name, val = m.group(1), m.group(2)
+                if float(val) in (0.0, 1.0):
+                    continue
+                out.append((f, i, f"`{name} = {val}`",
+                            "**名前付き定数に入れても同じことです**"))
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="実装の中だけの数値を見つける")
     ap.add_argument("--config", type=Path, default=Path("design/impl-values.json"))
     ap.add_argument("--root", type=Path, default=Path("."))
+    ap.add_argument("--components", nargs="*", default=None,
+                    help="部品の実装（Figma 由来の数値を自分で持たせない）")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
@@ -145,6 +210,13 @@ def main(argv=None):
             print(f"宣言が読めません: {base / dpath}: {e}", file=sys.stderr)
             return 2
 
+    comp_dirs = [base / p for p in (args.components
+                                    if args.components is not None
+                                    else conf.get("components", []))]
+    comp_files = [f for d in comp_dirs for f in code_files(d, suffixes)] \
+        if comp_dirs else []
+    comp_hits = check_components(comp_files)
+
     found, files = scan(impl, blob, suffixes)
     if files == 0:
         print(f"実装が1つもありません: {', '.join(str(p) for p in impl)}\n"
@@ -166,8 +238,21 @@ def main(argv=None):
         for x in toks:
             errs.append(f"  {rel}: トークン `{x}` が生成物にありません。")
 
+    for f, ln, what, why in comp_hits:
+        rel = str(f.relative_to(base))
+        d = declared.get(rel, {})
+        val = re.search(r"(\d+(?:\.\d+)?)", what)
+        why_ok = d.get(val.group(1)) if val else None
+        if isinstance(why_ok, str) and why_ok.strip():
+            waived += 1
+            continue
+        errs.append(f"  {rel}:{ln} 部品が {what} を持っています。{why}\n"
+                    f"    **変異表から読んでください。**"
+                    f"手で写した数は Figma と切れます。")
+
     if errs:
-        print(f"実装の中だけの数値があります（実装 {files} ファイル）:",
+        print(f"実装の中だけの数値があります（実装 {files} ファイル"
+              + (f" / 部品 {len(comp_files)} ファイル" if comp_files else "") + "）:",
               file=sys.stderr)
         print("\n".join(errs[:30]), file=sys.stderr)
         if len(errs) > 30:
@@ -262,6 +347,44 @@ def self_test():
         if rc != 0:
             print("self-test NG: 生成物の中の数値を咎めた"); ok = False
         (root / "lib" / "ui" / "x.g.dart").unlink()
+
+        # ─── #23: 部品が Figma 由来の数値を持っていないか ────────────
+        comp = root / "lib" / "widgets"
+        comp.mkdir(exist_ok=True)
+        cf = comp / "buttons.dart"
+
+        def runc(src):
+            cf.write_text(src, encoding="utf-8")
+            scr.write_text(CLEAN, encoding="utf-8")
+            dp.unlink(missing_ok=True)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                rc = main(argv + ["--components", "lib/widgets"])
+            return rc, buf.getvalue()
+
+        rc, out = runc("Widget b() => AppIcon(x, size: AppIconSize.m);\n")
+        if rc != 0:
+            print(f"self-test NG: トークンで書いた部品で落ちた（{rc}）\n   {out[:300]}")
+            ok = False
+        # **名前付き引数に数を直接書く**（`size:` は案件の検査が見ていなかった形）
+        rc, out = runc("Widget b() => AppIcon(x, size: 32);\n")
+        if rc != 1 or "size: 32" not in out:
+            print(f"self-test NG: size: の数値を見逃した（{rc}）"); ok = False
+        # **名前付き定数に入れても同じ**（案件の検査はここで回避されていた）
+        rc, out = runc("static const double _iconSize = 32;\n"
+                       "Widget b() => AppIcon(x, size: _iconSize);\n")
+        if rc != 1 or "名前付き定数に入れても同じ" not in out:
+            print(f"self-test NG: 名前付き定数で逃げられた（{rc}）\n   {out[:300]}")
+            ok = False
+        # 0 と 1 は咎めない（寸法ではないことが多い）
+        rc, out = runc("Widget b() => Opacity(opacity: 1, child: SizedBox(width: 0));\n")
+        if rc != 0:
+            print(f"self-test NG: 0 と 1 を咎めた（{rc}）"); ok = False
+        # コメントの中は見ない
+        rc, out = runc("// size: 32 は Figma の値\nWidget b() => X();\n")
+        if rc != 0:
+            print(f"self-test NG: コメントの中を咎めた（{rc}）"); ok = False
+        cf.unlink()
 
         # **出どころが読めなければ落ちる**（この道具自身の空振り）
         (root / "design" / "figma" / "frames.json").unlink()

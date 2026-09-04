@@ -1,0 +1,32 @@
+{
+  "$meta": {
+    "これは何": "複数のファイル・複数の担当マシンに散る1つの値の、唯一の正と場所の一覧。",
+    "なぜ要るか": "表示名のような値は5ファイル6か所に散り、担当が3台に分かれる。**散文の依頼だけだと必ず取りこぼす。** flash-compose では `Flash Compose` / `flash_compose` / `flash-compose` の3通りが2日以上混在していた（design-harness issue #45）。",
+    "検査": "python3 design/harness/tools/platform_values_check.py --config design/platform-values.json",
+    "updatedAt": "{{YYYY-MM-DD}}"
+  },
+  "values": {
+    "displayName": {
+      "正": "{{アプリの表示名}}",
+      "なぜ": "{{いつ・誰が決めたか。ユーザーの原文をそのまま}}",
+      "場所": [
+        {"file": "ios/Runner/Info.plist", "key": "CFBundleDisplayName", "owner": "{{機体}}"},
+        {"file": "ios/Runner/Info.plist", "key": "CFBundleName", "owner": "{{機体}}"},
+        {"file": "android/app/src/main/AndroidManifest.xml", "key": "android:label", "owner": "{{機体}}"},
+        {"file": "web/index.html", "key": "title", "owner": "{{機体}}"},
+        {"file": "web/manifest.json", "key": "name", "owner": "{{機体}}"},
+        {"file": "web/manifest.json", "key": "short_name", "owner": "{{機体}}"}
+      ],
+      "未対応": [
+        {"file": "{{まだ直せていない場所}}", "key": "{{キー}}", "owner": "{{機体}}",
+         "why": "{{なぜまだ直せていないか。理由が無いと落ちる}}"}
+      ]
+    }
+  },
+  "変えないもの": [
+    {"file": "pubspec.yaml", "値": "{{パッケージ名}}",
+     "why": "Dart のパッケージ名。変えると全 import が壊れる"},
+    {"file": "android/app/build.gradle", "値": "{{バンドルID}}",
+     "why": "ストアの同一性が切れる"}
+  ]
+}

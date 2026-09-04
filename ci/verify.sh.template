@@ -109,6 +109,15 @@ step "鮮度（条件4: Figma 本体 → 書き出し。design/ の担当機の�
 step "共有されているか（衝突・レジストリ・受信箱）" \
   "$PY" "$HARNESS/tools/shared_check.py" --conflict \
     --shared design/machine-scope.json --registry "$HOME/dev/design-systems"
+# **複数ファイル・複数担当に散る1つの値**（表示名など）。
+# flash-compose では3通りが2日以上混在し、誰も気づかなかった
+# **決定の取り消し**。追記式の記録は、前の決定が生きているように読める
+# （aub 2026-09-03: 1日で2回ひっくり返り、実装コメントが取り消し済みの文言を
+#  引用したまま残った。次に読む AI は矛盾した2つの正を見る）
+step "決定の取り消し（取り消し済みを実装が引用していないか）" \
+  "$PY" "$HARNESS/tools/decisions_check.py" --decisions DECISIONS.md --impl lib
+step "散らばった値（表示名など）" \
+  "$PY" "$HARNESS/tools/platform_values_check.py" --config design/platform-values.json
 step "機体の担当（担当外のパスを変えていないか）" \
   "$PY" "$HARNESS/tools/machine_scope.py" --config design/machine-scope.json --check
 
@@ -135,6 +144,11 @@ step "読めていないプロパティの宣言" \
 # （aub: 82.4 で 440 の機体が 50px ずれ / 254 で余白が 20→45 / 138.0 は「Figma の実測」）
 # **書き出しの中だけで見つかる矛盾**を、実装の前に出す
 # （aub: 子が親の中身より広い3件が、全部実機とユーザーの指摘で戻った）
+# **画面をまたぐ矛盾**（1画面ずつの検査では原理的に拾えない層）。
+# aub 2026-08-30: 4つの行き先が定義だけあって、どこからも呼ばれていなかった。
+# 「スプラッシュ → PROGRESS で行き止まり」を実機の通し確認まで誰も気づかなかった
+step "行き先の到達（どこからも行けない画面が無いか）" \
+  "$PY" "$HARNESS/tools/route_check.py" --lib lib
 step "書き出しの検算（子が親からはみ出していないか）" \
   "$PY" "$HARNESS/tools/export_sanity_check.py" --frames design/figma/frames.json
 step "実装の中だけの数値" \
