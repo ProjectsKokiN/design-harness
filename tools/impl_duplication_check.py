@@ -70,7 +70,11 @@ DEFAULT_RUN = 4
 def token_runs(text, size):
     """トークンの並びを、長さ `size` の窓で取り出す。"""
     toks = TOKEN_RX.findall(text)
-    return {tuple(toks[i:i + size]) for i in range(max(0, len(toks) - size + 1))}
+    # **特徴の無い並びは数えない。** `AppSpacing.m` が4つ並ぶ窓は、余白を持つ画面なら
+    # どこにでも出る（FlashEnglish 2026-09-05: 4件の誤検出が全部これ）。
+    # 窓の中に**3種類以上**のトークンがあるものだけを「同じ絵」の印に使う
+    return {tuple(toks[i:i + size]) for i in range(max(0, len(toks) - size + 1))
+            if len(set(toks[i:i + size])) >= 3}
 
 
 def impl_files(map_path, base):
@@ -290,6 +294,12 @@ def self_test():
         rc, out = run("class Top {}\n")
         if rc != 2 or "見ていない" not in out:
             print(f"self-test NG: 部品0件で通した（{rc}）"); ok = False
+    # 特徴の無い並び（同じトークンの連続）は印にしない
+    if token_runs("AppSpacing.m AppSpacing.m AppSpacing.m AppSpacing.m AppSpacing.m", 4):
+        print("self-test NG: 同じトークンの連続を印にした"); ok = False
+    if not token_runs("AppSpacing.m AppText.body AppRadius.s AppSpacing.l", 4):
+        print("self-test NG: 3種類以上の並びを印にしていない"); ok = False
+
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
 
