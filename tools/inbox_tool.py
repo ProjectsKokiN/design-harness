@@ -325,6 +325,20 @@ def self_test():
         check("## セッションログの書き方" in t and INDEX_HEAD in t, "**必須の節を消した**（受信箱が削られる形）")
         rc, _ = run("--complete", "存在しない")
         check(rc == 2, f"当たらない指定で 2 で止まらなかった（{rc}）")
+        # git の無い場所では対象の commit が取れない → 2（--no-target なら書ける）
+        with tempfile.TemporaryDirectory() as td2:
+            ib = Path(td2) / "MACHINE_TASKS.md"
+            ib.write_text(f"# 受信箱\n\n{INDEX_HEAD}\n\n", encoding="utf-8")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                rc = main(["--file", str(ib), "--root", td2, "--add", "--to", "Windows",
+                           "--title", "x", "--body", str(body2)])
+            check(rc == 2, f"git の無い場所で対象を取れないのに 2 で止まらなかった（{rc}）")
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                rc = main(["--file", str(ib), "--root", td2, "--add", "--to", "Windows",
+                           "--title", "x", "--body", str(body2), "--no-target"])
+            check(rc == 0, f"--no-target なら git 無しでも足せるはず（{rc}）")
+
         # 索引の節が無い受信箱には足せない（削られた形）
         inbox.write_text(t.replace(INDEX_HEAD, "## 索引ではない"), encoding="utf-8")
         rc, _ = run("--add", "--to", "Windows", "--title", "x", "--body", str(body2), "--no-target")

@@ -256,6 +256,28 @@ def self_test():
     if run(ELSE):
         print("self-test NG: else 側の帰り道を咎めた"); ok = False
 
+    # main の帰り道まで見る（捨てる形のファイルがあれば 1、無ければ 0、無ければ 2）
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td) / "gen"
+        d.mkdir()
+        (d / "bad.py").write_text(BAD, encoding="utf-8")
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = main(["--root", str(d)])
+        if rc != 1 or "bad.py:8" not in buf.getvalue():
+            print(f"self-test NG: 捨てる形のファイルがあるのに 1 で落ちなかった（{rc}）"); ok = False
+        (d / "bad.py").write_text(GOOD, encoding="utf-8")
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = main(["--root", str(d)])
+        if rc != 0:
+            print(f"self-test NG: 正しい形だけなのに落ちた（{rc}）"); ok = False
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = main(["--root", str(Path(td) / "nope")])
+        if rc != 2:
+            print(f"self-test NG: 場所が無いのに 2 で止まらなかった（{rc}）"); ok = False
+
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
 
