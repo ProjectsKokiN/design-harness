@@ -190,6 +190,11 @@ step "指紋の一致（JS と Python で同じ値になるか）" \
 # 例外を捨てる / 期待値の自己参照 / 緩い finder / 誰も見ていない文字
 step "空振りの検査（何も見ていない書き方）" \
   "$PY" "$HARNESS/tools/hollow_check.py" --config design/hollow.json
+# 守る状況（許可拒否・圏外・文字倍率…）を**機能から導き**、実機で確かめた記録が古くなって
+# いないかを見る（#75）。毎回のビルドでは何も求めない。**関わる実装が変わったときだけ**落ちる。
+# 確かめたら: python3 $HARNESS/tools/situations_check.py --lib lib --out design/situations.json --confirm <状況>
+step "守る状況（実機で確かめた記録が古くないか）" \
+  "$PY" "$HARNESS/tools/situations_check.py" --lib lib --out design/situations.json --check
 step "段の健全性（落ちるところを見た道具か）" \
   "$PY" "$HARNESS/tools/stage_check.py" --verify design/verify.sh
 # **段の数**を見る。元ファイルにある段がこの案件から落ちていないか。
