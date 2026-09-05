@@ -59,6 +59,9 @@ def collect(lib: Path):
     出てくるか」。出てこなければ、どこからも指されていない。
     """
     defined, elsewhere = {}, set()
+    _ALL_SRC[str(lib)] = "\n".join(
+        f.read_text(encoding='utf-8', errors='ignore') for f in lib.rglob('*.dart')
+        if 'catalog' not in f.parts)
     for f in sorted(lib.rglob('*.dart')):
         if 'catalog' in f.parts:
             continue
@@ -76,7 +79,43 @@ def collect(lib: Path):
         nokori = re.sub(teigi, '', src)
         for m in re.finditer(r"'(/[A-Za-z0-9_/-]*)(?:\?[^']*)?'", nokori):
             elsewhere.add(m.group(1))
+        # **シェルの枝は番号で遷移する**（`shell.goBranch(1)`）。行き先の文字列が
+        # 定義以外の場所に出てこないので、そのままだと「どこからも行けない」と
+        # 誤診する（FlashEnglish 2026-09-05: `/mypage` を誤診）。
+        # `StatefulShellRoute(` の中で定義された行き先は、lib のどこかで
+        # `goBranch(` が呼ばれていれば届いているとみなす
+        if 'goBranch(' in _ALL_SRC.get(str(lib), ''):
+            for block in _shell_blocks(src):
+                for m in re.finditer(teigi, block):
+                    elsewhere.add(m.group(1) or m.group(2))
     return defined, elsewhere
+
+
+_ALL_SRC = {}
+
+
+def _shell_blocks(src):
+    """`StatefulShellRoute(` から対応する `)` までの塊を返す（括弧を数える）。"""
+    out, i = [], 0
+    while True:
+        i = src.find('StatefulShellRoute', i)
+        if i < 0:
+            return out
+        j = src.find('(', i)
+        if j < 0:
+            return out
+        depth, k = 0, j
+        while k < len(src):
+            c = src[k]
+            if c == '(':
+                depth += 1
+            elif c == ')':
+                depth -= 1
+                if depth == 0:
+                    break
+            k += 1
+        out.append(src[j:k + 1])
+        i = k + 1
 
 
 def check(lib: Path, allow=None) -> int:
@@ -193,6 +232,31 @@ def self_test() -> int:
             rc = main(['--lib', str(Path(td) / 'ない')])
         if rc != 2 or '見ていない' not in b.getvalue():
             print(f'self-test NG: 実装が無いのに通した（{rc}）'); ok = False
+
+    # シェルの枝（番号で遷移）を誤診しないこと（FlashEnglish 2026-09-05）
+    import tempfile as _tf, io as _io, contextlib as _ctx
+    with _tf.TemporaryDirectory() as td2:
+        lib2 = Path(td2) / "lib"; lib2.mkdir()
+        (lib2 / "router.dart").write_text(
+            "final r = GoRouter(routes: [\n"
+            "  GoRoute(path: '/', builder: (c, s) => Start()),\n"
+            "  StatefulShellRoute(branches: [\n"
+            "    StatefulShellBranch(routes: [GoRoute(path: '/study')]),\n"
+            "    StatefulShellBranch(routes: [GoRoute(path: '/mypage')]),\n"
+            "  ]),\n]);\n", encoding="utf-8")
+        (lib2 / "nav.dart").write_text(
+            "void go(StatefulNavigationShell s, int i) => s.goBranch(i);\n"
+            "void start(BuildContext c) => c.go('/study');\n", encoding="utf-8")
+        with _ctx.redirect_stdout(_io.StringIO()), _ctx.redirect_stderr(_io.StringIO()):
+            rc = check(lib2)
+        if rc != 0:
+            print("self-test NG: シェルの枝（goBranch）を「行けない」と誤診した"); ok = False
+        (lib2 / "nav.dart").write_text("void start(BuildContext c) => c.go('/study');\n",
+                                       encoding="utf-8")
+        with _ctx.redirect_stdout(_io.StringIO()), _ctx.redirect_stderr(_io.StringIO()):
+            rc = check(lib2)
+        if rc != 1:
+            print("self-test NG: goBranch が無いのにシェルの枝を届いたことにした"); ok = False
 
     print('self-test: ' + ('OK' if ok else 'NG'))
     return 0 if ok else 1
