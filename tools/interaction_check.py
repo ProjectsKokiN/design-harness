@@ -120,7 +120,11 @@ def tests_without_hold(test_dir, targets):
         if not f.is_file() or f.suffix != ".dart":
             continue
         text = f.read_text(encoding="utf-8", errors="ignore")
-        hits = [t for t in targets if t in text]
+        # **コメントの中の名前は「触っている」に数えない。** aub の実測（2026-09-05）:
+        # catalog_test.dart は `Images` をコメントで1回書いているだけなのに
+        # 「Images を tap だけで触っている」と出た。分母に入れるのはコードの行だけ
+        code = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("//"))
+        hits = [t for t in targets if t in code]
         if not hits:
             continue
         if TAP_RX.search(text) and not HOLD_RX.search(text):
@@ -290,6 +294,20 @@ def self_test():
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             if main(["--config", str(cp), "--root", str(root)]) != 2:
                 print("self-test NG: 設定が無いのに通した"); ok = False
+    # コメントの中だけに部品名がある試験は、その部品を「触っている」に数えない
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as td2:
+        d = Path(td2); (d / "t").mkdir()
+        (d / "t" / "c_test.dart").write_text(
+            "// Images が 8 を 16 にしていた\n"
+            "await tester.tap(find.text('トークン'));\n", encoding="utf-8")
+        if tests_without_hold(d / "t", ["Images"]):
+            print("self-test NG: コメントだけの言及を『触っている』と数えた"); ok = False
+        (d / "t" / "c_test.dart").write_text(
+            "await tester.tap(find.byType(Images));\n", encoding="utf-8")
+        if not tests_without_hold(d / "t", ["Images"]):
+            print("self-test NG: コードで tap しているのを見逃した"); ok = False
+
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
 
