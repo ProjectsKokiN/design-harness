@@ -59,7 +59,7 @@ return JSON.stringify({ $meta: { declared: c.declared, pages: c.pages }, result 
 
 ## 実害の記録
 
-- **2026-09-02**: flash-compose / 414 の器が `COMPONENT_SET` しか集めておらず、
+- **2026-09-02**: FlashEnglish / 414 の器が `COMPONENT_SET` しか集めておらず、
   単体4件（Header / Footer / BottomNavigation / EmptyStates）が書き出しに
   入っていなかった。条件7 の分母が4件小さいまま、どの検査からも見えなかった
 - **2026-09-02**: 414 の Figma で `Lists/Subtle` が `Lists` に改名され、同名が

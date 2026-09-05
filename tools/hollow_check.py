@@ -47,7 +47,7 @@
 > 応じて縦幅横幅を変更するようにしてほしいです。（2026-09-02 ユーザー）
 
 守るべき幅は案件が宣言する（`design/devices.json`）。**形は案件によって違う**
-（aub は `min` / `max`、flash-compose は `widths`）ので、**数だけを拾う**。
+（aub は `min` / `max`、FlashEnglish は `widths`）ので、**数だけを拾う**。
 
 形2（空の状態しか描かない）は静的には見つからない。`--sabotage` の記録で見る。
 
@@ -339,7 +339,7 @@ def declared_widths(path):
     """案件が宣言した画面幅を集める。**形は案件によって違うので数だけ拾う。**
 
     aub:            {"min": [{"size": [360, 640]}], "max": [...]}
-    flash-compose:  {"widths": [{"dp": 320}, ...], "height": {"dp": 844}}
+    FlashEnglish:  {"widths": [{"dp": 320}, ...], "height": {"dp": 844}}
 
     どちらの形も「幅らしい数」を拾えばよい。**共通の形を決めない**
     （決めると片方が書き換えになり、決定の記録が散る）。
@@ -398,7 +398,7 @@ PAINTER_RX = re.compile(r"TextPainter\s*\(")
 def check_text_measure(files, base):
     """形7: 文字幅を素のスタイルで測っていないか（2026-09-04・#54）。
 
-    flash-compose の実害: **同じ 2px の誤りを2箇所で独立にやりました。**
+    FlashEnglish の実害: **同じ 2px の誤りを2箇所で独立にやりました。**
 
     | 場所 | 素の style で測ると | 実際の描画 |
     |---|---|---|
@@ -726,7 +726,7 @@ def self_test():
         if rc != 0:
             print(f"self-test NG: 2つの幅を使っているのに落ちた（{rc}）\n   {out[:300]}")
             ok = False
-        # flash-compose の形（widths に dp）
+        # FlashEnglish の形（widths に dp）
         dev.write_text(json.dumps({"widths": [{"dp": 320}, {"dp": 390}, {"dp": 430}],
                                    "height": {"dp": 844}}), encoding="utf-8")
         if declared_widths(dev) != [320, 390, 430, 844]:

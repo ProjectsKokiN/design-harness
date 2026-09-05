@@ -5,7 +5,7 @@
 //
 // ## なぜ要るか
 //
-// flash-compose / 414 の書き出し器は `COMPONENT_SET` しか集めていなかった。
+// FlashEnglish / 414 の書き出し器は `COMPONENT_SET` しか集めていなかった。
 //
 //     page.findAllWithCriteria({ types: ['COMPONENT_SET'] })
 //
@@ -63,7 +63,7 @@ function num(n, key) {
 /**
  * 重なり順の指定（`itemReverseZIndex`）。**意味に翻訳せず生の真偽値を返す。**
  *
- * 実害（flash-compose・2026-09-03・#10）: これが書き出しに無かったため、
+ * 実害（FlashEnglish・2026-09-03・#10）: これが書き出しに無かったため、
  * AI が `children` の並びだけで重なり順を判断し、**「Figma が壊れている」と
  * 誤報**した（実際は正しかった）。`children` は**並び順であって描画順ではない**。
  *

@@ -70,7 +70,7 @@ def figma_names(export_paths):
     component set と単体 component だけでなく、**枠（frames.json の surfaces）も
     数える**。Header / Footer / ナビの枠は component set を持たないが実装は要る。
     片方の書き出ししか見ないと、実装済みのものを「幽霊」と誤検出する
-    （2026-08-29 実測: flash-compose で Header / Footer / BottomNavigation の3件）。
+    （2026-08-29 実測: FlashEnglish で Header / Footer / BottomNavigation の3件）。
     """
     names, excluded = set(), set()
     for export_path in export_paths:
@@ -91,7 +91,7 @@ def figma_names(export_paths):
 def declared_problems(export_paths):
     """書き出しが**単体 component を数えたか**を見る（2026-09-02 新設）。
 
-    実害: flash-compose / 414 の器が `COMPONENT_SET` しか集めておらず、
+    実害: FlashEnglish / 414 の器が `COMPONENT_SET` しか集めておらず、
     単体4件（Header / Footer / BottomNavigation / EmptyStates）が書き出しに
     1件も入っていなかった。**条件7 の分母が4件小さいまま**、どの検査からも
     見えなかった（`$meta.declared` が同じ間違った分母を持つので、段0の

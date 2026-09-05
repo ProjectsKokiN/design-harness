@@ -331,7 +331,7 @@ def main():
         except RecursionError:
             FAILED.append(("extends の循環", ["無限再帰で落ちた"], ""))
 
-    # --- ルール数のラチェット（2026-08-29。flash-compose で 12→7 の実害）------
+    # --- ルール数のラチェット（2026-08-29。FlashEnglish で 12→7 の実害）------
     # extends を1段しか読まない古いピンで奥の層が届かず、ルールが静かに減っても
     # 「違反なし」で exit 0 だった。expected_targets はファイル数しか見ない。
     with tempfile.TemporaryDirectory() as td:
@@ -386,7 +386,7 @@ def main():
 
     # --- exclude_files の照合（2026-08-29。テンプレの ".g.dart" が無効だった）---
     # 完全一致だけだったため、全案件に配っていた ".g.dart" / ".freezed.dart" が
-    # **1件も効いていなかった**。flash-compose と aub では exclude_paths の
+    # **1件も効いていなかった**。FlashEnglish と aub では exclude_paths の
     # lib/theme/ が生成物を覆っていて表に出ず、誤解されたまま配られていた。
     with tempfile.TemporaryDirectory() as td:
         d = Path(td) / "proj"

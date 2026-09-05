@@ -3,10 +3,10 @@
 // 2026-09-04 に aub-familywalk から回収した（#14）。
 // `production-gate.md` は「画面固有の値の照合先は figma/frames.json（画面の
 // ノード木の機械書き出し）。これが無い案件は記録層を消せない」と書いていたのに、
-// **その書き出し器が共有層に無かった。** aub には在り、414 と flash-compose には
+// **その書き出し器が共有層に無かった。** aub には在り、414 と FlashEnglish には
 // 無い（414 の frames.json は `surfaces`＝部品にならない枠で、画面ではない）。
 //
-// 結果、flash-compose の手書きの記録層は 63 件 assert したまま残り、
+// 結果、FlashEnglish の手書きの記録層は 63 件 assert したまま残り、
 // **そのうち置き換えられるのは 9 件だけ**だった。残り 54 件はほぼ全部が
 // 画面固有の値（body.margin / Illusts.* / QuizScreen.* / MyPage.*）で、
 // **照合先が存在しなかった。** 「記録層を廃止する」という 2026-08-29 の決定は、
@@ -14,7 +14,7 @@
 //
 // 案件ごとに書き換えるのは末尾の4つ（PAGE / SECTIONS / ONLY_IDS / 画面の見分け方）。
 // 前提条件が満たせているかは `tools/screen_export_check.py` が測る。
-// **「在る」と「足りている」は違う**（flash-compose は 3 件の frames.json を
+// **「在る」と「足りている」は違う**（FlashEnglish は 3 件の frames.json を
 // 持っていたので、前提条件を満たしているように見えていた）。
 //
 // 出すもの: design/screens.json に並べた画面の全部。

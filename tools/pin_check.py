@@ -13,9 +13,9 @@
     python3 design/harness/tools/pin_check.py 2>/dev/null || true
 
 **出力を捨てて、必ず成功します。** さらに実測で、この行を持っていたのは
-3案件のうち aub だけだった（flash-compose と planttalk は0箇所）。
+3案件のうち aub だけだった（FlashEnglish と planttalk は0箇所）。
 
-結果、flash-compose のピンは **ブランチの途中のコミット**で止まり、main から
+結果、FlashEnglish のピンは **ブランチの途中のコミット**で止まり、main から
 **16コミット遅れ**ていた。**すでに直してある欠陥を、もう一度踏んだ。**
 
 同じ日の実測では、4案件のピンが **9〜25コミット遅れ**ていた。
@@ -57,7 +57,7 @@ import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf
 DEFAULT_MAX_BEHIND = 10
 
 #: 段が呼んでいる道具の名前。**`tools/` が付かない形もある**
-#: （flash-compose の CI は `$H/impl_coverage_check.py` と書く）。
+#: （FlashEnglish の CI は `$H/impl_coverage_check.py` と書く）。
 #: 名前だけ拾って、submodule に実在する道具と突き合わせる
 FILE_RX = re.compile(r"([a-z_][a-z0-9_]*\.py)")
 #: 遅れの中で変わったファイル（こちらはパスで来るので tools/ が付く）

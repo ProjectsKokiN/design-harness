@@ -24,7 +24,7 @@
     DropShadow/Neutral/Default           → dropShadowNeutralDefault
 
 **言い換えを作らない。** 短い別名を付けると、カタログで Figma と突き合わせる
-たびに読み替えが要る。flash-compose では 17 件・235 箇所を機械置換して
+たびに読み替えが要る。FlashEnglish では 17 件・235 箇所を機械置換して
 規則へ寄せ直した（2026-08-21）。
 """
 

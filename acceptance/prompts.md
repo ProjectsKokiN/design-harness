@@ -96,7 +96,7 @@ design-harness の受け入れテストをお願いします。あなたは Wind
    `$meta.syncedAt` を古い日付（例 `2026-01-01`）に書き換えて走らせ、
    **exit 1** で「遅れ」が出ることを見てください。確認したら書き戻します。
 
-9. 手元に flash-compose / aub-familywalk / planttalk のクローンがあれば、
+9. 手元に FlashEnglish / aub-familywalk / planttalk のクローンがあれば、
    そこでも `python design/design_check.py --all` を走らせてください
    （3案件とも submodule 導入済みです）。無ければ飛ばして構いません。
 

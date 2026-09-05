@@ -1,7 +1,7 @@
 """生成器の入出力の基盤。**共有の正本**（2026-09-02 に aub-familywalk から回収）。
 
 それまで案件ごとの複製で、**中身が3倍違っていました**
-（aub 9関数・11.8KB / flash-compose 3関数・3.9KB）。
+（aub 9関数・11.8KB / FlashEnglish 3関数・3.9KB）。
 `duplication_check.py` が候補として挙げたものです。
 
 ## ここに置くもの
@@ -49,7 +49,7 @@ def load(name: str) -> dict:
     **合わなければ生成に進まず落ちる。** 部分読みが黙って通らないようにする。
     """
     path = _figma() / name
-    # **無ければ手順を出して止める**（2026-09-02 に flash-compose 版から合流）。
+    # **無ければ手順を出して止める**（2026-09-02 に FlashEnglish 版から合流）。
     # aub 版は FileNotFoundError をそのまま投げており、読む側に
     # 「何をすればよいか」が届かなかった
     if not path.exists():
@@ -166,7 +166,7 @@ def absent(key: str):
     2026-09-04 新設（#21）。**「Figma に無い」と「書き出し器が拾っていない」を
     区別できる入口。**
 
-    flash-compose の実測: AI が Figma を読み違えた7件のうち **3件が同じ根**で、
+    FlashEnglish の実測: AI が Figma を読み違えた7件のうち **3件が同じ根**で、
     「書き出しに入っていない情報を、入っていないと知らずに推測で埋めた」だった。
     `itemReverseZIndex` が無いのに `children` の並びだけで重なり順を判断して
     **「Figma が壊れている」と誤報**した（実際は Figma が正しかった）。

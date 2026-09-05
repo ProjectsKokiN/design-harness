@@ -6,7 +6,7 @@
 誰も見ていなかった。日本語 Windows のコンソール既定は cp932 で、絵文字を
 `print` した時点で `UnicodeEncodeError` になる。
 
-実害（flash-compose・2026-09-04）:
+実害（FlashEnglish・2026-09-04）:
 
     File "tools/page_scope_check.py", line 95, in main
       print(f"フェーズ: {phase} / 参照してよいページ: {', '.join(allowed)}")

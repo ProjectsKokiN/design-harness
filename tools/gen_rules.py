@@ -53,7 +53,7 @@ BUILDERS = {}
 
 
 #: severity は**設定から取る**（2026-08-30）。生成器が強さを決めると、
-#: 手書きから移したときに黙って error へ上がる。flash-compose の台帳テストが
+#: 手書きから移したときに黙って error へ上がる。FlashEnglish の台帳テストが
 #: no-offscale-fontweight の warn → error を捕まえた。
 DEFAULT_SEVERITY = "error"
 

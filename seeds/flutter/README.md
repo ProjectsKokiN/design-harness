@@ -25,5 +25,5 @@ analyzer:
 ```
 
 **2 を忘れると `flutter analyze` が種を解析して落ちます**（2026-08-30 に
-flash-compose で実際に踏みました。`Undefined name 'Sem'` が5件）。
+FlashEnglish で実際に踏みました。`Undefined name 'Sem'` が5件）。
 Web の案件なら tsconfig / eslint の除外に同じものを足してください。

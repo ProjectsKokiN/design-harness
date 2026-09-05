@@ -10,7 +10,7 @@
 git -C design/harness pull origin main
 ```
 
-2026-08-29 新設。それまで各案件の DESIGN.md（flash-compose で156行・10.5KB）に
+2026-08-29 新設。それまで各案件の DESIGN.md（FlashEnglish で156行・10.5KB）に
 同じ内容が手で書き写されており、共通部分を直しても他案件へ届かない状態でした。
 検査エンジンを一本化したのと同じ理由で、憲法も上層に一本化します。
 

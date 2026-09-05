@@ -43,7 +43,7 @@
 `--test-owns` は担当外で **3** を返す。`set -e`（`set -euo pipefail`）の下で
 素で呼ぶと、**`case $?` に着く前にスクリプトごと死ぬ。**
 
-実害（flash-compose・2026-09-03）: Mac mini と Windows が **2日間、
+実害（FlashEnglish・2026-09-03）: Mac mini と Windows が **2日間、
 `design/verify.sh` の検査を一度も走らせていなかった。** 両機とも
 `--no-verify` で push していた（決まりに反する状態）。
 `exit 3` は `verify.sh` に1行も書かれていないので、grep しても見つからない。
@@ -411,7 +411,7 @@ def _no_owner(path, config, known):
 def do_handoff(machine, conf, root, apply=False):
     """担当外の変更を、担当機への申し送りとして切り出す（2026-09-04・#13）。
 
-    実害（flash-compose・2026-09-03）: **push できない組み合わせ**に入りました。
+    実害（FlashEnglish・2026-09-03）: **push できない組み合わせ**に入りました。
     テストの揺らぎの直しが担当外のファイルにあり、入れても出しても push
     できません。出口は3つのうち2つが塞がっていました。
 

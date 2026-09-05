@@ -95,7 +95,7 @@ python <design-harness>/engine/design_check.py --rules design/rules.json --all
 
 ## 手順8: 鮮度差の検査
 
-`~/dev/design-systems` は本セッションの直前作業（flash-compose のマージ検証）で
+`~/dev/design-systems` は本セッションの直前作業（FlashEnglish のマージ検証）で
 既にクローン済みだった。`git pull origin main` で最新化してから実行。
 
 正常時:
@@ -122,11 +122,11 @@ git のサブプロセス呼び出し・日付比較はどちらも Windows で�
 
 ## 手順9: 既存3案件での実行
 
-`~/dev` に flash-compose / aub-familywalk / planttalk のクローンあり。
+`~/dev` に FlashEnglish / aub-familywalk / planttalk のクローンあり。
 
 - **aub-familywalk**: `design/design_check.py` が存在しない（`find` で該当0件）。
   スキップした。
-- **flash-compose**: `design/design_check.py`（351行、独自コピー）を実行。
+- **FlashEnglish**: `design/design_check.py`（351行、独自コピー）を実行。
   ```
   デザインハーネス注意: ルール no-raw-zero-spacing の paths のうち
   ['lib/theme', 'lib/catalog'] は exclude_paths に潰されて走りません
@@ -145,7 +145,7 @@ git のサブプロセス呼び出し・日付比較はどちらも Windows で�
 導入済みです」としているが、実際にはどの案件にも `.gitmodules` が無く、
 `design/harness/` サブモジュールも存在しない。3案件は今も
 「design_check.py が案件ごとにコピーされ、内容が食い違っている」という、
-まさに README が解消したいと書いている状態のまま。flash-compose（351行）と
+まさに README が解消したいと書いている状態のまま。FlashEnglish（351行）と
 planttalk（186行）は行数からして明らかに別物で、統合エンジンへの移行は
 まだこの3案件に届いていない。
 

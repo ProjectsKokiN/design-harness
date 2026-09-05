@@ -60,7 +60,7 @@ coverage.json（パスは config からの相対）:
     }
 
 - `fail_on_values`: 新規案件は **true**（記録層が存在した時点で落ちる）。
-  既存案件（flash-compose / planttalk / qnd-database）は false で移行猶予。
+  既存案件（FlashEnglish / planttalk / qnd-database）は false で移行猶予。
   **移行の確認は、ユーザーがその案件を再開するときに行う**（2026-08-29 確定）。
   猶予中も残数（記録ファイル数）を毎回表示する
 """

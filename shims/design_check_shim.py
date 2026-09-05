@@ -23,7 +23,7 @@ if not (ENGINE / "design_check.py").exists():
     # submodule が取れていない＝検査が1行も走らない状態。黙って通さない。
     # このガードを import より前に置かないと、Python がシム自身を
     # design_check として import し、AttributeError という原因の読めない
-    # 落ち方をする（flash-compose / aub / qnd の3案件が同日に指摘・2026-08-28）。
+    # 落ち方をする（FlashEnglish / aub / qnd の3案件が同日に指摘・2026-08-28）。
     # 保存時（hook）は作業を止めずに知らせるだけ、--all（verify.sh / CI）は落とす。
     # 関門は CI なので、ここで止めるのが正しい。
     print(

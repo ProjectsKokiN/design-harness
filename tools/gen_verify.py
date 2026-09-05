@@ -3,7 +3,7 @@
 
 2026-09-02 に aub-familywalk の `design/gen/verify.py` から回収した。
 それまで案件ごとの複製で、**3案件のうち1件しか台帳（generators.json）を
-持っていなかった**（aub 9本＋台帳／flash-compose 8本・台帳なし／planttalk 0本）。
+持っていなかった**（aub 9本＋台帳／FlashEnglish 8本・台帳なし／planttalk 0本）。
 
 ## なぜ要るか
 

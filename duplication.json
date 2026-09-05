@@ -4,10 +4,10 @@
     "回し方": "python3 tools/duplication_check.py --config duplication.json",
     "なぜ要るか": "このハーネスの改良は毎回『どれかの案件が既に解いていたもの』の回収だった。候補を見つけるのが手作業だったので機械にした（2026-09-02）",
     "いま残っている候補（2026-09-02）": {
-      "figma_freshness.py": "**回収済み**（2026-09-02）。aub だけが持っていた4つの改良（許可リスト方式・スタイルの鮮度・0枚で止める・単体 component を書き出し側に数える）を共有層へ。flash-compose はまだ自前（そちらのセッションの作業）",
-      "export_io.py": "**回収済み**（2026-09-02）。基盤5関数を gen_io.py へ。flash-compose はまだ自前",
-      "figma_names.py / verify.py": "**回収済み**（2026-09-02）。aub は薄い入口。flash-compose はまだ自前",
-      "残る作業": "flash-compose の4ファイルを薄い入口にする（そちらのセッション）。それまで duplication_check は候補として挙げ続ける（**それが正しい**）"
+      "figma_freshness.py": "**回収済み**（2026-09-02）。aub だけが持っていた4つの改良（許可リスト方式・スタイルの鮮度・0枚で止める・単体 component を書き出し側に数える）を共有層へ。FlashEnglish はまだ自前（そちらのセッションの作業）",
+      "export_io.py": "**回収済み**（2026-09-02）。基盤5関数を gen_io.py へ。FlashEnglish はまだ自前",
+      "figma_names.py / verify.py": "**回収済み**（2026-09-02）。aub は薄い入口。FlashEnglish はまだ自前",
+      "残る作業": "FlashEnglish の4ファイルを薄い入口にする（そちらのセッション）。それまで duplication_check は候補として挙げ続ける（**それが正しい**）"
     }
   },
   "roots": [

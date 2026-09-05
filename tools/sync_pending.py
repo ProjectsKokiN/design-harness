@@ -44,7 +44,7 @@ ROOT = VALUES.parent.parent
 
 def main() -> int:
     # 「status を持つのは entries だけ」と決めて、そこだけを見る
-    # （flash-compose 2026-08-28: values のトップキーは案件で違い、
+    # （FlashEnglish 2026-08-28: values のトップキーは案件で違い、
     # 文字列の配列を持つキー（notSurveyed 等）で AttributeError になった。
     # 前提が崩れたときは読める失敗をする）。
     measured = []
@@ -69,7 +69,7 @@ def main() -> int:
                 continue
             measured.append(key)
             # 「検査があるか」は記録側の assert フラグで判定する
-            # （flash-compose 2026-08-28: 文字列一致は、対応表から動的に組む
+            # （FlashEnglish 2026-08-28: 文字列一致は、対応表から動的に組む
             # テストを数え落とし、コメントで触れただけのものを数え過ぎる。
             # 「名前が出るか」と「値を照合しているか」は別）。
             # assert: true の嘘は values ゲートが見張る（照合が無ければ落ちる）。

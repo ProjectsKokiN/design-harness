@@ -39,7 +39,7 @@ TARGET="${1:-all}"
 # --- 必須段（減らさない）----------------------------------------------------
 step "禁止パターン（全量・条件1）"   "$PY" design/design_check.py --all
 # ルールの鎖が CI でも解決できるか。**手元でだけ通る構成**を先に落とす
-# （flash-compose 2026-09-03: extends が3つともリポジトリ外を指しており、
+# （FlashEnglish 2026-09-03: extends が3つともリポジトリ外を指しており、
 #  手元 70 ファイル・11 ルール、CI は走査 0 ファイル。入れた日から一度も緑が無かった）
 step "ルールの鎖（extends が CI から解決できるか）" \
   "$PY" "$HARNESS/tools/ci_path_check.py" --rules design/rules.json
@@ -81,7 +81,7 @@ step "ルールの生成物（条件8: 段の値が tokens と一致するか）
 # `case $?` に着く前にスクリプトごと死ぬ。`exit 3` はこのファイルに1行も
 # 書かれていないので、grep しても見つからない。
 #
-#   実害（flash-compose・2026-09-03）: Mac mini と Windows が **2日間、
+#   実害（FlashEnglish・2026-09-03）: Mac mini と Windows が **2日間、
 #   この verify.sh の検査を一度も走らせていなかった。** 両機とも --no-verify で
 #   push していた（決まりに反する状態）。
 #
@@ -110,7 +110,7 @@ step "共有されているか（衝突・レジストリ・受信箱）" \
   "$PY" "$HARNESS/tools/shared_check.py" --conflict \
     --shared design/machine-scope.json --registry "$HOME/dev/design-systems"
 # **複数ファイル・複数担当に散る1つの値**（表示名など）。
-# flash-compose では3通りが2日以上混在し、誰も気づかなかった
+# FlashEnglish では3通りが2日以上混在し、誰も気づかなかった
 # **決定の取り消し**。追記式の記録は、前の決定が生きているように読める
 # （aub 2026-09-03: 1日で2回ひっくり返り、実装コメントが取り消し済みの文言を
 #  引用したまま残った。次に読む AI は矛盾した2つの正を見る）
@@ -132,11 +132,11 @@ step "移植性（Windows でだけ落ちる書き方）" \
 step "期待値の出どころ（照合テストが書き出しを読んでいるか）" \
   "$PY" "$HARNESS/tools/expectation_source_check.py" --config design/expectations.json
 # 画面の書き出しが**足りている**か（記録層を消せる前提条件）。
-# 「在る」と「足りている」は違う（flash-compose の frames.json は3件で、
+# 「在る」と「足りている」は違う（FlashEnglish の frames.json は3件で、
 #  中身は部品にならない枠。画面のノード木ではなかった）
 # 書き出しが**読まなかったプロパティ**を宣言しているか。
 # 「Figma に無い」と「器が拾っていない」が区別できないと、AI は前者だと思って
-# 推測で埋める（flash-compose の誤読7件のうち3件がこの根）
+# 推測で埋める（FlashEnglish の誤読7件のうち3件がこの根）
 step "読めていないプロパティの宣言" \
   "$PY" "$HARNESS/tools/gen_notcaptured.py" --config design/notcaptured.json --check
 # 実装の中だけの数値（**Figma を直しても動かない値**）。
@@ -169,7 +169,7 @@ step "書き出しの器（保存されていて指紋が一致するか）" \
 # フレームを挟まない）＋ **Figma に無い組み合わせへ実装が動きうる**。
 # aub: 試験816件が緑のまま、リリース版で画面が消えた
 # **アプリアイコン**（どの関門からも見られていなかった）。
-# flash-compose 2026-08-27: 書き出しが黙って壊れ、20枚中14枚が別物のまま
+# FlashEnglish 2026-08-27: 書き出しが黙って壊れ、20枚中14枚が別物のまま
 # 「成功」で終わった。2026-09-04: Android の前景が全幅に広がり左右が切れていた
 step "アプリアイコン（宣言どおりに揃っているか）" \
   "$PY" "$HARNESS/tools/appicon_check.py" \
@@ -194,7 +194,7 @@ step "段の健全性（落ちるところを見た道具か）" \
   "$PY" "$HARNESS/tools/stage_check.py" --verify design/verify.sh
 # **段の数**を見る。元ファイルにある段がこの案件から落ちていないか。
 # 意図して当てはまらない段は design/stages.json に理由つきで宣言する
-# （flash-compose 2026-09-02: 元ファイルの18段のうち7段がどこにも無く、
+# （FlashEnglish 2026-09-02: 元ファイルの18段のうち7段がどこにも無く、
 #  「意図して不在」と「黙って落ちた」が区別できなかった）
 step "段の数（元ファイルの段が落ちていないか・関門の条件が全部測られているか）" \
   "$PY" "$HARNESS/tools/stage_check.py" --stages --verify design/verify.sh

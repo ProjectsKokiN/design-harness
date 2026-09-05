@@ -15,7 +15,7 @@
 | 既定 | 並んでいる段の**質**（その道具は落ちるところを見たか） |
 | `--stages` | 並んでいる段の**数**（元ファイルにある段が、この案件から落ちていないか） |
 
-`--stages` の実害（flash-compose・2026-09-02〜03）:
+`--stages` の実害（FlashEnglish・2026-09-02〜03）:
 
 - `ci/verify.sh.template` に「ページの範囲」の段があるのに、案件の `verify.sh` から
   **その1行が落ちていた**。2026-08-29 に規則を決めてから 09-02 まで、
@@ -460,7 +460,7 @@ def check_prepush(template, project, waivers, shared=True):
     push 前のフックから段が落ちているのが見えなかった。**
 
     実測: `pin_check.py` を呼ぶ行を持っていたのは3案件のうち aub だけ
-    （flash-compose と planttalk は0箇所）。しかもその aub でも
+    （FlashEnglish と planttalk は0箇所）。しかもその aub でも
     `2>/dev/null || true` で**出力を捨てて必ず成功**していた。
     結果、ピンが枝の途中で16コミット遅れたまま誰も気づかなかった。
     """
@@ -589,7 +589,7 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
     errs += check_prepush(prepush_template, pp, waivers, shared)
 
     # **関門が緩和策の上に立っていることを宣言させる**（2026-09-04・#13）。
-    # 実害（flash-compose）: 「テストの並列度を1に落として揺らぎの確率を下げる」
+    # 実害（FlashEnglish）: 「テストの並列度を1に落として揺らぎの確率を下げる」
     # という緩和の上に関門が立っていたが、**宣言する場所が無かった**。
     # 並列度1でも落ちるのを実測しており、**関門が運で決まる**状態だった。
     # 落ちたのが揺らぎか本物かを区別する仕組みも無い。

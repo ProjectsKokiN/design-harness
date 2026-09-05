@@ -204,7 +204,7 @@
 - `pin_check.py` は**すでにあり、段にも載っています**。ただし
   `python3 …/pin_check.py 2>/dev/null || true` と呼ばれており、
   **出力を捨てて必ず成功します**
-- この行を持っているのは3案件のうち **aub だけ**（flash-compose と planttalk は0箇所）
+- この行を持っているのは3案件のうち **aub だけ**（FlashEnglish と planttalk は0箇所）
 - 段2で作った `stage_check --stages` は `verify.sh` と CI を見ますが、
   **`pre-push` を見ていません**。だから「呼んでいない案件がある」も見えません
 - `pin_check.py` は **`--self-test` を持ちません**（本文に「持たない」と明記されている）
@@ -341,7 +341,7 @@
 
 **#14 は「書き出し器が無い」ではなく「aub にしか無い」でした。** aub の
 `export_frames.js` は 128 行の成熟した器で、31画面の木を出しています。
-無いのは 414 と flash-compose です。**作るのではなく上げるのが正しい直し方**でした。
+無いのは 414 と FlashEnglish です。**作るのではなく上げるのが正しい直し方**でした。
 起票時の前提を実測で確かめてから着手したので気づけています。
 
 #### 実測
@@ -350,7 +350,7 @@
 |---|---|
 | aub の器が読めていないプロパティ | 一覧36件のうち **14件**（`strokeIndividualWeights` を含む——「下線だけのタブを四角い箱で囲んだ」失敗そのもの） |
 | aub の画面の書き出し | 索引31枚を**すべて木で**持つ。記録層0 |
-| flash-compose | `frames.json` が**1つも無い**。`design/values/` が6ファイル |
+| FlashEnglish | `frames.json` が**1つも無い**。`design/values/` が6ファイル |
 | aub の画面の実装が使う値 | 数値 132個中 **書き出しに無いのは4個**（97.0%）／トークン 65個中 **0個** |
 | 読む量 | 書き出しの1画面ぶんは中央 **1.5KB**。MCP は同じ画面の XML とコード |
 
@@ -393,7 +393,7 @@
 | 案件 | フック | ピンの遅れ |
 |---|---|---|
 | aub-familywalk | **握り潰し**（`2>/dev/null`） | 22 |
-| flash-compose | **呼んでいない** | 10 |
+| FlashEnglish | **呼んでいない** | 10 |
 | planttalk | **追跡外の場所にあり、他の機体に1行も配られていない** | 26 |
 
 3つ目は調べている途中で分かった。`core.hooksPath` が未設定だった。
@@ -425,7 +425,7 @@
 
 #### 判断したこと
 
-**`devices.json` の形を揃えなかった。** aub は `min`/`max`、flash-compose は
+**`devices.json` の形を揃えなかった。** aub は `min`/`max`、FlashEnglish は
 `widths` で、どちらもユーザーの原文と選び方の理由を持っている。**形を決めると
 片方が書き換えになり、そこに書いてある決定が散る。** 検査は数だけ拾う。
 
@@ -452,7 +452,7 @@
 | **A 検査の検査** | 38本の道具の「落とす」経路 185本を**1本ずつ壊して** self-test を回した | **88本（47%）が素通り。** 仕分けると: 計測の誤り10（`True == 1`）／入力が壊れたときの停止63／違反の終了コード未試験8／環境の失敗7 |
 | **B 分母の棚卸し** | 36段の分母が導出か手書きかを通しで見た | **手書きが4本**（`tree_test_check` の状態語に **Disabled が無い**／`staleness_check` の pairs は aub で **35件中2件**／`platform_values_check`／`shared_check`）。**中身の指紋（`$meta.digest`）を照合する道具が共有層に無い** |
 | **C 無力化の掃き出し** | `\|\| true`・パイプ・`2>/dev/null` をハーネスと4案件で掃いた | ハーネス本体は0件。**planttalk で関門の条件5・7が `\| tail \|\| true` で落ちようがない**。`design_check --all \|\| true` は出力を読み直しており誤検出でない |
-| **D 稼働の実測** | 36段 × 4案件の行列 | aub 21 / planttalk 14 / flash-compose 12 / **qnd 3**。**13段が4案件すべてで0件**（昨日作ったものが全部） |
+| **D 稼働の実測** | 36段 × 4案件の行列 | aub 21 / planttalk 14 / FlashEnglish 12 / **qnd 3**。**13段が4案件すべてで0件**（昨日作ったものが全部） |
 | **E 未踏の失敗クラス** | 端末の設定・状況10クラスに検査があるか | **7クラスがゼロ**（暗い配色・回転・許可拒否・動きを減らす・キーボード・圏外・言語）。3クラスは部分 |
 | **F 正本の一貫性** | 条件番号・道具名・関門の主張を文書横断で突き合わせた | `sync_pending.py` が**廃止した条件3を名乗り誰も呼んでいない**／`verify.sh.template` に**報せの構文が無く「参考」の段が関門として配線**／旧名 `check_flutter_gaps.py` が記録に2か所 |
 
@@ -527,5 +527,15 @@ web の manifest のアプリ名が旧名のまま・**Figma 側の矛盾 11 件
 
 #### 残り
 
-- #76: planttalk / flash-compose / qnd-database（aub と同じ手順。flash-compose は変更中のため着手はユーザーの合図を待つ）
+- #76: planttalk / FlashEnglish / qnd-database（aub と同じ手順。FlashEnglish は変更中のため着手はユーザーの合図を待つ）
 - #75 の実装（機能から状況を導く生成器＋差分で再検査を決める仕掛け）は段5で
+
+### 決定（2026-09-05 ユーザー確定・原文）
+
+> マージしていいです。
+> PlankTalkとQnDは変更中なのでやめてください。
+> 逆にFlashEnglishは対応していいです。
+> あとFlashComposeはFlashEnglishという名になったので、仮にFlashComposeという名が使われている箇所は全体的にFlashEnglishに変えておいてください。75の実装も進めていいです。
+
+→ aub は PR #211 をマージ。**planttalk / qnd-database は触らない。** 次は FlashEnglish。
+名前は FlashEnglish に統一（Dart のパッケージ名 `flash_compose`・バンドル ID・ディレクトリ名 `~/dev/flash-compose` は変えない）。#75 の実装に着手。

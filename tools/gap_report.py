@@ -356,7 +356,7 @@ def self_test():
             print("self-test NG: 期限切れの項目を見逃した"); ok = False
         cfgp.write_text(json.dumps({**base, "notVerifiable": []}), encoding="utf-8")
 
-        # ラチェット（#30・flash-compose 2026-09-03 の再現）。
+        # ラチェット（#30・FlashEnglish 2026-09-03 の再現）。
         # ルールが宣言を下回ったまま報告を出すと、除外も一緒に落ちるので
         # 走査対象が膨らみ、まちがった発火が並ぶ。**報告を出さずに落とす。**
         rulesp = root / "design" / "rules.json"

@@ -19,7 +19,7 @@
   捕まえるもの: YAML の run / with に書かれた**変数を含まないパス**で、
                 リポジトリ内に実在しないもの。--sources では、失敗メッセージや
                 docstring が「これを実行してください」と案内するパスの不在
-                （flash-compose 2026-08-28: 上流の sync_pending の案内文と
+                （FlashEnglish 2026-08-28: 上流の sync_pending の案内文と
                 案件の gate テスト5箇所が、同日に削除済みのパスを指していた。
                 孤児検査は「道具が呼ばれているか」を見るが、逆方向は誰も見ていない）
   捕まえないもの: `$ds/check_flutter_gaps.py` のような**変数を含むパス**
@@ -29,7 +29,7 @@
   確かめた方法: attack/engine_attack_test.py ではなく本ファイル末尾の
                 self-test（--self-test で合成 YAML に対して落ちる/通るを確認）
 
-flash-compose の実害（2026-09-03・#43）: `design/rules.json` の extends が
+FlashEnglish の実害（2026-09-03・#43）: `design/rules.json` の extends が
 **3つともリポジトリの外**（~/dev/design-systems/… と ~/dev/design-harness/…）を
 指していた。手元は隣接クローンがあるので 70 ファイル・11 ルールで通り、
 **CI でだけ走査 0 ファイル**になった。CI は入れた日から一度も緑になっていない。
@@ -131,7 +131,7 @@ def _submodule_paths(root):
 def _fetched_in_ci(workflows, target):
     """CI がこの参照先を取りに行っているように見えるか（断定はしない）。
 
-    「CI にこのパスは無い」と言い切ると外れることがある。flash-compose の CI は
+    「CI にこのパスは無い」と言い切ると外れることがある。FlashEnglish の CI は
     レジストリを `../design-systems` に clone している（ただし REGISTRY_TOKEN が
     あるときだけ）。**取得の有無を機械で確かめるのは無理なので、宣言に寄せる。**
     ここは文言を和らげるためだけに使い、合否には効かせない。
@@ -148,7 +148,7 @@ def _fetched_in_ci(workflows, target):
 def _twin_in_repo(root, target):
     """リポジトリの中に、同じ名前で同じ中身のファイルがあれば返す。
 
-    flash-compose で実際に起きた形。**外を指しているが、submodule に同じものが
+    FlashEnglish で実際に起きた形。**外を指しているが、submodule に同じものが
     ある。** そこへ向け直せば CI でも解決する（実測で 11 ルール・exit 0）。
     """
     if not target.exists():
@@ -176,7 +176,7 @@ def _chain(rules_path, root, seen=None):
 
     リポジトリの外へ出た先は**たどらない**。そこから先の相対参照は別の
     リポジトリの都合であって、この案件の CI が解決できるかとは関係がない
-    （flash-compose の実測では、レジストリ自身がさらに外を指していたため、
+    （FlashEnglish の実測では、レジストリ自身がさらに外を指していたため、
     たどると同じ原因の指摘が3つに増えて読みにくかった）。
     """
     seen = seen or set()
@@ -241,7 +241,7 @@ def check_rules(rules_path, root=None, workflows=None):
             if twin:
                 msg.append(f"    リポジトリの中に同じ中身があります: `{twin}`")
                 msg.append(f"    そこを指すように書き換えてください"
-                           f"（flash-compose はこれで CI が緑になりました）。")
+                           f"（FlashEnglish はこれで CI が緑になりました）。")
             else:
                 msg.append(f"    CI で取得するなら {rules_path.name} に理由つきで"
                            f"宣言してください:")
@@ -413,7 +413,7 @@ def self_test():
             print(f"self-test NG: 実在する案内だけなのに落ちた（exit {rc}）")
             ok = False
 
-        # ─── --rules（#43・flash-compose 2026-09-03 の再現）────────────────
+        # ─── --rules（#43・FlashEnglish 2026-09-03 の再現）────────────────
         # extends がリポジトリの外を指していると、手元だけ通って CI で走査 0 になる
         rr = root / "proj"
         (rr / "design").mkdir(parents=True)

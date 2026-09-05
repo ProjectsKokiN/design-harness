@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Figma が書き出しより新しくなっていないかを見る（鮮度の検査・テンプレート）。
 
-【テンプレートについて】flash-compose の実運用版のコピー（2026-08-28 回収）。
+【テンプレートについて】FlashEnglish の実運用版のコピー（2026-08-28 回収）。
 「案件ごとに埋める」の3定数だけを具体化して <プロジェクト>/design/figma_freshness.py に置く（3定数を埋めるためコピーが要る唯一の道具）。
 本番リリースの合格条件4（鮮度）はこれで測る（references/production-gate.md）。
 figma-fullexport.md が「Figma を触る作業の前に必ず回す」と書いていながら、
@@ -73,7 +73,7 @@ SKIP_PAGES = ['{{下書きページ名}}', '{{AI出力ページ名}}']
 #:
 #: 除外方式（SKIP_PAGES）だと **Figma に新しいページが増えたとき黙って対象に入る**。
 #: しかも書き出し器は許可リスト方式なので、**器と鮮度検査が別のページを見る**状態に
-#: なる（2026-09-02 に flash-compose で実際に起きた: 器は
+#: なる（2026-09-02 に FlashEnglish で実際に起きた: 器は
 #: ⚙️_Styles&Components だけ、鮮度は Sandbox / AI Output 以外の全ページ）。
 #:
 #: 案件の入口（シム）で `PAGE_SCOPE = Path(...)` を差し込む。無ければ
@@ -796,7 +796,7 @@ def load_config(path) -> None:
 def has_token() -> int:
     """トークンが**在るかどうかだけ**を言う（2026-09-04 新設・#15）。
 
-    実害（flash-compose・2026-09-03）: 「入れてから再実行してください」と
+    実害（FlashEnglish・2026-09-03）: 「入れてから再実行してください」と
     言われた AI が、入ったかを確かめようとしてシェルを書きました。
 
         echo "${FIGMA_TOKEN:+あり}${FIGMA_TOKEN:-なし}"

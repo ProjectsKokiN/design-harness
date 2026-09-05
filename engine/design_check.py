@@ -10,7 +10,7 @@
   - extends の解決・--all・fail-closed・per-rule paths・発火ログ …… テンプレ
   - Bash 経由の編集の全走査（書き込みの気配で判定）……………………… テンプレ 2026-08-28
   - cp932 でも落ちない出力・壊れた正規表現の検出・読めないファイルの
-    名指し・違反報告への相対パス・exclude_paths が paths を潰す検出 … flash-compose
+    名指し・違反報告への相対パス・exclude_paths が paths を潰す検出 … FlashEnglish
   - ignore_for_file の解釈（lint との二重回答の解消）…………………… planttalk
   - exclude_files・理由つき harness-ignore・per-rule extensions・
     発火ログの source/kind・exit 4（対象外の区別）・
@@ -43,7 +43,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Windows の cp932 端末でも、UnicodeEncodeError で検査ごと落ちない・
-# 日本語が「?」に潰れない、の両方を満たす（flash-compose 2026-08-24 ＋
+# 日本語が「?」に潰れない、の両方を満たす（FlashEnglish 2026-08-24 ＋
 # Windows 受け入れテスト 2026-08-28: errors=replace だけでは日本語出力が化け、
 # PYTHONUTF8=1 を毎回付ける前提は配布できない）
 for _stream in (sys.stdout, sys.stderr):
@@ -218,7 +218,7 @@ def unrunnable_rules(config):
 
 def broken_patterns(config):
     """壊れた正規表現を持つルールを返す。壊れたルールは一度も走らないため、
-    黙って続けると「検査しているつもりで何も見ていない」になる（flash-compose）。"""
+    黙って続けると「検査しているつもりで何も見ていない」になる（FlashEnglish）。"""
     out = []
     for rule in config.get("rules", []):
         for key in ("pattern", "trigger", "require"):
@@ -237,7 +237,7 @@ def crushed_scopes(config):
 
     戻り値: (全部潰されたルールの一覧, 一部潰されたルールの注意文)。
     全部潰し＝そのルールは一度も走らないので error に格上げする
-    （flash-compose 要望7・2026-08-28。「注意のまま通る」は
+    （FlashEnglish 要望7・2026-08-28。「注意のまま通る」は
     緑なのに何も検査していないの一種）。
     """
     dead, notes = [], []
@@ -506,7 +506,7 @@ def is_target(path, config, project_root):
 
     `exclude_files` は**完全一致・接尾辞・glob** の3通りで当てる（2026-08-29 に修正）。
     それまで完全一致だけだったため、テンプレートが配っていた `".g.dart"` /
-    `".freezed.dart"` が**1件も効いていなかった**。flash-compose と aub では
+    `".freezed.dart"` が**1件も効いていなかった**。FlashEnglish と aub では
     `exclude_paths` の `lib/theme/` が生成物を覆っていて表に出ず、
     「生成物は除外できている」と誤解されたまま全案件に配られていた。
 
@@ -534,7 +534,7 @@ def scan_path(path, config, project_root, hooks):
     """1ファイルを走査する。戻りは (errors, warns, observations, 状態)。
 
     状態: True=読んだ / None=対象外 / str=読めなかった理由。
-    読めないファイルを黙って握りつぶさない（flash-compose 2026-08-24。
+    読めないファイルを黙って握りつぶさない（FlashEnglish 2026-08-24。
     権限や文字コードで読めないファイルが検査されず痕跡も残らなかった）。
     """
     if not path.exists() or not path.is_file() or not is_target(path, config, project_root):
@@ -581,12 +581,12 @@ def ratchet(config, scanned=None):
     **design_check と gap_report の両方がここを呼ぶ。** 判定を2か所に書くと
     片方だけ直る（このリポジトリが何度も踏んだ形）。
 
-    実害（2026-08-29・flash-compose）: 414 のルールを A/B/C 層に分けたところ、
+    実害（2026-08-29・FlashEnglish）: 414 のルールを A/B/C 層に分けたところ、
     extends を1段しか読まない古い submodule のピンでは奥の層が届かず、ルールが
     12 → 7 に静かに減った。**それでも「違反なし」で exit 0 だった。**
     対象数のラチェット（expected_targets）はファイル数しか見ないので素通りする。
 
-    実害（2026-09-03・flash-compose）: 同じ壊れた設定で design_check は落ちたのに、
+    実害（2026-09-03・FlashEnglish）: 同じ壊れた設定で design_check は落ちたのに、
     **gap_report は報告を出し続けた。** ルールが 5/11 しか読めないと exclude_paths も
     一緒に落ちるので、CI では走査 190 件・**発火 119 件（全部まちがい）**を出した。
     この道具の出力は完了レポートの冒頭にそのまま貼る決まりなので、

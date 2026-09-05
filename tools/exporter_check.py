@@ -39,7 +39,7 @@
 `childSizes` は component set ごとに**1変異だけをサンプルして**子の寸法を記録します。
 **サンプルした変異にその子が無ければ、その子の寸法は書き出しに現れません。**
 
-実害（flash-compose・2026-09-03）: `Buttons/L/Default` の見本が
+実害（FlashEnglish・2026-09-03）: `Buttons/L/Default` の見本が
 `Icon=False, PrependIcon=False, AppendIcon=False`（アイコンが1つも無い変異）
 だったため、**アイコンの寸法がどこにも入っていませんでした。** 私は名前
 （`Buttons/L` → `AppIconSize.l`）から 36 と当てました。**Figma は 32 です。**
@@ -469,7 +469,7 @@ def self_test():
         if check_style([d / "cmt.js"]):
             print("self-test NG: コメントを咎めた"); ok = False
 
-    # ─── --samples（#22・flash-compose 2026-09-03 の再現）──────────────
+    # ─── --samples（#22・FlashEnglish 2026-09-03 の再現）──────────────
     DOC = {"componentSets": {
         "Nav": {"childSizes": {"sample": "Selected=False, State=Enabled",
                                "children": [{"n": "PrependIcon", "w": 24}]}},

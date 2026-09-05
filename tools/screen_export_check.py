@@ -13,7 +13,7 @@
 - `frames.json` が**在るかどうか**しか読めない
 - **中身が画面の木かどうか**は書いていない
 
-flash-compose には `frames.json` が在ります（3件）。**前提条件を満たしている
+FlashEnglish には `frames.json` が在ります（3件）。**前提条件を満たしている
 ように見えます。** ところが中身は「部品にならない枠」（`bottomNavigationFrame` /
 `header` / `footer`）で、**画面のノード木ではありません。**
 
@@ -287,7 +287,7 @@ def self_test():
         if rc != 1 or "CAMERA" not in out or "照合先がありません" not in out:
             print(f"self-test NG: 画面が欠けたのに落ちなかった（{rc}）"); ok = False
 
-        # 「在る」だけで木になっていない（flash-compose の形）
+        # 「在る」だけで木になっていない（FlashEnglish の形）
         thin = json.loads(json.dumps(full))
         thin["frames"]["2:2"]["rows"] = ["0|c|FRAME"]
         rc, out = run(thin)

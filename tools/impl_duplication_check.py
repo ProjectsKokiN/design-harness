@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """同じ絵を2か所で組んでいるのを、実装側から見つける（2026-09-04 新設・#53）。
 
-## 実害（flash-compose・2026-09-04）
+## 実害（FlashEnglish・2026-09-04）
 
 **1日に2回、同じ形で同じ失敗をしました。** どちらも机上の検査は緑で、
 実機を持つ機体が見つけています。
@@ -86,7 +86,7 @@ def impl_files(map_path, base):
         """`impl` の書き方は1つではない。**実データから受ける形を増やす。**
 
         aub: `"lib/ui/widgets/chips.dart#ChipsDefault"`（パス＋クラス）
-        flash-compose: `[{"path": "…", "class": "ButtonsM", "note": "…"}]`
+        FlashEnglish: `[{"path": "…", "class": "ButtonsM", "note": "…"}]`
         ひな形: `["AppButtonL"]`（クラス名の配列）
         """
         if isinstance(x, dict):

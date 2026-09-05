@@ -1,7 +1,7 @@
 {
   "$meta": {
     "これは何": "複数のファイル・複数の担当マシンに散る1つの値の、唯一の正と場所の一覧。",
-    "なぜ要るか": "表示名のような値は5ファイル6か所に散り、担当が3台に分かれる。**散文の依頼だけだと必ず取りこぼす。** flash-compose では `Flash Compose` / `flash_compose` / `flash-compose` の3通りが2日以上混在していた（design-harness issue #45）。",
+    "なぜ要るか": "表示名のような値は5ファイル6か所に散り、担当が3台に分かれる。**散文の依頼だけだと必ず取りこぼす。** FlashEnglish では `Flash English` / `flash_compose` / `FlashEnglish` の3通りが2日以上混在していた（design-harness issue #45）。",
     "検査": "python3 design/harness/tools/platform_values_check.py --config design/platform-values.json",
     "updatedAt": "{{YYYY-MM-DD}}"
   },

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """1つの値が複数ファイル・複数担当に散るのを見る（2026-09-04 新設・#45）。
 
-## 実害（flash-compose）
+## 実害（FlashEnglish）
 
 アプリの表示名は **5ファイル6か所**に散っていて、**担当マシンが3つに分かれます。**
 
@@ -13,8 +13,8 @@
 | `web/index.html` の `<title>` ほか | MacBook Air |
 | `web/manifest.json` の `name` / `short_name` | MacBook Air |
 
-**変える前は3通りが混在していました**（`Flash Compose` / `flash_compose` /
-`flash-compose`）。**誰も気づいていませんでした。**
+**変える前は3通りが混在していました**（`Flash English` / `flash_compose` /
+`FlashEnglish`）。**誰も気づいていませんでした。**
 
 一方で**変えてはいけないもの**も近くにあります。`pubspec.yaml` の
 `name: flash_compose`（変えると全 import が壊れる）と、バンドル ID
@@ -307,7 +307,7 @@ def self_test():
             ok = False
 
         # 1つだけ古い → 落ちる
-        write(label="Flash Compose")
+        write(label="Flash Compose")   # わざと違う値（旧名）。食い違いの例
         rc, out = run(BASE)
         if rc != 1 or "Flash Compose" not in out:
             print(f"self-test NG: 食い違いを見逃した（{rc}）\n   {out[:300]}"); ok = False

@@ -5,7 +5,7 @@ design-harness を push したあと、各案件で1回ずつ実行します。
 
 ## 1. submodule を最新にする
 
-    git -C design/harness pull origin main        # flash-compose / aub / planttalk
+    git -C design/harness pull origin main        # FlashEnglish / aub / planttalk
     git -C site/design/harness/harness pull origin main   # qnd-database
 
 `__pycache__` で pull が止まる場合は先に:
@@ -37,12 +37,12 @@ design-harness を push したあと、各案件で1回ずつ実行します。
 
 | 案件 | 期待値の出どころ | 書き出しの器 | 条件9 |
 |---|---|---|---|
-| flash-compose | 14件 | 4件 | 0件 |
+| FlashEnglish | 14件 | 4件 | 0件 |
 | aub-familywalk | 10件 | 24件 | 0件 |
 | planttalk | 18件 | 2件 | 7件 |
 | qnd-database | — | 2件 | — |
 
-## 4. flash-compose の verify.sh は形式が違う
+## 4. FlashEnglish の verify.sh は形式が違う
 
 `step "..."` の形を使っていないため、`stage_check` が段を1つも拾えず落ちます。
 雛形の `step` 形式に寄せるか、ハーネスの道具を `design/harness/tools/` 経由で
