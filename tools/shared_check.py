@@ -128,8 +128,18 @@ def check_registry(path):
     return errs
 
 
-def check_shared(root, conf_path):
-    """3台の受信箱が、既定ブランチにあるか（#42）。"""
+#: 受信箱。**他の機体が読んで動く**ファイル。ここが枝に取り残されると依頼が届かない（#42）
+INBOX = ("MACHINE_TASKS.md", "SESSION_LOG.md", "MACHINE_TASKS_ARCHIVE.md")
+
+
+def check_shared(root, conf_path, inbox=INBOX):
+    """3台の受信箱が、既定ブランチにあるか（#42）。
+
+    `machine-scope.json` の `shared` は「誰が編集してもよい」の宣言で、
+    **受信箱とは別の概念**。aub の取り込み（2026-09-05）で、`shared` に載る
+    試験ファイルを枝で直しただけで push が止まった。落とすのは受信箱だけにし、
+    それ以外の共有物は注意にとどめる。
+    """
     p = Path(conf_path)
     if not p.exists():
         return [f"  担当の宣言がありません: {p}"]
@@ -146,14 +156,17 @@ def check_shared(root, conf_path):
     if head == ref.split("/", 1)[1]:
         return []                       # 既定ブランチで作業しているなら届く
     diff = run("diff", "--name-only", f"{ref}...HEAD", cwd=root).stdout.split()
-    stuck = []
+    stuck, other = [], []
     for s in shared:
         for f in diff:
             if f == s or (s.endswith("/") and f.startswith(s)):
-                stuck.append(f)
+                (stuck if Path(f).name in inbox else other).append(f)
+    if other:
+        print(f"注意: 共有物（受信箱ではない）を枝で変えています（{len(set(other))}件）: "
+              + " / ".join(sorted(set(other))[:6]) + "。他の機体は既定ブランチで読みます。")
     if not stuck:
         return []
-    return [f"  **共有物の変更が枝（{head}）に取り残されています**（{len(stuck)}件）。\n"
+    return [f"  **受信箱の変更が枝（{head}）に取り残されています**（{len(stuck)}件）。\n"
             f"    受信箱は3台が読む場所です。**枝に置いた瞬間、受信箱として"
             f"機能しなくなります。**\n"
             f"    " + " / ".join(sorted(set(stuck))[:8])
@@ -310,6 +323,15 @@ def self_test():
         rc, out = call("--shared", ms)
         if rc != 1 or "受信箱として" not in out:
             print(f"self-test NG: 枝に取り残された受信箱を見逃した（{rc}）"); ok = False
+        # **受信箱でない共有物**（docs/）は注意にとどめる（aub の取り込みで過剰に止まった）
+        g("checkout", "-q", "main", cwd=work); g("checkout", "-q", "-b", "w2", cwd=work)
+        (work / "docs").mkdir(exist_ok=True)
+        (work / "docs" / "x.md").write_text("枝で直した文書\n", encoding="utf-8")
+        g("add", "-A", cwd=work); g("commit", "-qm", "docs", cwd=work)
+        rc, out = call("--shared", ms)
+        if rc != 0 or "受信箱ではない" not in out:
+            print(f"self-test NG: 受信箱でない共有物で止めた（{rc}）\n   {out[:200]}"); ok = False
+        g("checkout", "-q", "mine", cwd=work)   # 後続の場面は mine の状態を前提にする
 
         # ── #56 説明の裏取り ──────────────────────────────────
         cl = work / "claims.json"
