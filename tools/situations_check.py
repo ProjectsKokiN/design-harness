@@ -191,8 +191,13 @@ def main(argv=None):
     }
     if gone:
         doc["$消えた状況"] = {g: "実装からその機能が消えたので、守る対象から外れた" for g in gone}
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    # **--check は読むだけ。** 検査の途中で design/ を書き換えると、design/ を担当しない
+    # 機体（Windows）で verify.sh を回した瞬間に「担当外のパスを変えた」になる
+    # （aub 2026-09-05 の取り込みで気づいた）。導き直しと確認の記録だけが書く
+    if args.confirm or not args.check:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n",
+                            encoding="utf-8")
 
     if not args.check:
         n_ok = sum(1 for v in merged.values() if v.get("確認"))
@@ -269,6 +274,11 @@ def self_test():
             print(f"self-test NG: 実装が変わったのに古くならない（{rc}）"); ok = False
         if "文字倍率:" in txt:
             print("self-test NG: 関係ない状況まで古くした"); ok = False
+        # **--check は書かない**（design/ を担当しない機体で回しても差分を作らない）
+        before = out.read_text(encoding="utf-8")
+        run("--check")
+        if out.read_text(encoding="utf-8") != before:
+            print("self-test NG: --check が記録を書き換えた"); ok = False
         # マイク・通知の許可も「許可を断られた」に入る（FlashEnglish で mic の印を見落としかけた）
         (lib / "mic.dart").write_text("import 'package:record/record.dart';\n", encoding="utf-8")
         run()
