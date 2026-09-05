@@ -48,6 +48,8 @@ import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf
 
 HEAD_RX = re.compile(r"^## (\d{4}-\d{2}-\d{2}) 宛先: (.+?) \[(未対応|完了)\] — (.+?)\s*$", re.M)
 INDEX_HEAD = "## 未対応の依頼（索引）"
+#: 索引の見出しは案件で少し違う（FlashEnglish は「## 未対応の依頼」）。行頭の一致で探す
+INDEX_HEAD_RX = re.compile(r"^## 未対応の依頼.*$", re.M)
 TARGET_RX = re.compile(r"^対象の commit: (\w+)@([0-9a-f]{7,40})", re.M)
 ARCHIVE_TITLE = "# マシン間の申し送り（完了ぶんの保管）"
 
@@ -74,7 +76,8 @@ def index_line(date, to, title):
 
 def do_add(path, root, to, title, body, date, with_target):
     text = path.read_text(encoding="utf-8")
-    if INDEX_HEAD not in text:
+    idx = INDEX_HEAD_RX.search(text)
+    if not idx:
         print(f"{path.name} に「{INDEX_HEAD}」の節がありません。**索引が無いと受け取る側が探せません。**"
               f"（受信箱が削られた形。git で戻してください）", file=sys.stderr)
         return 1
@@ -98,9 +101,9 @@ def do_add(path, root, to, title, body, date, with_target):
         pos = secs[0][0]                      # いちばん上の依頼の前（新しいものが上）
     else:
         m = re.search(r"^## (?:ビルドを頼むときの決まり|セッションログの書き方|完了した依頼の扱い)", text, re.M)
-        pos = m.start() if m else text.index(INDEX_HEAD)
+        pos = m.start() if m else idx.start()
     text = text[:pos] + section + text[pos:]
-    i = text.index(INDEX_HEAD) + len(INDEX_HEAD)
+    i = INDEX_HEAD_RX.search(text).end()
     nl = text.index("\n", i) + 1
     while nl < len(text) and text[nl] == "\n":
         nl += 1
@@ -339,6 +342,13 @@ def self_test():
                            "--title", "x", "--body", str(body2), "--no-target"])
             check(rc == 0, f"--no-target なら git 無しでも足せるはず（{rc}）")
 
+        # 索引の見出しが「## 未対応の依頼」だけの案件（FlashEnglish）でも足せる
+        inbox.write_text(t.replace(INDEX_HEAD, "## 未対応の依頼"), encoding="utf-8")
+        rc, _ = run("--add", "--to", "Windows", "--title", "短い見出しの索引", "--body", str(body2), "--no-target")
+        t3 = inbox.read_text(encoding="utf-8")
+        check(rc == 0 and "## 未対応の依頼\n\n- 2026-09-05 宛先: Windows — **短い見出しの索引**" in t3
+              or rc == 0 and "- 2026-09-05 宛先: Windows — **短い見出しの索引**" in t3,
+              f"短い索引の見出しに足せない（{rc}）")
         # 索引の節が無い受信箱には足せない（削られた形）
         inbox.write_text(t.replace(INDEX_HEAD, "## 索引ではない"), encoding="utf-8")
         rc, _ = run("--add", "--to", "Windows", "--title", "x", "--body", str(body2), "--no-target")
