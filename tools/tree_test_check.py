@@ -77,8 +77,12 @@ def main(argv=None):
         print(f"設定がありません: {args.config}\n"
               f"  Figma に状態があるのに駆動していない部品を、誰も見ていない状態です。",
               file=sys.stderr)
-        return 1
-    conf = json.loads(args.config.read_text(encoding="utf-8"))
+        return 2
+    try:
+        conf = json.loads(args.config.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"設定が読めません: {args.config}: {e}", file=sys.stderr)
+        return 2
     base = (args.root.resolve() if args.root
             else args.config.resolve().parent.parent)
 
@@ -86,7 +90,7 @@ def main(argv=None):
     if not ex.exists():
         print(f"書き出しがありません: {ex}\n"
               f"  **分母が無いので網羅を確かめられません。**", file=sys.stderr)
-        return 1
+        return 2
     sets = load_sets(json.loads(ex.read_text(encoding="utf-8")))
     if sets is None:
         print(f"{ex} に componentSets がありません（形が変わった可能性）",
@@ -95,7 +99,7 @@ def main(argv=None):
     if not sets:
         print(f"{ex} の componentSets が空です。**『穴 0』は『何も見ていない』"
               f"という意味です。**", file=sys.stderr)
-        return 1
+        return 2
 
     states = conf.get("state_words") or DEFAULT_STATES
     state_rx = re.compile("|".join(re.escape(s) for s in states), re.I)
@@ -214,12 +218,12 @@ def self_test():
             print("self-test NG: スロット2つのセットを見逃した"); ok = False
 
         setup({})
-        if main(argv) != 1:
-            print("self-test NG: 書き出しが空なのに落ちなかった"); ok = False
+        if main(argv) != 2:
+            print("self-test NG: 書き出しが空なのに 2 で止まらなかった"); ok = False
 
         ex.unlink()
-        if main(argv) != 1:
-            print("self-test NG: 書き出しが無いのに落ちなかった"); ok = False
+        if main(argv) != 2:
+            print("self-test NG: 書き出しが無いのに 2 で止まらなかった"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1

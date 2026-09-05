@@ -292,8 +292,12 @@ def main(argv=None):
         print(f"設定がありません: {args.config}\n"
               f"  書き出しを作った器が保存されているかを、誰も見ていない状態です。",
               file=sys.stderr)
-        return 1
-    conf = json.loads(args.config.read_text(encoding="utf-8"))
+        return 2
+    try:
+        conf = json.loads(args.config.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"設定が読めません: {args.config}: {e}", file=sys.stderr)
+        return 2
     base = (args.root.resolve() if args.root
             else args.config.resolve().parent.parent)
     ex_dir = base / conf.get("exports_dir", "design/figma")
@@ -301,12 +305,12 @@ def main(argv=None):
 
     if not ex_dir.exists():
         print(f"書き出しの置き場がありません: {ex_dir}", file=sys.stderr)
-        return 1
+        return 2
 
     files = [f for f in sorted(ex_dir.glob("*.json")) if f.name not in exclude]
     if not files:
         print(f"書き出しが1件もありません: {ex_dir}（空振り）", file=sys.stderr)
-        return 1
+        return 2
 
     allow = {}
     problems, updated, okc = [], 0, 0
@@ -433,8 +437,8 @@ def self_test():
         cfg.write_text(json.dumps({"exports_dir": "design/figma"}), encoding="utf-8")
 
         out.unlink()
-        if main(argv) != 1:
-            print("self-test NG: 書き出しが0件なのに落ちなかった"); ok = False
+        if main(argv) != 2:
+            print("self-test NG: 書き出しが0件なのに 2 で止まらなかった"); ok = False
 
     # ─── --style（#32・qnd-database 2026-09-03 の再現）──────────────
     import tempfile as _tf

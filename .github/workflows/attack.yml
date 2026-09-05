@@ -28,6 +28,9 @@ jobs:
       - name: 書き出し器のひな形（figma.mixed で落ちないか）
         run: node attack/preamble_test.mjs
 
+      - name: 設定が無い・壊れているときに全道具が止まるか
+        run: python3 attack/broken_input_test.py
+
       - name: 発火ログの項目表（実装と合っているか）
         run: python3 tools/readme_check.py --log-schema
 

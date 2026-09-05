@@ -69,7 +69,7 @@ def main(argv=None):
         print(f"設定がありません: {args.config}\n"
               f"  照合テストの期待値がどこ由来かを、誰も見ていない状態です。\n"
               f'  {{"dirs": ["test/design"]}} から始めてください。', file=sys.stderr)
-        return 1
+        return 2
     try:
         conf = json.loads(args.config.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
@@ -191,8 +191,9 @@ def self_test():
             print("self-test NG: 照合テストが0件なのに落ちなかった"); ok = False
 
         cfg.unlink()
-        if main(["--config", str(cfg), "--root", str(root)]) != 1:
-            print("self-test NG: 設定が無いのに落ちなかった"); ok = False
+        # 設定が無い＝検査が働いていない（exit 2）。違反（exit 1）と区別する
+        if main(["--config", str(cfg), "--root", str(root)]) != 2:
+            print("self-test NG: 設定が無いのに 2 で止まらなかった"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
