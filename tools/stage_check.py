@@ -754,7 +754,7 @@ def main(argv=None):
         print(f"verify.sh がありません: {args.verify}\n"
               f"  統合検査の入口が無い状態です（関門は CI と pre-push）。",
               file=sys.stderr)
-        return 1
+        return 2
 
     exceptions = documented_exceptions(args.readme)
     problems, foreign, checked = [], [], []
@@ -933,6 +933,16 @@ def self_test():
         print("self-test NG: 網羅の計測が外側の追跡係を壊した"); ok = False
 
     ok = self_test_stages() and ok
+
+    # verify.sh が無い＝入口が無い（2）。違反（1）と区別する（変異試験 2026-09-05）
+    import io as _io, contextlib as _ctx
+    with tempfile.TemporaryDirectory() as td:
+        _b = _io.StringIO()
+        with _ctx.redirect_stderr(_b):
+            rc = main(["--verify", str(Path(td) / "verify.sh"), "--no-run"])
+        if rc != 2:
+            print(f"self-test NG: verify.sh が無いのに 2 で止まらなかった（{rc}）"); ok = False
+
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
 

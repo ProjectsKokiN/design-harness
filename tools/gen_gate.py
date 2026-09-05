@@ -238,6 +238,11 @@ def self_test():
                  "--check"]) != 2:
             print("self-test NG: 正本も生成物も無いのに通した"); ok = False
 
+        # 正本はあるが表が読めない（表の形が変わった）→ 2。違反の 1 と区別する
+        src.write_text("# 表の無い正本\n\nただの文章です。\n", encoding="utf-8")
+        if main(argv) != 2:
+            print("self-test NG: 表の無い正本で 2 で止まらなかった"); ok = False
+
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
 

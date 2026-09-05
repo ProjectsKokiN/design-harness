@@ -548,6 +548,17 @@ def self_test() -> int:
         moved = json.loads(json.dumps(SETS)); moved['Buttons']['itemSpacing'] = 99
         cases.append(('main: 値が変わったら 1', run_main(base, moved) == 1))
 
+        # --update で「Figma は動いたのに本体は前回から変わっていない」→ 取り直し
+        # 忘れとして 2。--force なら承知の上として通す
+        # （変異試験 2026-09-05: この帰り道は自己検査で一度も通っていなかった）
+        stale = {'$meta': {'restDigests': {k: 'old' for k in now}},
+                 'componentSets': {'Buttons': {}, 'Header': {}}}
+        stale['$meta']['bodyHash'] = body_hash(stale)
+        cases.append(('main --update: 本体を取り直していなければ 2',
+                      run_main(stale, argv=('x', '--update')) == 2))
+        cases.append(('main --update --force: 承知の上なら 2 で止めない',
+                      run_main(stale, argv=('x', '--update', '--force')) != 2))
+
         # ─── --has-token（#15・2026-09-04）──────────────────────────
         # **値に触らない。長さも出さない。** ここが無いと AI がシェルを書き、
         # トークンがセッションの記録に残る（2026-09-03 の事故）

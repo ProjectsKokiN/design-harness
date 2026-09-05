@@ -104,7 +104,7 @@ def main(argv=None):
     if not dirs:
         print(f"{args.config} に dirs がありません（照合テストの置き場の宣言）",
               file=sys.stderr)
-        return 1
+        return 2
 
     checked, handwritten, allowed = 0, [], []
     for d in dirs:
@@ -189,6 +189,11 @@ def self_test():
             f.unlink()
         if main(setup({})) != 1:
             print("self-test NG: 照合テストが0件なのに落ちなかった"); ok = False
+
+        # dirs の宣言が無い＝どこを見るかが決まらない（exit 2）
+        cfg.write_text(json.dumps({"allow": []}), encoding="utf-8")
+        if main(["--config", str(cfg), "--root", str(root)]) != 2:
+            print("self-test NG: dirs が無いのに 2 で止まらなかった"); ok = False
 
         cfg.unlink()
         # 設定が無い＝検査が働いていない（exit 2）。違反（exit 1）と区別する

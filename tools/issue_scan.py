@@ -219,7 +219,7 @@ def main(argv=None):
 
     if not a.collect:
         ap.print_help()
-        return 1
+        return 2
 
     since = a.since or st["last_scanned"]
     dirs = encoded_dirs(root)

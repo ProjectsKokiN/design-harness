@@ -69,6 +69,7 @@
 | `tools/token_query.py` | 値からトークン名の逆引き |
 | `vocab/_vocab.json` | status / blockedBy / origin の語彙の正本 |
 | `attack/engine_attack_test.py` | エンジンの妨害テスト（全機能に「落ちるケース」を持つ） |
+| **`attack/mutation_test.py`** | **変異試験**。各道具の「落とす」帰り道（`return 1` / `return 2`）を1本ずつ `return 0` に潰し、self-test が赤くなるかを見る。素通りは `attack/mutation-allow.json` に理由が無ければ落ちる（2026-09-05 の実測: 47% が素通りしていた） |
 | `tools/stage_check.py --min-coverage N` | **self-test が本体の N% を通ることを求める**（持っているだけでは何も証明していない） |
 | `ci/` | 各リポジトリへ配る workflow の雛形 |
 
@@ -146,6 +147,7 @@ engine 側も再帰化した（循環検出・深さ上限つき）が、**並�
 | `attack/engine_attack_test.py` | エンジンの挙動 | エンジンが壊れた |
 | `expected_targets`（engine） | 読んだファイル数 | 検査対象が黙って狭まった |
 | `tools/seed_check.py` | **ルールごとの発火件数** | **ルールが黙って死んだ** |
+| `attack/mutation_test.py` | **道具の「落とす」帰り道のうち self-test が見ている本数** | **道具の判定が黙って死んだ**（self-test はあるのに、その経路を試していない） |
 
 `tools/gap_report.py` はこの3つの結果を合わせて「見なかったもの」を出す。
 発火0のルールは、**種があれば「コードが綺麗」・無ければ「効いているか不明」**と

@@ -105,7 +105,7 @@ def main(argv=None):
               f"  ルールが実際に発火するかを誰も確かめていない状態です。\n"
               f"  各ルールの違反を1件ずつ書いたファイルと expected.json を置いてください。",
               file=sys.stderr)
-        return 1
+        return 2
 
     engine = load_engine(args.engine)
     config = engine.load_rules(args.rules)
@@ -117,7 +117,7 @@ def main(argv=None):
     if not exp_path.exists():
         print(f"{exp_path} がありません（何件出るはずかの宣言が要ります）",
               file=sys.stderr)
-        return 1
+        return 2
     expected = json.loads(exp_path.read_text(encoding="utf-8"))
     require_all = bool(expected.pop("*", False))
     expected = {k: v for k, v in expected.items() if not k.startswith("$")}
@@ -234,6 +234,14 @@ def self_test():
             f.unlink()
         if main(argv) != 1:
             print("self-test NG: 種が空なのに落ちなかった"); ok = False
+
+        # 宣言（expected.json）が無い・置き場が無い＝検査が働いていない（2）。
+        # 違反（1）と区別する（変異試験 2026-09-05 で、この2本は一度も通っていなかった）
+        exp.unlink()
+        if main(argv) != 2:
+            print("self-test NG: expected.json が無いのに 2 で止まらなかった"); ok = False
+        if main(["--seeds", str(root / "nope"), "--rules", str(rules)]) != 2:
+            print("self-test NG: 種の置き場が無いのに 2 で止まらなかった"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1

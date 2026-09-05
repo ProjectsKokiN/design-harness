@@ -1,0 +1,24 @@
+{
+ "$なぜ": "変異試験で素通りする経路のうち、試験しにくい理由があるもの。理由の無い素通りは落ちる（attack/mutation_test.py）",
+ "pin_check.py:147": "上流の既定ブランチが分からない（origin/HEAD も main も master も無い）。合成リポジトリで作れるが、この経路は git の環境の失敗で、道具の判定ではない",
+ "pin_check.py:166": "git rev-list の失敗。環境の経路",
+ "issue_sync.py:274": "~/dev に GitHub のリポジトリが無い。実行環境の経路",
+ "issue_sync.py:360": "Issue を立てるリポジトリが決められない。実行環境の経路",
+ "issue_sync.py:365": "GitHub の Issue が読めない（ネットワーク・認証）。環境の経路",
+ "shared_check.py:218": "git リポジトリではない場所で回した。環境の経路",
+ "readme_check.py:83": "発火ログを書いている engine が読めない。ハーネス自身の構成の経路",
+ "$patterns": [
+  {
+   "match": "読めません|ありません|見つかりません|実在しません|1つも|空です|0 ?件|台帳が|正本が|置き場が|導けません|決められません|分かりません|要ります|が不正です|生成に失敗",
+   "why": "入力が壊れている・無いときの停止（return 2）。attack/broken_input_test.py が全道具に一律で当てている（無いパス・壊れた JSON）。道具ごとの self-test には並べない"
+  },
+  {
+   "match": "print_help\\(\\)",
+   "why": "argparse の使い方の表示。検査の経路ではない"
+  }
+ ],
+ "ci_path_check.py:208": "git リポジトリの外で回した。環境の経路",
+ "shared_check.py:231": "git リポジトリではない場所で回した。環境の経路",
+ "seed_check.py:128": "エンジンの走査そのものが失敗した（count_hits が None）。エンジン側の失敗で、この道具の判定ではない",
+ "machine_scope.py:487": "git rm --cached の失敗。環境の経路"
+}

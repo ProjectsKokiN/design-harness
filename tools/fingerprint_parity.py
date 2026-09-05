@@ -198,14 +198,14 @@ def self_test():
     with tempfile.TemporaryDirectory() as td:
         d = Path(td)
 
-        def run_main(fixture_text, py_body, js_body):
+        def run_main(fixture_text, py_body, js_body, extra=()):
             (d / "fx.txt").write_bytes(fixture_text)
             (d / "text_digest.py").write_text(py_body, encoding="utf-8")
             (d / "text_digest.mjs").write_text(js_body, encoding="utf-8")
             global FP
             keep, FP = FP, d
             try:
-                return main(["--fixture", str(d / "fx.txt")])
+                return main(["--fixture", str(d / "fx.txt"), *extra])
             finally:
                 FP = keep
 
@@ -239,6 +239,17 @@ def self_test():
             # 固定具が無ければ 2
             check(main(["--fixture", str(d / "no_such.txt")]) == 2,
                   "固定具が無いのに通した")
+            # 記録（expected.txt）と違えば 1・同じなら 0。**式が変わったことの検出**
+            # （変異試験 2026-09-05: この帰り道は一度も通っていなかった）
+            exp = d / "expected.txt"
+            exp.write_text("0" * 64 + "\n", encoding="utf-8")
+            check(run_main(text, SAME_PY, SAME_JS, ["--expected", str(exp)]) == 1,
+                  "記録と違う指紋なのに通した")
+            import hashlib as _hl
+            exp.write_text(_hl.sha256(unicodedata.normalize(
+                "NFC", "が\nは\n").encode("utf-8")).hexdigest() + "\n", encoding="utf-8")
+            check(run_main(text, SAME_PY, SAME_JS, ["--expected", str(exp)]) == 0,
+                  "記録と同じなのに落ちた")
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1

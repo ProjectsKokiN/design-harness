@@ -1,6 +1,6 @@
 {
   "$生成元": "~/.claude/skills/mobile-harness-setup/references/production-gate.md",
-  "$生成元の指紋": "968cc0fc3983d00e",
+  "$生成元の指紋": "6a87cf8b20a4a252",
   "$手で書き換えない": "tools/gen_gate.py が生成します",
   "生きている条件": {
     "1": {

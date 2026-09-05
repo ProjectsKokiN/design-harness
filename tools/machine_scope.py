@@ -765,6 +765,25 @@ def self_test():
     check("|| rc=$?" in (__doc__ or "") or "|| rc=" in (__doc__ or ""),
           "安全な受け方の例が docstring に無い")
 
+    # ─── strict: 担当の宣言が無いパスを変えたら落ちる ───────────────
+    # （変異試験 2026-09-05: `return 1` を `return 0` にしても自己検査が通っていた）
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"; root.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main", str(root)])
+        (root / "lib").mkdir()
+        (root / "lib" / "a.dart").write_text("1\n", encoding="utf-8")
+        (root / "NOBODY.md").write_text("x\n", encoding="utf-8")
+        cs = {"machines": {"A": ["lib/"]}, "strict": True}
+        cfgp = Path(td) / "c.json"
+        cfgp.write_text(json.dumps(cs), encoding="utf-8")
+        CS = ["--config", str(cfgp), "--root", str(root), "--machine", "A", "--check"]
+        rc = main(CS)
+        check(rc == 1, f"strict なのに担当の宣言が無いパスの変更を通した（{rc}）")
+        cs["strict"] = False
+        cfgp.write_text(json.dumps(cs), encoding="utf-8")
+        rc = main(CS)
+        check(rc == 0, f"strict でないのに担当なしのパスで落ちた（{rc}）")
+
     # ─── #13: 担当外の変更を申し送りとして切り出す ─────────────────
     import contextlib as _ctx
     import io as _io
@@ -815,6 +834,19 @@ def self_test():
         if r.returncode != 0 or \
                 (root / "lib" / "theirs.dart").read_text(encoding="utf-8") != "2\n":
             print(f"self-test NG: パッチを当て直せない: {r.stderr[:150]}"); ok = False
+
+        # 差分が取れない（未追跡の新規ファイルだけ）→ 何も作れずに 1。
+        # 「切り出すものが無い（0）」と区別する（変異試験 2026-09-05）
+        subprocess.run(["git", "-C", str(root), "checkout", "--", "lib/theirs.dart"])
+        (root / "lib" / "new.dart").write_text("n\n", encoding="utf-8")
+        cf2 = {"machines": {"わたし": ["lib/mine.dart"],
+                            "あいて": ["lib/theirs.dart", "lib/new.dart"]}}
+        b = _io.StringIO()
+        with _ctx.redirect_stdout(b), _ctx.redirect_stderr(b):
+            rc = do_handoff("わたし", cf2, root)
+        if rc != 1 or "git add -N" not in b.getvalue():
+            print(f"self-test NG: 差分の取れない申し送りを 1 で返さない（{rc}）"
+                  f"\n   {b.getvalue()[:200]}"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1

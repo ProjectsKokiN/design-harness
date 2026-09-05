@@ -468,6 +468,18 @@ def self_test():
                                   encoding="utf-8")
         if check_style([d / "cmt.js"]):
             print("self-test NG: コメントを咎めた"); ok = False
+        # **main の帰り道まで見る**（2026-09-05 変異試験: check_style だけ見ていて、
+        # `return 1` を `return 0` にしても自己検査が通った）
+        cfg2 = d / "exporters.json"
+        cfg2.write_text(json.dumps({"exports_dir": "figma", "expectedBareMixed": 0}),
+                        encoding="utf-8")
+        sargv = ["--config", str(cfg2), "--style", "--exporters", str(d)]
+        if main(sargv) != 1:
+            print("self-test NG: 宣言（0）を上回る素読みがあるのに 1 で落ちなかった"); ok = False
+        cfg2.write_text(json.dumps({"exports_dir": "figma", "expectedBareMixed": 1}),
+                        encoding="utf-8")
+        if main(sargv) != 0:
+            print("self-test NG: 宣言どおりの件数なのに落ちた"); ok = False
 
     # ─── --samples（#22・FlashEnglish 2026-09-03 の再現）──────────────
     DOC = {"componentSets": {
@@ -497,6 +509,15 @@ def self_test():
         "sample": "PrependIcon=True", "children": [{"n": "PrependIcon"}]}}}}
     if check_samples(D3)[0]:
         print("self-test NG: 子のある見本を咎めた"); ok = False
+    # main の帰り道: 隠している見本があれば 1、無ければ 0
+    with _tf.TemporaryDirectory() as td3:
+        sp = Path(td3) / "components.json"
+        sp.write_text(json.dumps(DOC), encoding="utf-8")
+        if main(["--samples", str(sp)]) != 1:
+            print("self-test NG: 子を隠す見本があるのに 1 で落ちなかった"); ok = False
+        sp.write_text(json.dumps(D3), encoding="utf-8")
+        if main(["--samples", str(sp)]) != 0:
+            print("self-test NG: 隠していないのに落ちた"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1

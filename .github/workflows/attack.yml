@@ -31,6 +31,13 @@ jobs:
       - name: 設定が無い・壊れているときに全道具が止まるか
         run: python3 attack/broken_input_test.py
 
+      # **self-test があっても、その経路を試していなければ壊しても気づかない。**
+      # 各道具の「落とす」帰り道を1本ずつ潰して self-test が赤くなるかを見る
+      # （2026-09-05 実測: 185本のうち 88本＝47% が素通りだった）。
+      # 素通りは attack/mutation-allow.json に理由が無ければ落ちる
+      - name: 変異試験（落とす帰り道を self-test が見ているか）
+        run: python3 attack/mutation_test.py
+
       - name: 発火ログの項目表（実装と合っているか）
         run: python3 tools/readme_check.py --log-schema
 
