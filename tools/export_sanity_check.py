@@ -165,10 +165,10 @@ def check_frame(name, rows, min_slack):
         detail = (f'    親 {r["w"]:g}（右の余白 {pr:g}）→ 使える右端 {right_edge:g}\n'
                   f'    いちばん右の子 {k["name"]}: x={x:g} + 幅 {k["w"]:g} = {edge:g}')
         if slack < 0:
-            errs.append(f'  {where}: 子が親の中身より **{-slack:g} 広い**\n'
+            errs.append((where, f'  {where}: 子が親の中身より **{-slack:g} 広い**\n'
                         f'{detail}\n'
                         f'    **Figma の値どうしが矛盾しています。**'
-                        f'実装する前に Figma を直してください。')
+                        f'実装する前に Figma を直してください。'))
         elif slack < min_slack:
             thin.append(f'  {where}: 余りが **{slack:g} しかありません**'
                         f'（右端 {right_edge:g} / 子の右 {edge:g} = {k["name"]}）')
@@ -181,6 +181,9 @@ def main(argv=None):
     ap.add_argument("--min-slack", type=float, default=DEFAULT_MIN_SLACK)
     ap.add_argument("--expected-thin", type=int, metavar="N",
                     help="薄い余りの件数の宣言（上回れば落ちる）")
+    ap.add_argument("--declared", type=Path, metavar="JSON",
+                    help='Figma 側の矛盾の宣言 {"画面 / フレーム": {"why","reviewBy"}}。'
+                         '宣言済みは注意に落とす。期限切れ・古い宣言は落とす')
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
@@ -203,7 +206,26 @@ def main(argv=None):
               f"  **0件は「矛盾なし」ではなく「見ていない」です。**", file=sys.stderr)
         return 2
 
-    errs, thin, seen = [], [], 0
+    # **Figma 側の矛盾を、理由と期限つきで宣言する口**（2026-09-05・aub の取り込みで新設）。
+    # aub には矛盾が 11 件あり（ALBUM の写真の行が 5.5 はみ出す等）、Figma を直すのは
+    # デザイナーの仕事。宣言が無いと push 前の関門が止まり続け、`--no-verify` へ逃げる
+    # 誘因になる。**隠すのではなく、誰が・いつまで・なぜ、を書かせて注意に落とす。**
+    declared = {}
+    if args.declared:
+        if not args.declared.exists():
+            print(f"宣言がありません: {args.declared}", file=sys.stderr)
+            return 2
+        try:
+            declared = {k: v for k, v in json.loads(
+                args.declared.read_text(encoding="utf-8")).items() if not k.startswith("$")}
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"宣言が読めません: {args.declared}: {e}", file=sys.stderr)
+            return 2
+    from datetime import date as _date
+    today = _date.today().isoformat()
+
+    errs, thin, seen, waived = [], [], 0, []
+    hit_keys = set()
     for key, fr in sorted(frames.items()):
         if key.startswith("$"):
             continue
@@ -214,12 +236,30 @@ def main(argv=None):
         rows = [r for r in (parse_row(x) for x in raw if isinstance(x, str)) if r]
         e, t = check_frame(fr.get("name", key) if isinstance(fr, dict) else key,
                            rows, args.min_slack)
-        errs += e
+        for where, msg in e:
+            hit_keys.add(where)
+            d = declared.get(where)
+            if isinstance(d, dict) and str(d.get("why", "")).strip():
+                if str(d.get("reviewBy", "")) < today:
+                    errs.append(msg + f"\n    宣言の期限（{d.get('reviewBy')}）が切れています。"
+                                f"**まだ直っていないなら期限を更新してください。**")
+                else:
+                    waived.append(f"  {where}: 宣言あり（{d['why']} / 期限 {d['reviewBy']}）")
+            else:
+                errs.append(msg)
         thin += t
+    # **宣言だけ残っているものは落とす**（直ったのに宣言が消えていない＝宣言が古い）
+    for where in sorted(set(declared) - hit_keys):
+        errs.append(f"  {where}: 宣言がありますが、いまの書き出しに矛盾がありません。"
+                    f"**宣言のほうが古くなっています。消してください。**")
 
     if isinstance(args.expected_thin, int) and len(thin) > args.expected_thin:
         errs.append(f"  余りの薄い箇所が {len(thin)} 件で、"
                     f"宣言（{args.expected_thin}）を上回りました。")
+    if waived:
+        print(f"注意: Figma 側の矛盾 {len(waived)} 件を理由つきで宣言しています"
+              f"（直したら宣言を消すこと）:")
+        print("\n".join(waived))
     if errs:
         print(f"書き出しの中に矛盾があります（画面 {seen} 枚）:", file=sys.stderr)
         print("\n".join(errs[:20]), file=sys.stderr)
@@ -326,6 +366,33 @@ def self_test():
         rc, out = run({})
         if rc != 2 or "見ていない" not in out:
             print(f"self-test NG: 画面0枚で通した（{rc}）"); ok = False
+        # ─── --declared（Figma 側の矛盾を理由と期限つきで宣言する）────────────
+        dec = Path(td) / "declared.json"
+        CAM = {"1:1": {"name": "CAMERA", "rows": rows(
+            "0|CAMERA|FRAME|390|844|0|0|layout=20,20,20,20,0,VERTICAL,FIXED,FIXED,MIN,MIN",
+            "1|Images|INSTANCE|360|360|20|20|sz=FIXED,FIXED")}}
+
+        def with_decl(frames, d):
+            dec.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+            return run(frames, "--declared", str(dec))
+
+        rc, out = with_decl(CAM, {"CAMERA / CAMERA": {"why": "Figma の Images が 360 のまま。デザイナーが直す", "reviewBy": "2099-01-01"}})
+        if rc != 0 or "宣言あり" not in out:
+            print(f"self-test NG: 理由つきで宣言したのに落ちた（{rc}）\n   {out[:300]}"); ok = False
+        rc, out = with_decl(CAM, {"CAMERA / CAMERA": {"why": "x", "reviewBy": "2020-01-01"}})
+        if rc != 1 or "期限" not in out:
+            print(f"self-test NG: 期限切れの宣言を通した（{rc}）"); ok = False
+        rc, _ = with_decl(CAM, {"CAMERA / CAMERA": {"why": "  ", "reviewBy": "2099-01-01"}})
+        if rc != 1:
+            print(f"self-test NG: 理由が空の宣言を通した（{rc}）"); ok = False
+        # **直ったのに宣言が残っている**＝宣言のほうが古い → 落とす
+        rc, out = with_decl(okf, {"OK / Row": {"why": "x", "reviewBy": "2099-01-01"}})
+        if rc != 1 or "宣言のほうが古く" not in out:
+            print(f"self-test NG: 古い宣言を通した（{rc}）"); ok = False
+        rc, _ = run(CAM, "--declared", str(Path(td) / "ない.json"))
+        if rc != 2:
+            print(f"self-test NG: 宣言ファイルが無いのに 2 で止まらなかった（{rc}）"); ok = False
+
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
 
