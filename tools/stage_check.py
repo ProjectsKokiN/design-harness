@@ -238,6 +238,11 @@ def self_test_stages():
                           encoding="utf-8")
         if check_neutered(verify, live2):
             print("self-test NG: pipefail があるのにパイプを咎めた"); ok = False
+        # pipefail があっても || true は消す（planttalk の実態）
+        verify.write_text('set -euo pipefail\npython3 $H/check_render_gaps.py --config c.json 2>&1 | tail -3 || true\n',
+                          encoding="utf-8")
+        if not check_neutered(verify, live2):
+            print("self-test NG: pipefail の下の || true を見逃した"); ok = False
         verify.write_text('python3 $H/check_render_gaps.py --config c.json\n', encoding="utf-8")
         if check_neutered(verify, live2):
             print("self-test NG: 素の呼び出しを咎めた"); ok = False
@@ -554,13 +559,14 @@ def check_neutered(verify, live):
         hit = [tname for tname in tools if tname in s]
         if not hit:
             continue
-        m = NEUTER_RX.search(s)
-        if not m:
-            continue
-        if m.group(0).startswith("|") and not m.group(0).startswith("||") and pipefail:
+        # **全部の一致を見る。** pipefail があってもパイプの後ろの `|| true` は終了コードを消す
+        # （planttalk は set -euo pipefail のうえで `| tail -3 || true` と書いていた）
+        found = [m.group(0).strip() for m in NEUTER_RX.finditer(s)
+                 if m.group(0).startswith("||") or not pipefail]
+        if not found:
             continue
         errs.append(f"  関門の道具 `{hit[0]}` の呼び出しが終了コードを消しています"
-                    f"（`{m.group(0).strip()}`）:\n    {s[:100]}\n"
+                    f"（`{' '.join(found)}`）:\n    {s[:100]}\n"
                     f"    **回っていますが、落ちようがありません。** 関門でないなら note で呼んでください。")
     return errs
 
