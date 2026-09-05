@@ -47,6 +47,7 @@
 | `templates/machine-scope.json` | 担当の宣言のひな形（案件の `design/` へコピーする） |
 | **`tools/gap_report.py`** | **検査が見なかったものを機械が出す**（完了レポートの「限界」を自己申告にしない） |
 | **`tools/expectation_source_check.py`** | 照合テストの期待値が書き出し由来か（手書きの期待値を禁じる） |
+| **`tools/digest_check.py`** | **書き出しの中身の指紋**（`$meta.payloadDigest`）を、一覧を持たず `design/figma/*.json` 全部で照合する。指紋の無い書き出しを名指しする |
 | **`tools/exporter_check.py`** | 書き出しを作った器が保存され、指紋が一致するか |
 | **`tools/tree_test_check.py`** | 条件9 の網羅（状態・スロットを持つセットにテストがあるか） |
 | **`tools/stage_check.py`** | **verify.sh の各段が「落ちるところを見た」道具か**（self-test の有無と結果） |

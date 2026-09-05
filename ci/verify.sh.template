@@ -172,6 +172,10 @@ step "見本の変異（子を隠していないか）" \
   "$PY" "$HARNESS/tools/exporter_check.py" --samples design/figma/components.json
 step "器の書き方（figma.mixed で止まらないか）" \
   "$PY" "$HARNESS/tools/exporter_check.py" --style --config design/exporters.json
+# 書き出しの**中身**の指紋（写した後に手直ししていないか）。一覧を持たず全部歩く
+# （#66: 手書きの一覧に画面まわりの5件を足し忘れ、古い指紋が丸1日通った）
+step "書き出しの指紋（写した後に手直ししていないか）" \
+  "$PY" "$HARNESS/tools/digest_check.py" --dir design/figma
 step "書き出しの器（保存されていて指紋が一致するか）" \
   "$PY" "$HARNESS/tools/exporter_check.py" --config design/exporters.json
 # **押した状態が試験で一度も描かれない**（tap は down と up の間に
