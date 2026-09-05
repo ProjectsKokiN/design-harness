@@ -51,7 +51,9 @@ import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf
 SITUATIONS = {
     "許可を断られた": (
         r"permission_handler|Permission\.|ImagePicker|camera|geolocator|Geolocator|"
-        r"NSCameraUsageDescription|NSLocationWhenInUse",
+        r"NSCameraUsageDescription|NSLocationWhenInUse|NSMicrophoneUsageDescription|"
+        r"NSPhotoLibraryUsageDescription|RECORD_AUDIO|package:record|speech_to_text|"
+        r"UNUserNotificationCenter|firebase_messaging|flutter_local_notifications",
         "カメラ・位置情報などの許可を**断った**あとに、真っ黒の画面や進めない画面にならないか。"
         "設定へ誘導する道があるか"),
     "圏外・遅い通信": (
@@ -267,6 +269,12 @@ def self_test():
             print(f"self-test NG: 実装が変わったのに古くならない（{rc}）"); ok = False
         if "文字倍率:" in txt:
             print("self-test NG: 関係ない状況まで古くした"); ok = False
+        # マイク・通知の許可も「許可を断られた」に入る（FlashEnglish で mic の印を見落としかけた）
+        (lib / "mic.dart").write_text("import 'package:record/record.dart';\n", encoding="utf-8")
+        run()
+        if "許可を断られた" not in json.loads(out.read_text(encoding="utf-8"))["状況"]:
+            print("self-test NG: 録音の印から許可の状況が導けない"); ok = False
+        (lib / "mic.dart").unlink()
         # コメントの中の印は数えない
         (lib / "cmt.dart").write_text("// dio を使う予定\n", encoding="utf-8")
         run()
