@@ -265,7 +265,10 @@ def check_self_reference(tests, base, symbols):
             args = split_args(st[i + len("expect("):st.rfind(")")])
             if len(args) < 2:
                 continue
-            expected = args[1]
+            # **文字列の中の名前は呼び出しではない。** FlashEnglish 2026-09-05:
+            # `expect(Footer.heightFor(), value('Footer.heightFor()'))` の期待値は
+            # 書き出しを鍵で引いており、鍵の文字列に名前が入っているだけだった（7件誤検出）
+            expected = re.sub(r"'[^']*'|\"[^\"]*\"", "''", args[1])
             hit = [n for n in here if re.search(r"\b" + re.escape(n) + r"\s*\(", expected)]
             at = line_of(ln, st, i)
             if not hit or ignored(lines, at):
@@ -650,6 +653,11 @@ def self_test():
                                   "expect(hardAreasFor(10).last, 10.0);"))
         if rc != 0:
             print(f"self-test NG: 実際の側で呼んだだけで落ちた（{rc}）"); ok = False
+        # 期待値が書き出しを**鍵の文字列**で引いていて、その鍵に名前が入っているだけ
+        rc, _ = run(CLEAN.replace("expect(w, 100.0);",
+                                  "expect(hardAreasFor(10).last, value('hardAreasFor(10)'));"))
+        if rc != 0:
+            print(f"self-test NG: 鍵の文字列の中の名前を呼び出しと取り違えた（{rc}）"); ok = False
 
         # 形4: 緩い finder
         rc, out = run(CLEAN.replace("find.byType(ScreenFooter), findsOneWidget",
