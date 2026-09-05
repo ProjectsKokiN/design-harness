@@ -57,7 +57,7 @@ import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf
 #: 実装が使っている数値。2桁以上だけ見る（0〜9 は添字や真偽が混ざる）
 NUM_RX = re.compile(r"(?<![\w.])(\d{2,}(?:\.\d+)?)(?![\w.])")
 #: 実装が使っているトークン名。`AppColor.frameNeutralSubtle` の後ろ
-TOKEN_RX = re.compile(r"\bApp[A-Z]\w*\.([a-zA-Z_]\w*)")
+TOKEN_RX = re.compile(r"\b(App[A-Z]\w*)\.([a-zA-Z_]\w*)")
 #: 行のコメント（この道具は「書いてある値」ではなく「使う値」を見る）
 COMMENT_RX = re.compile(r"//.*")
 
@@ -112,6 +112,11 @@ def scan(impl_dirs, blob, suffixes):
     nums_ok |= {norm(n) for n in nums_ok}
     found = {}
     files = 0
+    # **トークンの型は宣言しない。生成物が定義している型から導出する。**
+    # `App` で始まる型を全部トークンと見なすと、Flutter の `AppLifecycleState.resumed` や
+    # 案件の `AppSheet.show(...)` まで「生成物に無いトークン」になる
+    # （FlashEnglish 2026-09-05: 10件の誤検出）
+    token_classes = set(re.findall(r"\bclass\s+(App[A-Za-z0-9_]+)\b", blob))
     for d in impl_dirs:
         if not d.exists():
             continue
@@ -124,7 +129,8 @@ def scan(impl_dirs, blob, suffixes):
             text = COMMENT_RX.sub("", f.read_text(encoding="utf-8", errors="ignore"))
             miss_n = sorted({n for n in NUM_RX.findall(text)
                              if norm(n) not in nums_ok})
-            miss_t = sorted({x for x in TOKEN_RX.findall(text) if x not in blob})
+            miss_t = sorted({m for c, m in TOKEN_RX.findall(text)
+                             if c in token_classes and m not in blob})
             if miss_n or miss_t:
                 found[f] = (miss_n, miss_t)
     return found, files
@@ -336,6 +342,12 @@ def self_test():
             print(f"self-test NG: コメントの中の数値を咎めた（{rc}）"); ok = False
 
         # 生成物にないトークンは落ちる
+        (root / "lib" / "theme" / "c.g.dart").write_text(
+            "class AppColor { static const frameNeutralSubtle = 1; }\n", encoding="utf-8")
+        # 生成物が定義していない App* の型（Flutter の AppLifecycleState など）は見ない
+        rc, _ = run("final s = AppLifecycleState.resumed; final t = AppSheet.show;\n")
+        if rc != 0:
+            print(f"self-test NG: 生成物に無い App* の型をトークンと取り違えた（{rc}）"); ok = False
         rc, out = run("const c = AppColor.noSuchColor;\n")
         if rc != 1 or "noSuchColor" not in out:
             print(f"self-test NG: 生成物に無いトークンを通した（{rc}）"); ok = False
@@ -389,6 +401,7 @@ def self_test():
         # **出どころが読めなければ落ちる**（この道具自身の空振り）
         (root / "design" / "figma" / "frames.json").unlink()
         (root / "lib" / "theme" / "t.g.dart").unlink()
+        (root / "lib" / "theme" / "c.g.dart").unlink()
         rc, out = run(CLEAN)
         if rc != 2 or "全部まちがい" not in out:
             print(f"self-test NG: 出どころ0で報告を出した（{rc}）"); ok = False
