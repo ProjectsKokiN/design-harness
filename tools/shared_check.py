@@ -325,6 +325,9 @@ def self_test():
             print(f"self-test NG: 枝に取り残された受信箱を見逃した（{rc}）"); ok = False
         # **受信箱でない共有物**（docs/）は注意にとどめる（aub の取り込みで過剰に止まった）
         g("checkout", "-q", "main", cwd=work); g("checkout", "-q", "-b", "w2", cwd=work)
+        # main には machine-scope.json が無い（mine で足した）ので、この枝にも置く
+        Path(ms).parent.mkdir(parents=True, exist_ok=True)
+        Path(ms).write_text(json.dumps({"shared": ["MACHINE_TASKS.md", "docs/"]}), encoding="utf-8")
         (work / "docs").mkdir(exist_ok=True)
         (work / "docs" / "x.md").write_text("枝で直した文書\n", encoding="utf-8")
         g("add", "-A", cwd=work); g("commit", "-qm", "docs", cwd=work)
