@@ -62,7 +62,6 @@
 | `tools/figma_freshness.py` | 書き出しが Figma より古くないか（指紋） |
 | `tools/gen_input_check.py` | 生成器・照合の入力が書き出しだけか（記録層の廃止・2026-08-29） |
 | `tools/coverage_check.py` | 照合体制（**参考**。条件2 は 2026-09-03 に廃止）: 照合相手が書き出しだけか |
-| `tools/sync_pending.py` | 【廃止予定】記録層とともに削除する（既存案件の移行後） |
 | `ci/verify.sh.template` | 統合検査の入口の雛形（必須段を減らさない） |
 | `tools/harness_stats.py` | 発火ログの集計（任意の道具。2026-08-29 に「仕組改善層」としては廃止） |
 | `tools/contact_sheet.py` | golden を1枚のタイルに |
@@ -221,7 +220,6 @@ git -C design/harness pull origin main
 | `pin_check` | ネットワークが要る（本人が冒頭に明記） |
 | `figma_freshness` | 同上。Figma 本体を叩く |
 | `contact_sheet` / `token_query` / `harness_stats` | **合否を出さない**（人が見る道具） |
-| `sync_pending` | 廃止予定（記録層とともに削除する） |
 
 `design/design_check.py`（案件のシム → エンジン）は `--self-test` を持たないが、
 **`attack/engine_attack_test.py` の39件がその役目**を果たす。`stage_check` からは
