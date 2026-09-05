@@ -69,6 +69,8 @@
 | `tools/token_query.py` | 値からトークン名の逆引き |
 | `vocab/_vocab.json` | status / blockedBy / origin の語彙の正本 |
 | `attack/engine_attack_test.py` | エンジンの妨害テスト（全機能に「落ちるケース」を持つ） |
+| `tools/inbox_tool.py` | 受信箱（MACHINE_TASKS.md）の節を**道具で**足す・完了にする・対象の commit を確かめる（#69: regex を手で書いて 3 台が同じ形で受信箱を削った / #71: 依頼に対象の commit が無く古い版が 2 回配られた） |
+| `tools/swallow_check.py` | **溜めた指摘を早期 `return 0` で捨てている検査**を見つける（#69: aub の受信箱が 3 回削られ、2 回は緑だった形）。案件の `design/gen/*.py` にも当てる |
 | **`attack/mutation_test.py`** | **変異試験**。各道具の「落とす」帰り道（`return 1` / `return 2`）を1本ずつ `return 0` に潰し、self-test が赤くなるかを見る。素通りは `attack/mutation-allow.json` に理由が無ければ落ちる（2026-09-05 の実測: 47% が素通りしていた） |
 | `tools/stage_check.py --min-coverage N` | **self-test が本体の N% を通ることを求める**（持っているだけでは何も証明していない） |
 | `ci/` | 各リポジトリへ配る workflow の雛形 |

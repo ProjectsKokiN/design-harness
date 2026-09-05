@@ -36,6 +36,7 @@
 | 5 誰も見ていない文字 | 画面に直書きされていて、試験にも書き出しにも1度も出てこない文字（**件数のラチェット**） |
 | 6 1つの幅でしか回らない検査 | 案件が宣言した画面幅のうち、**2つ以上を試験が使っていない** |
 | 7 文字幅を素のスタイルで測る | `TextPainter` に `DefaultTextStyle` を混ぜず、文字倍率も落としている |
+| 8 打ち消し合い（#70） | `expect` の**両辺が同じ実装ファイルの関数**を呼んでいて、その検査ファイルが描いた値（`getSize` / `getRect`）も書き出しも**1度も読んでいない**。実装を壊しても両辺で打ち消し合って通る |
 
 形6 の実害（aub-familywalk・2026-09-02）: 画面のコードが Figma の幅 390 に
 焼き付いていた（`MediaQuery` の使用が **0件**）。**照合は 390 の1点だけ**なので、
@@ -227,6 +228,72 @@ def lib_symbols(lib, generated=(".g.dart",)):
         text = f.read_text(encoding="utf-8", errors="ignore")
         names |= set(DECL_RX.findall(text)) | set(CONST_RX.findall(text))
     return {n for n in names if len(n) > 3} - DART_KEYWORDS
+
+
+def lib_symbol_files(lib, generated=(".g.dart",)):
+    """lib/ の識別子 → それを宣言しているファイル（形8 で「同じ出どころ」を判定する）。"""
+    out = {}
+    for f in dart_files(lib):
+        if any(f.name.endswith(g) for g in generated):
+            continue
+        text = f.read_text(encoding="utf-8", errors="ignore")
+        for n in set(DECL_RX.findall(text)) | set(CONST_RX.findall(text)):
+            if len(n) > 3 and n not in DART_KEYWORDS:
+                out.setdefault(n, f)
+    return out
+
+
+#: 書き出しを読んでいる印（別経路の1つ）
+EXPORT_READ_RX = re.compile(r"figma/|design/|\.json['\"]|loadExport|readExport")
+
+
+def check_same_source(tests, base, sym_files, allow):
+    """形8: 期待値と実測が**同じ実装**から来ていて、別経路と1度も突き合わせていない。
+
+    aub 2026-09-04（#70）: `expect(cropFraction(...) を戻したもの, square(...))` は両辺が
+    同じ `square()` を呼ぶので、**`square()` を壊しても両辺で打ち消し合って通った。**
+    描いた四角（`tester.getRect`）と突き合わせて初めて落ちた。
+
+    「1か所にまとめる」は正しい方針だが、**まとめた関数を検査の両辺で使うと、検査は自分を
+    検査する。** 通るのが当たり前なので、書いた本人は「検査した」と思う。
+
+    **検査ファイル単位で見る。** 実装どうしの突き合わせが1件以上あり、そのファイルに描いた値
+    （MEASURE_RX）も書き出しの読みも1つも無ければ、実装を実装で採点しているだけ。
+    形3 が見るのは「描いた値を実装で採点」で、こちらは「実装を実装で採点」。
+    """
+    out = []
+    if not sym_files:
+        return out
+    for f in tests:
+        rel = f.relative_to(base).as_posix()
+        text = f.read_text(encoding="utf-8", errors="ignore")
+        if MEASURE_RX.search(text) or EXPORT_READ_RX.search(text):
+            continue                           # 別経路と1つは突き合わせている
+        mine = set(DECL_RX.findall(text)) | set(CONST_RX.findall(text))
+        pairs = []
+        for ln, st in statements(text):
+            i = st.find("expect(")
+            if i < 0:
+                continue
+            args = split_args(st[i + len("expect("):st.rfind(")")])
+            if len(args) < 2:
+                continue
+            sides = []
+            for a in args[:2]:
+                a = re.sub(r"'[^']*'|\"[^\"]*\"", "''", a)
+                sides.append({sym_files[n] for n in sym_files
+                              if n not in mine and re.search(r"\b" + re.escape(n) + r"\s*\(", a)})
+            common = sides[0] & sides[1]
+            if common:
+                pairs.append((line_of(ln, st, i), sorted(p.name for p in common)[0]))
+        if pairs and rel not in allow:
+            out.append((f.relative_to(base), pairs[0][0],
+                        f"期待値と実測が同じ実装（{pairs[0][1]}）から来ている突き合わせが "
+                        f"{len(pairs)} 件あり、描いた値（getSize / getRect）も書き出しも"
+                        f"1度も読んでいません。**実装を壊しても両辺で打ち消し合って通ります。** "
+                        f"別経路と1つは突き合わせるか、hollow.json の「打ち消し合い」に"
+                        f"理由つきで宣言してください"))
+    return out
 
 
 def split_args(inner):
@@ -535,10 +602,17 @@ def main(argv=None):
         return 2
 
     findings = []
+    generated = tuple(conf.get("generated", [".g.dart"]))
+    same_allow = (conf.get("打ち消し合い") or {}).get("allow") or {}
+    for rel, why in same_allow.items():
+        if not str(why).strip():
+            findings.append(f"  [打ち消し合い] 宣言に理由がありません: {rel}")
     for label, hits in (
         ("例外を捨てている", check_swallowed(tests, base)),
         ("期待値が実装を呼んでいる", check_self_reference(tests, base, lib_symbols(
-            lib_dir, tuple(conf.get("generated", [".g.dart"]))))),
+            lib_dir, generated))),
+        ("打ち消し合い", check_same_source(tests, base, lib_symbol_files(lib_dir, generated),
+                                        set(same_allow))),
         ("緩い finder", check_loose_finder(tests, base)),
     ):
         for path, ln, why in hits:
@@ -660,11 +734,37 @@ def self_test():
                                     "expect(tester.getTopLeft(find.byKey(k)).dy, hardAreasFor(10).last);"))
         if rc != 1 or "期待値が実装" not in out:
             print(f"self-test NG: 描いた値を実装で採点しているのを見逃した（{rc}）"); ok = False
-        # 純粋な関数どうしの整合性は形3 ではない（描いた値を見ていない）
-        rc, _ = run(CLEAN.replace("expect(w, 100.0);",
-                                  "expect(hardAreasFor(10).length, hardAreasFor(20).length);"))
+        # 純粋な関数どうしの整合性は形3 ではない（描いた値を見ていない）——が、
+        # **同じ実装どうしを突き合わせるだけで、描いた値も書き出しも読まないファイル**は
+        # 形8（打ち消し合い・#70）。実装を壊しても両辺で打ち消し合って通る
+        SAME = CLEAN.replace("expect(w, 100.0);",
+                             "expect(hardAreasFor(10).length, hardAreasFor(20).length);")
+        rc, out = run(SAME)
+        if rc != 1 or "打ち消し合い" not in out or "期待値が実装" in out:
+            print(f"self-test NG: 同じ実装どうしの突き合わせだけの検査を通した／形3 と混同した（{rc}）\n"
+                  f"   {out[:300]}"); ok = False
+        # 同じファイルで描いた値と1つ突き合わせていれば通る
+        rc, _ = run(SAME.replace("expect(find.byType(ScreenFooter), findsOneWidget);",
+                                 "expect(tester.getSize(find.byKey(k)).width, 100.0);"))
         if rc != 0:
-            print(f"self-test NG: 描画を測っていない整合性の試験を咎めた（{rc}）"); ok = False
+            print(f"self-test NG: 描いた値と突き合わせているのに打ち消し合いで落ちた（{rc}）"); ok = False
+        # 書き出しを読んでいれば通る
+        rc, _ = run(SAME.replace("expect(find.byType(ScreenFooter), findsOneWidget);",
+                                 "final doc = File('design/figma/frames.json');"))
+        if rc != 0:
+            print(f"self-test NG: 書き出しを読んでいるのに打ち消し合いで落ちた（{rc}）"); ok = False
+        # 理由つきの宣言なら通り、理由が無ければ落ちる
+        conf.write_text(json.dumps({"文字の照合": {"expectedUnmatched": 1},
+                                    "打ち消し合い": {"allow": {"test/a_test.dart": "純粋な計算の整合性。描くものが無い"}}},
+                                   ensure_ascii=False), encoding="utf-8")
+        if run(SAME)[0] != 0:
+            print("self-test NG: 理由つきの打ち消し合いの宣言を通さない"); ok = False
+        conf.write_text(json.dumps({"文字の照合": {"expectedUnmatched": 1},
+                                    "打ち消し合い": {"allow": {"test/a_test.dart": ""}}},
+                                   ensure_ascii=False), encoding="utf-8")
+        if run(SAME)[0] != 1:
+            print("self-test NG: 理由の無い打ち消し合いの宣言を通した"); ok = False
+        conf.write_text(json.dumps({"文字の照合": {"expectedUnmatched": 1}}), encoding="utf-8")
         rc, _ = run(CLEAN.replace("expect(w, 100.0);",
                                   "expect(hardAreasFor(10).last, 10.0);"))
         if rc != 0:

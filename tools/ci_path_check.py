@@ -319,7 +319,7 @@ def main(argv=None):
                 missing.append(f"  {yml.name}: {p}")
     if checked == 0:
         print("注意: 検査できたパスが0件です（全部が変数入り、またはパスが無い）")
-        return 0
+        return 0  # swallow-ok: checked が 0 なら missing も必ず空（同じ分岐でだけ足している）
     if missing:
         print("CI が参照するパスが実在しません（push すると CI が落ちます）:",
               file=sys.stderr)
@@ -360,7 +360,7 @@ def check_sources(root, globs, ignore=None):
                     missing.append(f"  {f.relative_to(root)}: {p}")
     if files == 0:
         print("注意: 走査したファイルが0件です（--sources の指定を確認）")
-        return 0
+        return 0  # swallow-ok: files が 0 なら missing も必ず空（ファイルを読んでからしか足さない）
     if missing:
         print("案内しているパスが実在しません（読んだ人が空振りします）:",
               file=sys.stderr)

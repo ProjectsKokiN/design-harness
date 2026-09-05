@@ -172,6 +172,10 @@ step "見本の変異（子を隠していないか）" \
   "$PY" "$HARNESS/tools/exporter_check.py" --samples design/figma/components.json
 step "器の書き方（figma.mixed で止まらないか）" \
   "$PY" "$HARNESS/tools/exporter_check.py" --style --config design/exporters.json
+# 器のページ名（#67）。器はページ名で引き当てるので、Figma のページ名を変えると黙って壊れる。
+# 部分一致（.test / includes）は一括置換に引っかからず旧名のまま残る。page-scope.json の allowed が正
+step "器のページ名（改名で黙って壊れないか）" \
+  "$PY" "$HARNESS/tools/exporter_check.py" --pages --config design/exporters.json
 # 書き出しの**中身**の指紋（写した後に手直ししていないか）。一覧を持たず全部歩く
 # （#66: 手書きの一覧に画面まわりの5件を足し忘れ、古い指紋が丸1日通った）
 step "書き出しの指紋（写した後に手直ししていないか）" \
@@ -208,6 +212,14 @@ step "空振りの検査（何も見ていない書き方）" \
 # 確かめたら: python3 $HARNESS/tools/situations_check.py --lib lib --out design/situations.json --confirm <状況>
 step "守る状況（実機で確かめた記録が古くないか）" \
   "$PY" "$HARNESS/tools/situations_check.py" --lib lib --out design/situations.json --check
+# 案件の検査（design/gen/*.py）が、溜めた指摘を早期 return で捨てていないか（#69）。
+# aub の machine_tasks_check が「0件の宣言」で ng を捨て、受信箱が削られても 2 回緑だった
+step "握りつぶし（溜めた指摘を捨てる帰り道が無いか）" \
+  "$PY" "$HARNESS/tools/swallow_check.py" --root design/gen
+# 依頼の対象（#71）。ビルドの依頼には「どの commit に対するものか」が要り、受け取った機体の HEAD が
+# それより古ければ落とす（直す前の版が 2 回配られた）。受信箱が無い案件は stages.json に不在を宣言する
+step "依頼の対象（ビルドの依頼に対象の commit があり、手元がそれより古くないか）" \
+  "$PY" "$HARNESS/tools/inbox_tool.py" --check-target --require-for "ビルド|APK|TestFlight|IPA|配布"
 step "段の健全性（落ちるところを見た道具か）" \
   "$PY" "$HARNESS/tools/stage_check.py" --verify design/verify.sh
 # **段の数**を見る。元ファイルにある段がこの案件から落ちていないか。

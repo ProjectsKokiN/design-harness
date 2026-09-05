@@ -31,7 +31,13 @@
 
 `--shared` は `machine-scope.json` の `shared`（3台の受信箱）が
 **既定ブランチにあるか**を見ます。受信箱をブランチに置いた瞬間、受信箱として
-機能しなくなります。
+機能しなくなります。**受信箱だけの枝は許します**（Mac は main へ直接 push しないので、
+司令塔は PR で受信箱に書く。すぐマージして届ける前提）。コードと一緒の枝は落とします。
+あわせて `受信箱の必須の節`（#69）を見ます: 宣言した節が受信箱から消えていたら落とす
+（aub で 3 回、受信箱が 33 行まで削られ、2 回は緑だった）。
+
+    "inbox": ["MACHINE_TASKS.md", "SESSION_LOG.md", "MACHINE_TASKS_ARCHIVE.md"],
+    "受信箱の必須の節": {"MACHINE_TASKS.md": ["## セッションログの書き方", "## 未対応の依頼（索引）"]}
 
 `--claims` は「このブランチに入っているはず」の宣言を、**実際の差分と
 突き合わせます**。PR の説明は他機体が行動を決める根拠になるので、間違っていると
@@ -165,12 +171,42 @@ def check_shared(root, conf_path, inbox=INBOX):
     if not inbox_shared:
         print("  **受信箱が1つも無いので、この検査は何も守っていません。** shared に"
               "受信箱を入れるか、inbox に名前を宣言してください")
+
+    # ── 必須の節（#69）: 受信箱が丸ごと削られても誰も気づかなかった ──────────
+    # aub 2026-09-04〜05: MACHINE_TASKS.md が 3 回 33 行まで削られ、2 回は verify.sh が緑。
+    # 消えたのは「セッションログの書き方」「ビルドを頼むときの決まり」「完了した依頼の扱い」
+    # 「未対応の依頼（索引）」——依頼を受けた機体が書き方を知る唯一の場所。
+    # どの節が無いと運用が止まるかは案件が宣言する（machine-scope.json の「受信箱の必須の節」）
+    errs = []
+    req = doc.get("受信箱の必須の節") or {}
+    if isinstance(req, dict) and req:
+        for fname, heads in req.items():
+            fp = Path(root) / fname
+            if not fp.exists():
+                errs.append(f"  必須の節を宣言した受信箱がありません: {fname}")
+                continue
+            body = [ln.rstrip() for ln in fp.read_text(encoding="utf-8",
+                                                        errors="ignore").splitlines()]
+            missing = [h for h in (heads or []) if not any(ln.startswith(h) for ln in body)]
+            if missing:
+                errs.append(f"  **{fname} に必須の節がありません**（{len(missing)}/{len(heads)}）: "
+                            + " / ".join(missing) + "\n"
+                            f"    丸ごと削られた形です（aub 2026-09-04〜05 に 3 回）。"
+                            f"git で戻してください")
+        req_names = {Path(k).name for k in req}
+        n_req = len([f for f in inbox_shared if Path(str(f).rstrip("/")).name in req_names])
+        print(f"必須の節: 受信箱 {len(inbox_shared)} 件のうち宣言あり {n_req} 件"
+              f"（{sum(len(v or []) for v in req.values())} 節を見ました）")
+    else:
+        print("必須の節: **宣言がありません**（machine-scope.json の「受信箱の必須の節」）。"
+              "節が消えても誰も気づきません")
+
     ref = default_ref(root)
     if ref is None:
-        return [f"  上流の既定ブランチが分かりません"]
+        return errs + [f"  上流の既定ブランチが分かりません"]
     head = run("rev-parse", "--abbrev-ref", "HEAD", cwd=root).stdout.strip()
     if head == ref.split("/", 1)[1]:
-        return []                       # 既定ブランチで作業しているなら届く
+        return errs                     # 既定ブランチで作業しているなら届く
     diff = run("diff", "--name-only", f"{ref}...HEAD", cwd=root).stdout.split()
     stuck, other = [], []
     for s in shared:
@@ -181,13 +217,21 @@ def check_shared(root, conf_path, inbox=INBOX):
         print(f"注意: 共有物（受信箱ではない）を枝で変えています（{len(set(other))}件）: "
               + " / ".join(sorted(set(other))[:6]) + "。他の機体は既定ブランチで読みます。")
     if not stuck:
-        return []
-    return [f"  **受信箱の変更が枝（{head}）に取り残されています**（{len(stuck)}件）。\n"
-            f"    受信箱は3台が読む場所です。**枝に置いた瞬間、受信箱として"
-            f"機能しなくなります。**\n"
-            f"    " + " / ".join(sorted(set(stuck))[:8])
-            + ("…" if len(set(stuck)) > 8 else "") + "\n"
-            f"    {ref} へ先に出すか、共有物だけを小さく分けて出してください。"]
+        return errs
+    # **受信箱だけの枝は、すぐマージして届ける前提で許す。** Mac は main へ直接 push しない
+    # （2026-08-19 ユーザー確定）ので、machine-relay の司令塔は PR で受信箱に書く。
+    # それを落とすと Mac は受信箱に一生書けない（aub 2026-09-05 に実際に詰まった）。
+    # コードと一緒の枝は今までどおり落とす（コードのレビュー待ちで受信箱が止まる）
+    if diff and all(Path(f).name in inbox for f in diff):
+        print(f"注意: 受信箱だけの枝（{head}・{len(set(stuck))} 件）。**PR をすぐにマージして"
+              f"届ける前提**でだけ許します。マージせずに残すと受信箱として機能しません")
+        return errs
+    return errs + [f"  **受信箱の変更が枝（{head}）に取り残されています**（{len(stuck)}件）。\n"
+                   f"    受信箱は3台が読む場所です。**枝に置いた瞬間、受信箱として"
+                   f"機能しなくなります。**\n"
+                   f"    " + " / ".join(sorted(set(stuck))[:8])
+                   + ("…" if len(set(stuck)) > 8 else "") + "\n"
+                   f"    {ref} へ先に出すか、**受信箱だけを別の枝に分けて**すぐマージしてください。"]
 
 
 def check_claims(root, conf_path):
@@ -371,6 +415,24 @@ def self_test():
         rc, out = call("--shared", ms)
         if rc != 0 or "受信箱ではない" not in out:
             print(f"self-test NG: 受信箱でない共有物で止めた（{rc}）\n   {out[:200]}"); ok = False
+        # ── #69: 受信箱だけの枝は許す（すぐマージして届ける前提）・必須の節 ──
+        g("checkout", "-q", "main", cwd=work); g("checkout", "-q", "-b", "w3", cwd=work)
+        ms3 = base / "ms3.json"          # 作業ツリーの外に置く（枝の差分に混ぜない）
+        ms3.write_text(json.dumps({"shared": ["MACHINE_TASKS.md"],
+                                   "受信箱の必須の節": {"MACHINE_TASKS.md": ["## セッションログの書き方"]}},
+                                  ensure_ascii=False), encoding="utf-8")
+        (work / "MACHINE_TASKS.md").write_text("枝の依頼\n", encoding="utf-8")
+        g("add", "MACHINE_TASKS.md", cwd=work); g("commit", "-qm", "inbox only", cwd=work)
+        rc, out = call("--shared", str(ms3))
+        if rc != 1 or "必須の節がありません" not in out:
+            print(f"self-test NG: 受信箱の必須の節が消えたのを見逃した（{rc}）\n   {out[:300]}"); ok = False
+        (work / "MACHINE_TASKS.md").write_text("枝の依頼\n\n## セッションログの書き方\n\n決まり\n",
+                                               encoding="utf-8")
+        g("add", "MACHINE_TASKS.md", cwd=work); g("commit", "-qm", "inbox only 2", cwd=work)
+        rc, out = call("--shared", str(ms3))
+        if rc != 0 or "受信箱だけの枝" not in out or "宣言あり 1 件" not in out:
+            print(f"self-test NG: 受信箱だけの枝を落とした／網羅を出していない（{rc}）\n   {out[:300]}")
+            ok = False
         g("checkout", "-q", "mine", cwd=work)   # 後続の場面は mine の状態を前提にする
 
         # ── #56 説明の裏取り ──────────────────────────────────

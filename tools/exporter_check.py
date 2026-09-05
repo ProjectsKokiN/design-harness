@@ -59,7 +59,10 @@
   mixed は来ないが、行だけを見て区別できない。**だから件数のラチェットにしてある**
   （増えたら落とす。いま在るぶんは宣言して先へ進める）
 - Figma 側が変わったこと。それは `figma_freshness.py`（条件4）
-- 確かめた方法: --self-test（器を書き換えると落ちること・producer が無いと落ちること）
+- `--pages`（#67）: 器のページ名が page-scope.json の allowed にあるか。部分一致（`.test(p.name)` /
+  `p.name.includes(`）は落とす。ID で引き当てるなら `pageIds` に要る。宣言から読む器は直書き 0 でよい
+- 確かめた方法: --self-test（器を書き換えると落ちること・producer が無いと落ちること・
+  ページの旧名と部分一致で落ちること）
 
 ## 使い方（案件のルートで）
 
@@ -155,6 +158,86 @@ def check_style(paths):
     return ng
 
 
+#: 器がページを引き当てるときの変数。`figma.root.children.find(p => …)` の p、
+#: `for (const p of figma.root.children)` の p
+PAGE_VAR_RX = re.compile(
+    r"figma\.root\.children\s*\.\s*(?:find|filter|some|forEach|map)\(\s*\(?\s*(\w+)\s*\)?\s*=>"
+    r"|for\s*\(\s*(?:const|let|var)\s+(\w+)\s+of\s+figma\.root\.children\s*\)")
+#: 宣言（page-scope.json）から読んでいる印。名前を直書きしない、いちばん良い形
+PAGE_SCOPE_RX = re.compile(r"page-scope|pageScope|PAGE_SCOPE|allowedPages")
+#: Python の器の直書き
+PAGE_PY_RX = re.compile(r"^\s*PAGE\s*=\s*['\"]([^'\"]+)['\"]", re.M)
+
+
+def strip_comments_js(src):
+    """コメントを消す（行番号は保つ）。**注に書いた旧名で落ちる**のを防ぐ
+    （aub 2026-09-04: 「部分一致で書くな」と注に書いたら、その注の `.test(p.name)` で落ちた）。"""
+    def blank(m):
+        return re.sub(r"[^\n]", "", m.group(0))
+    src = re.sub(r"/\*.*?\*/", blank, src, flags=re.S)
+    src = re.sub(r"(?<![:\w])//[^\n]*", "", src)          # URL の // は残す
+    return re.sub(r"(?m)(^|\s)#[^\n]*", r"\1", src)       # Python の器
+
+
+def check_pages(files, allowed, page_ids):
+    """器に出てくるページ名が page-scope.json の allowed にあるか（#67）。
+
+    2026-09-04、ユーザーが Figma のページ名を変えた（`🎨_AppDesign` → `🎨_Designs`）。
+    器はページ名で引き当てているので、名前が変わると `find` が undefined を返して落ちる。
+    **落ちるだけなら気づける。** 危ないのは (1) 部分一致で書いた器が一括置換に引っかからず
+    旧名のまま残ること、(2) page-scope.json（正）と器がずれること。
+
+    - 完全一致（`p.name === '…'`）だけ許す。**部分一致（`.test(p.name)` / `p.name.includes(`）は落とす**
+    - ID で引き当てる（`p.id === '2051:2524'`）なら page-scope.json の `pageIds` に無ければ落とす
+      （ID は改名で変わらない。ファイルを作り直すと変わる）
+    - page-scope.json を読んで引き当てる器（直書きしない）は「宣言から読んでいる」と数える
+    戻り: (ng, 直書きの数, 宣言から読む器の数, 使われた名前)
+    """
+    ng, literal, derived, used = [], 0, 0, set()
+    for f in files:
+        src = strip_comments_js(f.read_text(encoding="utf-8", errors="ignore"))
+
+        def at(m):
+            return src.count("\n", 0, m.start()) + 1
+        if PAGE_SCOPE_RX.search(src):
+            derived += 1
+        for v in sorted({a or b for a, b in PAGE_VAR_RX.findall(src)}):
+            fuzzy = re.compile(r"\.test\(\s*" + re.escape(v) + r"\.name\s*\)|" + re.escape(v)
+                               + r"\.name\s*\.\s*(?:includes|match|startsWith|endsWith|indexOf|search)\(")
+            for m in fuzzy.finditer(src):
+                ng.append((f.name, at(m),
+                           f"ページ名を部分一致で引き当てています（`{m.group(0).strip()}`）。"
+                           f"改名の一括置換に引っかからず、ここだけ黙って旧名のまま残ります。"
+                           f"完全一致（`{v}.name === '…'`）か、page-scope.json から読む形にしてください"))
+            for m in re.finditer(re.escape(v) + r"\.name\s*===\s*['\"]([^'\"]+)['\"]", src):
+                name = m.group(1)
+                literal += 1
+                used.add(name)
+                if name not in allowed:
+                    ng.append((f.name, at(m),
+                               f"ページ `{name}` は page-scope.json の allowed にありません"
+                               f"（allowed: {' / '.join(sorted(allowed))}）。**片方だけ直っています**"))
+            for m in re.finditer(re.escape(v) + r"\.id\s*===\s*['\"]([^'\"]+)['\"]", src):
+                pid = m.group(1)
+                literal += 1
+                used.add(pid)
+                if not page_ids:
+                    ng.append((f.name, at(m),
+                               f"ページ ID `{pid}` で引き当てていますが、page-scope.json に "
+                               f"pageIds の宣言がありません（どのページか人が読めません）"))
+                elif pid not in page_ids:
+                    ng.append((f.name, at(m),
+                               f"ページ ID `{pid}` は page-scope.json の pageIds にありません"
+                               f"（{' / '.join(sorted(page_ids))}）"))
+        for m in PAGE_PY_RX.finditer(src):
+            name = m.group(1)
+            literal += 1
+            used.add(name)
+            if name not in allowed:
+                ng.append((f.name, at(m), f"ページ `{name}` は page-scope.json の allowed にありません"))
+    return ng, literal, derived, used
+
+
 #: 「無し」を表す変異の値
 OFF_RX = re.compile(r"([A-Za-z]\w*)\s*=\s*(?:False|None|Off|No)\b", re.I)
 
@@ -210,6 +293,10 @@ def main(argv=None):
                     help="--style で見る器の置き場（既定: 設定の器の親）")
     ap.add_argument("--samples", type=Path, metavar="COMPONENTS_JSON",
                     help="見本の変異が子を隠していないかを見る")
+    ap.add_argument("--pages", action="store_true",
+                    help="器のページ名が page-scope.json の allowed と合っているか（部分一致は落とす）")
+    ap.add_argument("--page-scope", type=Path,
+                    help="--pages で読む宣言（既定: 設定の親/figma/page-scope.json）")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
@@ -242,6 +329,43 @@ def main(argv=None):
                   f"子を持つ変異を見本にしてください。", file=sys.stderr)
             return 1
         print(f"見本の変異（{seen} セット）: 子を隠しているものはありません。")
+        return 0
+
+    if args.pages:
+        scope = args.page_scope or (args.config.parent / "figma" / "page-scope.json")
+        d = args.exporters or (args.config.parent / "figma" / "exporters")
+        if not scope.exists():
+            print(f"参照してよいページの宣言がありません: {scope}", file=sys.stderr)
+            return 2
+        try:
+            sc = json.loads(scope.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"参照してよいページの宣言が読めません: {scope}: {e}", file=sys.stderr)
+            return 2
+        allowed = set(sc.get("allowed") or [])
+        if not allowed:
+            print(f"{scope} の allowed が空です。**0件は「見ていない」です。**", file=sys.stderr)
+            return 2
+        ids = sc.get("pageIds") or {}
+        page_ids = set(ids.values()) if isinstance(ids, dict) else set(ids)
+        files = (sorted(d.glob("*.js")) + sorted(d.glob("*.py"))) if d.exists() else []
+        if not files:
+            print(f"器が1つもありません: {d}\n"
+                  f"  **0件は「綺麗」ではなく「見ていない」です。**", file=sys.stderr)
+            return 2
+        ng, literal, derived, used = check_pages(files, allowed, page_ids)
+        if literal == 0 and derived == 0:
+            print(f"ページを引き当てている器が1つも見つかりません（器 {len(files)} 本）。"
+                  f"書き方が変わったか、この検査が空振りしています。", file=sys.stderr)
+            return 2
+        if ng:
+            print(f"器のページ名がそろっていません（{len(ng)} 件 / 器 {len(files)} 本）:",
+                  file=sys.stderr)
+            for name, line, why in ng:
+                print(f"  {name}:{line}  {why}", file=sys.stderr)
+            return 1
+        print(f"器のページ名: 通った（直書き {literal} か所 / 宣言から読む器 {derived} 本 / "
+              f"{', '.join(sorted(used)) or 'すべて宣言から'}）")
         return 0
 
     if args.style:
@@ -376,7 +500,7 @@ def main(argv=None):
                   f"（終了コードは 0 ですが、放置しないでください）:**", file=sys.stderr)
             for m in problems:
                 print(f"  - {m}", file=sys.stderr)
-        return 0
+        return 0  # swallow-ok: --update は保守用。problems は上で全部表示している（捨てていない）
     print(f"書き出しの器: {okc}/{len(files)}件が保存済みで指紋も一致")
     if problems:
         print("\n書き出しの出どころが確かめられていません:", file=sys.stderr)
@@ -518,6 +642,64 @@ def self_test():
         sp.write_text(json.dumps(D3), encoding="utf-8")
         if main(["--samples", str(sp)]) != 0:
             print("self-test NG: 隠していないのに落ちた"); ok = False
+
+    # ─── --pages（#67・aub 2026-09-04 の改名で器が黙って旧名のまま残った）─────
+    with _tf.TemporaryDirectory() as td4:
+        r4 = Path(td4)
+        ex = r4 / "figma" / "exporters"
+        ex.mkdir(parents=True)
+        scope = r4 / "figma" / "page-scope.json"
+        scope.write_text(json.dumps({"allowed": ["🎨_Designs", "⚙️_Styles"]},
+                                    ensure_ascii=False), encoding="utf-8")
+        cfg4 = r4 / "exporters.json"
+        cfg4.write_text("{}", encoding="utf-8")
+        pargv = ["--config", str(cfg4), "--pages", "--page-scope", str(scope),
+                 "--exporters", str(ex)]
+        good = ex / "good.js"
+        good.write_text("const page = figma.root.children.find(p => p.name === '🎨_Designs');\n"
+                        "// 注: 昔は /AppDesign/.test(p.name) だった\n", encoding="utf-8")
+        if main(pargv) != 0:
+            print("self-test NG: そろっているのに落ちた（注の旧名で落ちた？）"); ok = False
+        (ex / "old.js").write_text(
+            "const page = figma.root.children.find(p => p.name === '🎨_AppDesign');\n", encoding="utf-8")
+        if main(pargv) != 1:
+            print("self-test NG: allowed に無いページを通した"); ok = False
+        (ex / "old.js").unlink()
+        (ex / "fuzzy.js").write_text(
+            "const page = figma.root.children.find(p => /Designs/.test(p.name));\n", encoding="utf-8")
+        if main(pargv) != 1:
+            print("self-test NG: 部分一致（.test）を通した"); ok = False
+        (ex / "fuzzy.js").write_text(
+            "for (const pg of figma.root.children) { if (pg.name.includes('Designs')) {} }\n",
+            encoding="utf-8")
+        if main(pargv) != 1:
+            print("self-test NG: 部分一致（includes）を通した"); ok = False
+        (ex / "fuzzy.js").unlink()
+        # ID での引き当て: pageIds の宣言が無ければ落ち、あれば通る
+        (ex / "byid.js").write_text(
+            "const page = figma.root.children.find(p => p.id === '2051:2524');\n", encoding="utf-8")
+        if main(pargv) != 1:
+            print("self-test NG: pageIds の宣言が無いのに ID を通した"); ok = False
+        scope.write_text(json.dumps({"allowed": ["🎨_Designs", "⚙️_Styles"],
+                                     "pageIds": {"🎨_Designs": "2051:2524"}},
+                                    ensure_ascii=False), encoding="utf-8")
+        if main(pargv) != 0:
+            print("self-test NG: 宣言済みの ID で落ちた"); ok = False
+        (ex / "byid.js").unlink()
+        # 宣言から読む器だけなら通る（直書き 0 でも空振りではない）
+        good.write_text("const allowed = JSON.parse(fs.readFileSync('design/figma/page-scope.json')).allowed;\n"
+                        "const pages = figma.root.children.filter(p => allowed.includes(p.name));\n",
+                        encoding="utf-8")
+        if main(pargv) != 0:
+            print("self-test NG: 宣言から読む器を空振りにした"); ok = False
+        # 何も引き当てていなければ 2
+        good.write_text("const x = 1;\n", encoding="utf-8")
+        if main(pargv) != 2:
+            print("self-test NG: 引き当てが無いのに 2 で止まらなかった"); ok = False
+        # Python の器の直書き
+        (ex / "pack.py").write_text("PAGE = '🎨_Old'\n", encoding="utf-8")
+        if main(pargv) != 1:
+            print("self-test NG: Python の器の旧名を通した"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
