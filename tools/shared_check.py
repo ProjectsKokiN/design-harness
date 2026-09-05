@@ -144,11 +144,27 @@ def check_shared(root, conf_path, inbox=INBOX):
     if not p.exists():
         return [f"  担当の宣言がありません: {p}"]
     try:
-        shared = json.loads(p.read_text(encoding="utf-8")).get("shared") or []
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        shared = doc.get("shared") or []
     except (OSError, json.JSONDecodeError) as e:
         return [f"  担当の宣言が読めません: {p}: {e}"]
     if not shared:
         return []
+    # 受信箱の一覧は宣言（machine-scope.json の `inbox`）から取る。無ければ道具の
+    # 既定を使うが、**既定を使ったことと、shared のうち何件を受信箱と見たかを毎回出す**
+    # （#73: 一覧が手書きのままだと、新しい受信箱を足しても照合に入らない）
+    declared = doc.get("inbox")
+    if isinstance(declared, list) and declared:
+        inbox = tuple(Path(str(x).rstrip("/")).name for x in declared)
+        src = "machine-scope.json の inbox"
+    else:
+        src = "道具の既定（machine-scope.json に inbox の宣言が無い）"
+    inbox_shared = [s for s in shared if Path(str(s).rstrip("/")).name in inbox]
+    print(f"受信箱: shared {len(shared)} 件のうち受信箱として見るのは {len(inbox_shared)} 件"
+          f"（{src}）: " + (" / ".join(inbox_shared) or "**なし**"))
+    if not inbox_shared:
+        print("  **受信箱が1つも無いので、この検査は何も守っていません。** shared に"
+              "受信箱を入れるか、inbox に名前を宣言してください")
     ref = default_ref(root)
     if ref is None:
         return [f"  上流の既定ブランチが分かりません"]
@@ -188,6 +204,14 @@ def check_claims(root, conf_path):
     if ref is None:
         return ["  上流の既定ブランチが分かりません"]
     diff = set(run("diff", "--name-only", f"{ref}...HEAD", cwd=root).stdout.split())
+    # 逆向きも出す: **入っているのに書いていない**差分（#73・網羅率）。他の機体は
+    # 説明を根拠に動くので、書いていない変更は届かない。落とさず名指しする
+    claimed = set(conf.get("files", [])) | {
+        g.get("file") for g in conf.get("greps", []) if g.get("file")}
+    missing = sorted(diff - claimed)
+    print(f"説明の網羅: 差分 {len(diff)} ファイルのうち宣言に現れるのは {len(diff & claimed)} 件"
+          + (f"。**宣言に無い差分 {len(missing)} 件**: " + " / ".join(missing[:8])
+             + ("…" if len(missing) > 8 else "") if missing else "。全部書いてあります"))
     errs = []
     for f in conf.get("files", []):
         if f not in diff:
@@ -318,6 +342,19 @@ def self_test():
         rc, out = call("--shared", ms)
         if rc != 0:
             print(f"self-test NG: 受信箱を触っていないのに落ちた（{rc}）"); ok = False
+        if "shared 2 件のうち受信箱として見るのは 1 件" not in out or "既定" not in out:
+            print(f"self-test NG: 受信箱の網羅を出していない\n   {out[:300]}"); ok = False
+        # inbox を宣言すれば既定ではなく宣言で見る（新しい受信箱を足せる）
+        Path(ms).write_text(json.dumps({"shared": ["MACHINE_TASKS.md", "docs/", "INBOX_B.md"],
+                                        "inbox": ["INBOX_B.md"]}), encoding="utf-8")
+        rc, out = call("--shared", ms)
+        if "受信箱として見るのは 1 件（machine-scope.json の inbox）: INBOX_B.md" not in out:
+            print(f"self-test NG: inbox の宣言を使っていない\n   {out[:300]}"); ok = False
+        Path(ms).write_text(json.dumps({"shared": ["docs/"]}), encoding="utf-8")
+        rc, out = call("--shared", ms)
+        if "何も守っていません" not in out:
+            print("self-test NG: 受信箱 0 件を言っていない"); ok = False
+        Path(ms).write_text(json.dumps({"shared": ["MACHINE_TASKS.md", "docs/"]}), encoding="utf-8")
         (work / "MACHINE_TASKS.md").write_text("枝で書いた依頼\n", encoding="utf-8")
         g("add", "-A", cwd=work); g("commit", "-qm", "tasks", cwd=work)
         rc, out = call("--shared", ms)
@@ -343,6 +380,9 @@ def self_test():
         if rc != 0:
             print(f"self-test NG: 本当に入っているのに落ちた（{rc}）\n   {out[:300]}")
             ok = False
+        # 逆向き: 入っているのに書いていない差分（a.txt）を名指しする
+        if "説明の網羅" not in out or "a.txt" not in out:
+            print(f"self-test NG: 宣言に無い差分を名指ししていない\n   {out[:300]}"); ok = False
         cl.write_text(json.dumps({"files": ["test/safe_area_test.dart"]}),
                       encoding="utf-8")
         rc, out = call("--claims", str(cl))

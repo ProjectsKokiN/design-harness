@@ -55,11 +55,26 @@
 | 宣言の担当が `machine-scope.json` と食い違う | 落とす |
 | **変えてはいけない値が変わっている** | 落とす |
 
+## 散らばりの候補を導く（2026-09-05・#73）
+
+それまで「宣言に載っていない場所は見ない。一覧は人が作る」と自分で書いていた。
+**一覧に無いものは、無いのではなく見えない**（#66 と同じ形）。そこで、正の値が
+プラットフォーム側（`ios/ android/ web/ lib/ macos/ windows/ linux/` と
+`pubspec.yaml`）の**どこに現れるかを全部歩いて導く。** 綴りの揺れも拾う
+（`Flash English` / `FlashEnglish` / `flash_english` / `flash-english`。
+FlashEnglish で3通りが混在していた形）。
+
+- 宣言（`場所`・`未対応`・`対象外`）に無い候補は**落とす**
+- 網羅率（候補のうち宣言済み）を**毎回出す**。0件・全件だけでは足りない
+- 候補が 0 なら「散らばっていない」ではなく**「正の値がどこにも書かれていない」**。それも出す
+
+    "対象外": [{"file": "lib/l10n/app_ja.arb", "why": "翻訳の本文。名前としての使用ではない"}]
+
 ## 捕まえないもの
 
-- **宣言に載っていない場所**。散らばりの一覧は人が作ります（機械には
-  「その文字列が名前として使われている」かどうかが分かりません）
-- 確かめた方法: --self-test（4つそれぞれが仕込みで落ちること）
+- 正と綴りが全く違う旧名（`flash_compose` が `Flash English` の散らばりだとは
+  分からない）。旧名は `変えないもの` か、値ごとの `場所` で見る
+- 確かめた方法: --self-test（4つそれぞれが仕込みで落ちること・宣言に無い候補で落ちること）
 """
 
 import argparse
@@ -91,7 +106,7 @@ def read_value(path, key):
         # android:label="値"
         m = re.findall(re.escape(key) + r'\s*=\s*"([^"]*)"', text)
         return m, None
-    if suf == ".json":
+    if suf in (".json", ".arb"):
         try:
             doc = json.loads(text)
         except json.JSONDecodeError as e:
@@ -115,6 +130,21 @@ def read_value(path, key):
         m = re.findall(re.escape(key) + r"\s*:\s*['\"]([^'\"]*)['\"]", text)
         if not m:
             m = re.findall(re.escape(key) + r"\s*:\s*([^\s,#]+)", text)
+        return m, None
+    if suf in (".pbxproj", ".xcconfig"):
+        # PRODUCT_NAME = "値";  /  PRODUCT_NAME = 値
+        m = re.findall(re.escape(key) + r'\s*=\s*"?([^";\n]*?)"?\s*(?:;|\n|$)', text)
+        return [x.strip() for x in m if x.strip()], None
+    if suf == ".strings":
+        # "key" = "値";
+        m = re.findall(r'"' + re.escape(key) + r'"\s*=\s*"([^"]*)"', text)
+        return m, None
+    if suf == ".properties":
+        m = re.findall(r"^\s*" + re.escape(key) + r"\s*[=:]\s*(.*?)\s*$", text, re.M)
+        return m, None
+    if suf in (".gradle", ".kts"):
+        # applicationId "値"  /  applicationId = "値"
+        m = re.findall(re.escape(key) + r"""\s*=?\s*['"]([^'"]*)['"]""", text)
         return m, None
     return [], f"読み方が分からない形です: {path.suffix}"
 
@@ -142,6 +172,72 @@ def owner_for(rel, owners):
             if len(p) > best:
                 best, who = len(p), name
     return who
+
+
+#: 候補を歩く場所（プラットフォーム側）。一覧はディレクトリだけで、ファイルは全部歩く
+CANDIDATE_DIRS = ("ios", "android", "web", "lib", "macos", "windows", "linux")
+CANDIDATE_ROOT_FILES = ("pubspec.yaml",)
+SKIP_DIRS = {"build", ".dart_tool", "Pods", ".gradle", "node_modules", ".symlinks",
+             ".plugin_symlinks", "ephemeral", "DerivedData"}
+TEXT_SUFFIXES = {".plist", ".xml", ".json", ".arb", ".html", ".htm", ".dart", ".yaml",
+                 ".yml", ".kt", ".kts", ".gradle", ".swift", ".ts", ".js", ".xcconfig",
+                 ".pbxproj", ".entitlements", ".storyboard", ".strings", ".properties",
+                 ".cc", ".cpp", ".h", ".rc", ".cmake", ".txt"}
+
+
+def value_pattern(want):
+    """正の値から、綴りの揺れも拾う正規表現を作る。
+
+    `Flash English` → `Flash English` / `FlashEnglish` / `flash_english` / `flash-english`
+    （FlashEnglish で3通りが混在していた形）。空白・`_`・`-` の有無と大小を無視する。
+    """
+    parts = re.findall(r"[A-Za-z0-9]+|[^\sA-Za-z0-9_\-]", want)
+    if not parts:
+        return None
+    return re.compile(r"[\s_\-]*".join(re.escape(p) for p in parts), re.IGNORECASE)
+
+
+def candidate_files(base):
+    """プラットフォーム側のテキストファイルを全部歩く（一覧を持たない）。"""
+    out = [base / n for n in CANDIDATE_ROOT_FILES if (base / n).is_file()]
+    for d in CANDIDATE_DIRS:
+        dp = base / d
+        if not dp.is_dir():
+            continue
+        for f in sorted(dp.rglob("*")):
+            if not f.is_file() or f.suffix.lower() not in TEXT_SUFFIXES:
+                continue
+            if SKIP_DIRS & set(f.relative_to(base).parts[:-1]):
+                continue
+            try:
+                if f.stat().st_size > 2_000_000:
+                    continue
+            except OSError:
+                continue
+            out.append(f)
+    return out
+
+
+def find_candidates(base, values):
+    """値ごとに、正の値（綴りの揺れ込み）が現れるファイルを返す: {値名: {rel: [行]}}"""
+    pats = {n: value_pattern(v["正"]) for n, v in values.items()
+            if isinstance(v.get("正"), str)}
+    pats = {n: rx for n, rx in pats.items() if rx is not None}
+    found = {n: {} for n in pats}
+    if not pats:
+        return found
+    for f in candidate_files(base):
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        rel = f.relative_to(base).as_posix()
+        lines = text.splitlines()
+        for n, rx in pats.items():
+            hit = [i for i, line in enumerate(lines, 1) if rx.search(line)]
+            if hit:
+                found[n][rel] = hit
+    return found
 
 
 def main(argv=None):
@@ -233,6 +329,40 @@ def main(argv=None):
             errs.append(f"  **変えてはいけない値が変わっています**: {rel} の "
                         f"`{want}` が見つかりません\n"
                         f"    なぜ変えないか: {keep.get('why')}")
+
+    # ─── 散らばりの候補（#73）: 宣言に載っていない場所を導いて名指しする ───
+    found = find_candidates(base, values)
+    cover = []
+    for name, v in sorted(values.items()):
+        if name not in found:
+            continue
+        declared = {str(p.get("file")) for p in (v.get("場所") or [])}
+        declared |= {str(p.get("file")) for p in (v.get("未対応") or [])}
+        excluded = set()
+        for p in (v.get("対象外") or []):
+            if not str(p.get("why", "")).strip():
+                errs.append(f"  {name}: 対象外の宣言に理由がありません: {p.get('file')}")
+            excluded.add(str(p.get("file")))
+        cands = found[name]
+        if not cands:
+            cover.append(f"  {name}: 正 `{v['正']}` はプラットフォーム側のどこにも現れません"
+                         f"（候補 0。**散らばっていないのではなく、正の値が書かれていない**）")
+            continue
+        in_decl = [r for r in cands if r in declared]
+        in_excl = [r for r in cands if r in excluded and r not in declared]
+        unknown = [r for r in cands if r not in declared and r not in excluded]
+        cover.append(f"  {name}: 候補 {len(cands)} ファイルのうち宣言済み "
+                     f"{len(in_decl) + len(in_excl)}（場所・未対応 {len(in_decl)} / "
+                     f"対象外 {len(in_excl)} / **宣言に無い {len(unknown)}**）")
+        for r in unknown:
+            ln = cands[r]
+            errs.append(f"  {name}: {r}:{ln[0]} に正の綴りが現れますが、宣言にありません"
+                        f"（{len(ln)} 行）。\n"
+                        f"    `場所` に足して照合するか、`未対応` か `対象外` に理由つきで"
+                        f"入れてください。**一覧に無いものは、無いのではなく見えていません。**")
+    print("散らばりの網羅（プラットフォーム側を全部歩いた）:")
+    for line in cover:
+        print(line)
 
     if errs:
         print(f"散らばった値が食い違っています（{checked} 箇所を見ました）:",
@@ -348,6 +478,48 @@ def self_test():
         if rc != 1 or "変えてはいけない値が変わっています" not in out:
             print(f"self-test NG: 変えないものの変化を見逃した（{rc}）"); ok = False
         pub.write_text("name: flash_compose\n", encoding="utf-8")
+
+        # ─── 宣言に無い候補（#73）────────────────────────────────
+        rc, out = run(BASE)
+        if "候補 4 ファイルのうち宣言済み 4" not in out:
+            print(f"self-test NG: 網羅率を出していない\n   {out[:300]}"); ok = False
+        (root / "lib").mkdir(exist_ok=True)
+        (root / "lib" / "main.dart").write_text(
+            "runApp(MaterialApp(title: 'Flash English'));\n", encoding="utf-8")
+        rc, out = run(BASE)
+        if rc != 1 or "lib/main.dart:1" not in out or "宣言に無い 1" not in out:
+            print(f"self-test NG: 宣言に無い候補を見逃した（{rc}）\n   {out[:400]}"); ok = False
+        # 綴りの揺れ（FlashEnglish / flash_english）も候補
+        (root / "lib" / "main.dart").write_text(
+            "const app = 'FlashEnglish'; const id = 'flash_english';\n", encoding="utf-8")
+        rc, out = run(BASE)
+        if rc != 1 or "lib/main.dart" not in out:
+            print(f"self-test NG: 綴りの揺れを候補にしていない（{rc}）"); ok = False
+        # `場所` に足せば照合される（読めるキーで）
+        (root / "lib" / "main.dart").write_text(
+            "runApp(MaterialApp(title: 'Flash English'));\n", encoding="utf-8")
+        loc = json.loads(json.dumps(BASE))
+        loc["values"]["displayName"]["場所"].append(
+            {"file": "lib/main.dart", "key": "title", "owner": "Windows"})
+        rc, out = run(loc)
+        if rc != 0:
+            print(f"self-test NG: 場所に足したのに落ちた（{rc}）\n   {out[:300]}"); ok = False
+        # `対象外` は理由つきなら通り、理由が無ければ落ちる
+        ex = json.loads(json.dumps(BASE))
+        ex["values"]["displayName"]["対象外"] = [
+            {"file": "lib/main.dart", "why": "起動時の題。表示名とは別に管理"}]
+        if run(ex)[0] != 0:
+            print("self-test NG: 理由つきの対象外を通さない"); ok = False
+        ex["values"]["displayName"]["対象外"][0]["why"] = ""
+        if run(ex)[0] != 1:
+            print("self-test NG: 理由の無い対象外を通した"); ok = False
+        (root / "lib" / "main.dart").unlink()
+        # 候補 0 は「書かれていない」と出す
+        zero = json.loads(json.dumps(BASE))
+        zero["values"]["ghost"] = {"正": "Nowhere Name", "場所": []}
+        rc, out = run(zero)
+        if "書かれていない" not in out:
+            print("self-test NG: 候補 0 を「書かれていない」と出していない"); ok = False
 
         # 正が無い宣言
         nov = {"values": {"x": {"場所": []}}}
