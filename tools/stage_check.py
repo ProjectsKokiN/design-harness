@@ -222,6 +222,26 @@ def self_test_stages():
              tpl_text=TPL + 'step "照合体制（参考: 条件2 は廃止）" '
                             '"$PY" "$HARNESS/tools/coverage_check.py"\n')
 
+        # ─── 関門の道具の無力化（#77・planttalk の形）──────────────────
+        live2 = {"5": {"見出し": "再現性", "測る道具": ["check_render_gaps.py"]},
+                 "7": {"見出し": "実装網羅", "測る道具": ["impl_coverage_check.py"]}}
+        verify.write_text(
+            'python3 $H/check_render_gaps.py --config c.json 2>&1 | tail -3 || true\n'
+            'python3 $H/impl_coverage_check.py --config i.json | grep -E "^(OK|NG)" || true\n'
+            'python3 $H/design_check.py --all 2>&1 || true\n', encoding="utf-8")
+        r = check_neutered(verify, live2)
+        if len(r) != 2 or "check_render_gaps.py" not in r[0] or "impl_coverage_check.py" not in r[1]:
+            print(f"self-test NG: 無力化された関門の道具を捕まえていない: {len(r)} 件"); ok = False
+        if any("design_check.py" in m for m in r):
+            print("self-test NG: 関門の道具でないものまで咎めた"); ok = False
+        verify.write_text('set -o pipefail\npython3 $H/check_render_gaps.py --config c.json 2>&1 | tail -3\n',
+                          encoding="utf-8")
+        if check_neutered(verify, live2):
+            print("self-test NG: pipefail があるのにパイプを咎めた"); ok = False
+        verify.write_text('python3 $H/check_render_gaps.py --config c.json\n', encoding="utf-8")
+        if check_neutered(verify, live2):
+            print("self-test NG: 素の呼び出しを咎めた"); ok = False
+
         # ─── push 前のフック（#60）────────────────────────────────
         pt = root / "pre-push-template"
         pp = root / ".githooks" / "pre-push"
@@ -498,6 +518,53 @@ def check_prepush(template, project, waivers, shared=True):
     return errs
 
 
+#: 終了コードを消す書き方。`| tail` はパイプの最後の終了コードに置き換わり、`|| true` は必ず 0
+NEUTER_RX = re.compile(r"\|\s*(?:tail|head|grep|sed|awk|cat|tee)\b|\|\|\s*(?:true|:|echo)\b")
+
+
+def check_neutered(verify, live):
+    """案件の verify.sh で、**関門の条件を測る道具**の呼び出しが終了コードを消していないか（#77）。
+
+    planttalk 2026-09-05:
+        check_render_gaps.py ... 2>&1 | tail -3 || true        ← 条件5
+        impl_coverage_check.py ... | grep -E "..." || true      ← 条件7
+    **パイプで終了コードが tail / grep のものに置き換わり、さらに || true で消える。
+    落ちようがない。** 187行目には「失敗にはしません（段階適用）」と書いてあったが、
+    条件5 と 7 は廃止されていない生きた関門。「関門ではない」と書きたいなら note を使う。
+
+    同じファイルの `design_check.py --all 2>&1 || true` は**誤検出ではない**：出力を
+    読み直して違反を数えている。行の形だけでは区別できないので、**関門の道具に限る**
+    （関門でない道具は注意止まり）。set -o pipefail があればパイプは消えないので見ない。
+    """
+    if not verify.exists():
+        return []
+    tools = set()
+    for c in live.values():
+        for name in c.get("測る道具", []) if isinstance(c, dict) else []:
+            tools.add(Path(name).name)
+    if not tools:
+        return []
+    text = verify.read_text(encoding="utf-8", errors="ignore")
+    pipefail = "pipefail" in text
+    errs = []
+    for ln in logical_lines(text):
+        s = ln.strip()
+        if s.startswith("#"):
+            continue
+        hit = [tname for tname in tools if tname in s]
+        if not hit:
+            continue
+        m = NEUTER_RX.search(s)
+        if not m:
+            continue
+        if m.group(0).startswith("|") and not m.group(0).startswith("||") and pipefail:
+            continue
+        errs.append(f"  関門の道具 `{hit[0]}` の呼び出しが終了コードを消しています"
+                    f"（`{m.group(0).strip()}`）:\n    {s[:100]}\n"
+                    f"    **回っていますが、落ちようがありません。** 関門でないなら note で呼んでください。")
+    return errs
+
+
 def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None,
                  prepush_template=None):
     """元ファイルの段が、この案件から黙って落ちていないかを見る。"""
@@ -587,6 +654,7 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
 
     pp, shared = resolve_prepush(verify.resolve().parent.parent, prepush)
     errs += check_prepush(prepush_template, pp, waivers, shared)
+    errs += check_neutered(verify, live)
 
     # **関門が緩和策の上に立っていることを宣言させる**（2026-09-04・#13）。
     # 実害（FlashEnglish）: 「テストの並列度を1に落として揺らぎの確率を下げる」
