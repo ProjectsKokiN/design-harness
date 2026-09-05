@@ -129,6 +129,9 @@ def read_value(path, key):
         # `key: '値'` / `key: "値"` / `key: 値`
         m = re.findall(re.escape(key) + r"\s*:\s*['\"]([^'\"]*)['\"]", text)
         if not m:
+            # 呼び出し形 `setContentTitle("値")`（Kotlin の通知の題など）
+            m = re.findall(re.escape(key) + r"\s*\(\s*['\"]([^'\"]*)['\"]", text)
+        if not m:
             m = re.findall(re.escape(key) + r"\s*:\s*([^\s,#]+)", text)
         return m, None
     if suf in (".pbxproj", ".xcconfig"):
@@ -197,6 +200,28 @@ def value_pattern(want):
     return re.compile(r"[\s_\-]*".join(re.escape(p) for p in parts), re.IGNORECASE)
 
 
+C_LIKE = {".dart", ".kt", ".kts", ".gradle", ".swift", ".ts", ".js", ".cc", ".cpp",
+          ".h", ".rc", ".pbxproj", ".strings"}
+HASH_LIKE = {".yaml", ".yml", ".properties", ".cmake", ".txt", ".xcconfig"}
+MARKUP = {".xml", ".html", ".htm", ".plist", ".storyboard", ".entitlements"}
+
+
+def strip_comments(text, suf):
+    """コメントを消す（候補の判定用）。**コメントに書かれた名前は散らばりではない**
+    （FlashEnglish の splash_screen.dart は Figma のページ名をコメントに持っていた）。
+    行番号を保つため、消した所の改行は残す。"""
+    def blank(m):
+        return re.sub(r"[^\n]", "", m.group(0))
+    if suf in C_LIKE:
+        text = re.sub(r"/\*.*?\*/", blank, text, flags=re.S)
+        text = re.sub(r"(?<![:\w])//[^\n]*", "", text)      # URL の // は残す
+    elif suf in HASH_LIKE:
+        text = re.sub(r"(?m)(^|\s)#[^\n]*", r"\1", text)
+    elif suf in MARKUP:
+        text = re.sub(r"<!--.*?-->", blank, text, flags=re.S)
+    return text
+
+
 def candidate_files(base):
     """プラットフォーム側のテキストファイルを全部歩く（一覧を持たない）。"""
     out = [base / n for n in CANDIDATE_ROOT_FILES if (base / n).is_file()]
@@ -232,7 +257,7 @@ def find_candidates(base, values):
         except OSError:
             continue
         rel = f.relative_to(base).as_posix()
-        lines = text.splitlines()
+        lines = strip_comments(text, f.suffix.lower()).splitlines()
         for n, rx in pats.items():
             hit = [i for i, line in enumerate(lines, 1) if rx.search(line)]
             if hit:
@@ -514,6 +539,33 @@ def self_test():
         if run(ex)[0] != 1:
             print("self-test NG: 理由の無い対象外を通した"); ok = False
         (root / "lib" / "main.dart").unlink()
+        # コメントに書かれた名前は候補にしない（行番号は保つ）
+        (root / "lib" / "note.dart").write_text(
+            "// Flash English のメモ\n/// FlashEnglish\n/* flash_english */\n"
+            "final url = 'https://example.com/flash_english';\n", encoding="utf-8")
+        rc, out = run(BASE)
+        if rc != 1 or "lib/note.dart:4" not in out:
+            print(f"self-test NG: コメントを候補にした／URL の中を落とした（{rc}）\n   {out[:300]}")
+            ok = False
+        (root / "lib" / "note.dart").write_text(
+            "// Flash English のメモ\n/// FlashEnglish\n/* flash_english */\n", encoding="utf-8")
+        if run(BASE)[0] != 0:
+            print("self-test NG: コメントだけのファイルを候補にした"); ok = False
+        (root / "lib" / "note.dart").unlink()
+        # Kotlin の呼び出し形（通知の題）を候補にし、`場所` で読める
+        (root / "android" / "Svc.kt").write_text(
+            'val n = NotificationCompat.Builder(this, ID)\n'
+            '    .setContentTitle("Flash English")\n', encoding="utf-8")
+        rc, out = run(BASE)
+        if rc != 1 or "android/Svc.kt:2" not in out:
+            print(f"self-test NG: Kotlin の通知の題を候補にしていない（{rc}）"); ok = False
+        kt = json.loads(json.dumps(BASE))
+        kt["values"]["displayName"]["場所"].append(
+            {"file": "android/Svc.kt", "key": "setContentTitle", "owner": "Windows"})
+        rc, out = run(kt)
+        if rc != 0:
+            print(f"self-test NG: setContentTitle を読めない（{rc}）\n   {out[:300]}"); ok = False
+        (root / "android" / "Svc.kt").unlink()
         # 候補 0 は「書かれていない」と出す
         zero = json.loads(json.dumps(BASE))
         zero["values"]["ghost"] = {"正": "Nowhere Name", "場所": []}
