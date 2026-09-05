@@ -101,8 +101,18 @@ def main(argv=None):
               f"という意味です。**", file=sys.stderr)
         return 2
 
+    # **状態語を手で持たない。** 書き出しの軸の名前に State が入っていれば状態を持つ、と見る
+    # （#73: DEFAULT_STATES に Disabled が無く、aub の Disabled しか持たないセットは
+    #  「状態が無い」と読まれて widget test の要求から外れていた）。
+    # 軸の情報が無い古い書き出しだけ、語の一覧に落ちる（設定 state_words か既定）
     states = conf.get("state_words") or DEFAULT_STATES
     state_rx = re.compile("|".join(re.escape(s) for s in states), re.I)
+
+    def has_state_axis(v):
+        axes = v.get("axisOrder") or v.get("axes") or []
+        return any("state" in str(a).lower() for a in axes)
+
+    axis_known = any(isinstance(v, dict) and (v.get("axisOrder") or v.get("axes")) for v in sets.values())
     min_slots = int(conf.get("min_slots", 2))
 
     allow, problems = {}, []
@@ -116,7 +126,8 @@ def main(argv=None):
     for name, v in sets.items():
         blob = json.dumps(v, ensure_ascii=False)
         why = []
-        if state_rx.search(blob):
+        stateful = has_state_axis(v) if axis_known else bool(state_rx.search(blob))
+        if stateful:
             why.append("状態を持つ（9-4）")
         slots = v.get("slots")
         if isinstance(slots, (list, dict)) and len(slots) >= min_slots:
@@ -224,6 +235,25 @@ def self_test():
         ex.unlink()
         if main(argv) != 2:
             print("self-test NG: 書き出しが無いのに 2 で止まらなかった"); ok = False
+
+    # 軸から導く: 状態語の一覧に無い値（Disabled）だけのセットも「状態を持つ」と見る（#73）
+    import tempfile as _tf, io as _io, contextlib as _ctx
+    with _tf.TemporaryDirectory() as td2:
+        root = Path(td2); (root / "design").mkdir(); (root / "test").mkdir()
+        (root / "design" / "components.json").write_text(json.dumps({"componentSets": {
+            "Chip": {"axisOrder": ["State"], "variants": 2},
+            "Card": {"axisOrder": ["Type"], "variants": 2}}}), encoding="utf-8")
+        cp = root / "design" / "tree-tests.json"
+        cp.write_text(json.dumps({"export": "design/components.json", "test_dirs": ["test"]}), encoding="utf-8")
+        buf = _io.StringIO()
+        with _ctx.redirect_stdout(buf), _ctx.redirect_stderr(buf):
+            rc = main(["--config", str(cp)])
+        if rc != 1 or "Chip" not in buf.getvalue():
+            print(f"self-test NG: State 軸を持つセットを状態ありと見ていない（{rc}）"); ok = False
+        if "Card" in buf.getvalue().split("Chip")[0] and "Card" in buf.getvalue():
+            pass
+        if "Card（" in buf.getvalue():
+            print("self-test NG: State 軸の無いセットを状態ありと見た"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
