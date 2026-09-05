@@ -92,6 +92,10 @@ IGNORE_RX = re.compile(r"harness-ignore:\s*(.+?)(?:\s+expires=(\d{4}-\d{2}-\d{2}
 #: 画面に出る文字。`Text('…')` と `title: '…'` と `label: '…'`
 STRING_RX = re.compile(r"""(?:Text\(|title:\s*|label:\s*|hintText:\s*)['"]([^'"\n]{2,})['"]""")
 
+#: 「描いた値」を測っている印（形3 はここが実際の側にあるときだけ見る）
+MEASURE_RX = re.compile(r"\b(getSize|getRect|getTopLeft|getTopRight|getBottomLeft|getBottomRight|"
+                        r"getCenter|widget<|widgetList|renderObject|firstWidget|getSemantics)\b")
+
 #: lib/ の識別子（トップレベル関数・static メソッド・const）
 DECL_RX = re.compile(
     r"^\s*(?:static\s+)?(?:[\w<>,\s\[\]?]+\s+)?([a-z][A-Za-z0-9_]*)\s*\([^)]*\)\s*(?:async\s*)?(?:=>|\{)",
@@ -269,6 +273,13 @@ def check_self_reference(tests, base, symbols):
             # `expect(Footer.heightFor(), value('Footer.heightFor()'))` の期待値は
             # 書き出しを鍵で引いており、鍵の文字列に名前が入っているだけだった（7件誤検出）
             expected = re.sub(r"'[^']*'|\"[^\"]*\"", "''", args[1])
+            # **実際の側が「描いた値」のときだけ見る。** 形3 の実害は
+            # 「描いた位置を、実装の計算で採点した」（aub の hardAreasFor / FlashEnglish の
+            # getSize vs heightFor）。純粋な関数どうしの整合性の試験
+            # （`expect(levels(), questionsByLevel().keys)`）は Figma と無関係で、
+            # 実装を呼ぶのが自然（FlashEnglish 2026-09-05: 10件が全部これだった）
+            if not MEASURE_RX.search(args[0]):
+                continue
             hit = [n for n in here if re.search(r"\b" + re.escape(n) + r"\s*\(", expected)]
             at = line_of(ln, st, i)
             if not hit or ignored(lines, at):
@@ -646,9 +657,14 @@ def self_test():
 
         # 形3: 期待値の自己参照
         rc, out = run(CLEAN.replace("expect(w, 100.0);",
-                                    "expect(w, hardAreasFor(10).last);"))
+                                    "expect(tester.getTopLeft(find.byKey(k)).dy, hardAreasFor(10).last);"))
         if rc != 1 or "期待値が実装" not in out:
-            print(f"self-test NG: 期待値の自己参照を見逃した（{rc}）"); ok = False
+            print(f"self-test NG: 描いた値を実装で採点しているのを見逃した（{rc}）"); ok = False
+        # 純粋な関数どうしの整合性は形3 ではない（描いた値を見ていない）
+        rc, _ = run(CLEAN.replace("expect(w, 100.0);",
+                                  "expect(hardAreasFor(10).length, hardAreasFor(20).length);"))
+        if rc != 0:
+            print(f"self-test NG: 描画を測っていない整合性の試験を咎めた（{rc}）"); ok = False
         rc, _ = run(CLEAN.replace("expect(w, 100.0);",
                                   "expect(hardAreasFor(10).last, 10.0);"))
         if rc != 0:
