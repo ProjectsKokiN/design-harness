@@ -296,8 +296,13 @@ def check_tokens(conf, base, today):
                 f"古くなります（aub の 2026-08-29 の実害）")
             return [], notes, problems
         r = subprocess.run(
+            # **--root を渡さない。** gen_verify は台帳の場所からルートを決める（台帳の親の親の親）。
+            # ここで設定の親（base）を渡すと、設定を design/ に置いた案件で base が <repo>/design
+            # になり、生成物を <repo>/design/lib/... に探して「生成器が何も書いていません」と
+            # 誤診する（FlashEnglish の CI で生成器8本すべて NG・#64）。生成器自身は __file__
+            # からルートを求めて正しい場所に書いているので、終了コードは 0 のまま
             [sys.executable, str(Path(__file__).resolve().parent / "gen_verify.py"),
-             "--manifest", str(man), "--root", str(base)],
+             "--manifest", str(man)],
             capture_output=True, text=True)
         if r.returncode != 0:
             problems.append(
@@ -596,6 +601,15 @@ def self_test():
             encoding="utf-8")
         if main(cfg4()) != 0:
             print("self-test NG: 生成器がそろっているのに落ちた"); ok = False
+
+        # **設定を design/ に置いても誤診しない**（#64・FlashEnglish の CI の形）。
+        # 設定の親を gen_verify の root に渡していたため、生成物を <repo>/design/out/ に探して
+        # 「生成器が何も書いていません」と誤診した（生成器8本すべて NG・実際は正しく書いていた）
+        (base / "design" / "impl-coverage.json").write_text(json.dumps(
+            {"export": "../export.json", "component_map": "../map.json",
+             "generated_by": "gen"}), encoding="utf-8")
+        if main(["--config", str(base / "design" / "impl-coverage.json")]) != 0:
+            print("self-test NG: 設定を design/ に置くと生成器の検査が誤診する（#64）"); ok = False
 
         # 生成物を手で直したら落ちる
         (base / "out" / "a.txt").write_text("手で直した", encoding="utf-8")
