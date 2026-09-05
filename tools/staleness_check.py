@@ -37,6 +37,7 @@
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -100,24 +101,64 @@ def main(argv=None):
                     help="pairs を書いた staleness.json")
     ap.add_argument("--max-lag-days", type=int, default=0,
                     help="許容する遅れ（日）。既定 0 = 上流より1日でも古ければ失敗")
+    ap.add_argument("--generators", type=Path, metavar="generators.json",
+                    help="生成器の台帳から対（figma/<in> → <out>）を導く。手で pairs を書かない")
+    ap.add_argument("--figma", type=Path, help="書き出しの置き場（既定 design/figma。台帳の root 基準）")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
     if args.self_test:
         return self_test()
-    if not args.config:
-        ap.error("--config が要ります（--self-test を除く）")
-
-    try:
-        conf = json.loads(args.config.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        print(f"設定が読めません: {args.config}: {e}", file=sys.stderr)
+    if not args.config and not args.generators:
+        print("--config か --generators が要ります（--self-test を除く）", file=sys.stderr)
         return 2
 
-    base = args.config.resolve().parent
-    pairs = conf.get("pairs", [])
+    conf, pairs, base = {}, [], None
+    if args.config:
+        try:
+            conf = json.loads(args.config.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"設定が読めません: {args.config}: {e}", file=sys.stderr)
+            return 2
+        base = args.config.resolve().parent
+        pairs = list(conf.get("pairs", []))
+
+    # **対を手で書かない。台帳から導く**（#73）。aub の staleness.json は3組で、
+    # 書き出し35件のうち pairs に現れるのは2件だった。残り33件の鮮度差は誰も見ていなかった。
+    # 生成器の台帳（generators.json）は「何を読んで（in）何を書くか（out）」を持つので、
+    # 上流＝figma/<in>・下流＝<out> の対をそこから全部作る
+    unread = []
+    if args.generators:
+        try:
+            man = json.loads(args.generators.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"台帳が読めません: {args.generators}: {e}", file=sys.stderr)
+            return 2
+        root = args.generators.resolve().parents[2]
+        base = base or root
+        figma = (args.figma or Path("design/figma"))
+        figma_abs = figma if figma.is_absolute() else root / figma
+        gens = man.get("generators", man) if isinstance(man, dict) else man
+        read_names = set()
+        for g in gens if isinstance(gens, list) else []:
+            ins = g.get("in") or g.get("reads") or []
+            ins = [ins] if isinstance(ins, str) else ins
+            # aub の台帳は "in": "components.json + wrap.json" のように + / , で束ねる
+            ins = [x.strip() for s in ins for x in re.split(r"\s*[+,]\s*", str(s)) if x.strip()]
+            out = g.get("out")
+            for i in ins:
+                read_names.add(Path(i).name)
+                if not out:
+                    continue
+                # 書き出し（figma/ の下）か、案件の別の場所（assets/… など root 基準）か
+                up = figma_abs / i if (figma_abs / i).exists() or "/" not in i else root / i
+                pairs.append({"up": str(up.resolve()), "down": str((root / out).resolve()),
+                              "$導出": g.get("file")})
+        if figma_abs.exists():
+            unread = sorted(f.name for f in figma_abs.glob("*.json")
+                            if f.name not in read_names and not f.name.startswith("_"))
     if not pairs:
-        print(f"設定に pairs がありません: {args.config}", file=sys.stderr)
+        print("見る対が1つもありません（pairs も台帳の in/out も無い）", file=sys.stderr)
         return 2
 
     stale, broken = [], []
@@ -136,6 +177,9 @@ def main(argv=None):
         if mark == "NG":
             stale.append(pair["down"])
 
+    if unread:
+        print(f"\n注意: どの生成器も読んでいない書き出し {len(unread)} 件（鮮度差の対に入らない）: "
+              + " / ".join(unread[:12]) + ("…" if len(unread) > 12 else ""))
     if broken:
         print("\n設定の誤り:", file=sys.stderr)
         print("\n".join(broken), file=sys.stderr)
@@ -189,6 +233,26 @@ def self_test():
         # pairs が空 → 落ちる（空振りを通さない）
         if main(cfg([])) != 2:
             print("self-test NG: pairs が空なのに落ちなかった"); ok = False
+
+    # 台帳から対を導く（#73）。+ で束ねた in も割れる
+    import tempfile as _tf, io as _io, contextlib as _ctx
+    with _tf.TemporaryDirectory() as td2:
+        root = Path(td2); (root / "design" / "gen").mkdir(parents=True); (root / "design" / "figma").mkdir()
+        (root / "lib").mkdir()
+        for n in ("a.json", "b.json", "c.json"):
+            (root / "design" / "figma" / n).write_text('{"$meta":{"updatedAt":"2026-09-01"}}', encoding="utf-8")
+        (root / "lib" / "x.g.dart").write_text("// gen", encoding="utf-8")
+        (root / "design" / "gen" / "generators.json").write_text(json.dumps({"generators": [
+            {"file": "gen_x.py", "in": "a.json + b.json", "out": "lib/x.g.dart"}]}), encoding="utf-8")
+        buf = _io.StringIO()
+        with _ctx.redirect_stdout(buf), _ctx.redirect_stderr(buf):
+            rc = main(["--generators", str(root / "design" / "gen" / "generators.json"),
+                       "--figma", str(root / "design" / "figma"), "--max-lag-days", "9999"])
+        out2 = buf.getvalue()
+        if out2.count("x.g.dart") < 2:
+            print(f"self-test NG: + で束ねた in が2つの対に割れていない\n   {out2[:300]}"); ok = False
+        if "c.json" not in out2 or "読んでいない書き出し" not in out2:
+            print("self-test NG: どの生成器も読まない書き出しを名指ししていない"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
