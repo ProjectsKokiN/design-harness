@@ -102,6 +102,18 @@ jobs:
             FAILED=1
           }
 
+          # 報せ。**走らせるが CI は落とさない**（#65）。廃止した条件の検査や、
+          # 直すかどうかがユーザーの判断のものはここ。skip と違って走るので RAN に数える。
+          # FlashEnglish 2026-09-04: 「関門ではない」とコメントに書きながら run で呼んでいて、
+          # この段だけで CI が赤だった。赤が本当の異常を指さなくなる
+          note() {  # note <名前> <コマンド…>
+            local label="$1"; shift
+            echo "=== ${label}（報せ・落とさない） ==="
+            RAN=$((RAN + 1))
+            note_conds "$label"
+            if "$@"; then :; else echo "  ↑ 報せ。CI は落としません（直すかどうかはユーザーの判断）"; fi
+          }
+
           skip() {  # skip <名前> <理由>  ── 関門でない段。飛ばしても落とさない
             echo "=== $1 ==="
             echo "  飛ばしました: $2"
@@ -137,7 +149,8 @@ jobs:
             skip "文脈（共通の憲法の参照）" \
               "DESIGN.md が共通の憲法へ未移行（2026-08-29 の決定で、案件の再開時に移行）"
           fi
-          run "生成器の入力"                  - python3 $H/gen_input_check.py
+          # 条件2 は 2026-09-03 に廃止。検査としては有用なので**報せ**で残す（関門ではない）
+          note "生成器の入力（参考: 条件2 は廃止）" python3 $H/gen_input_check.py
           run "種まき（条件8: ルールが生きているか）" - python3 $H/seed_check.py
           run "段の健全性"                    - python3 $H/stage_check.py --verify design/verify.sh
           run "段の数（元ファイルから落ちた段）" - \

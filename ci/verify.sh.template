@@ -24,6 +24,15 @@ step() {  # step <名前> <コマンド...>
   echo
 }
 
+# 報せ。**走らせるが落とさない**（#65）。廃止した条件の検査や、直すかどうかが
+# ユーザーの判断のものはここ。「参考」と見出しに書きながら step で呼ぶと関門になる
+note() {  # note <名前> <コマンド...>
+  echo "=== $1（報せ・落とさない） ==="
+  shift
+  if "$@"; then echo "OK"; else echo "報せ（落とさない）"; fi
+  echo
+}
+
 if ! command -v "$PY" >/dev/null 2>&1; then
   echo "python3 が見つかりません。検査を実行できないため中止します。" >&2
   exit 1
@@ -50,7 +59,7 @@ step "文脈（共通の憲法を参照しているか・写していないか�
 
 step "実装網羅（条件7: Figma にあるものは全部実装）" \
   "$PY" "$HARNESS/tools/impl_coverage_check.py" --config impl-coverage.json
-step "照合体制（参考: 条件2 は 2026-09-03 に廃止。検査としては有用）" \
+note "照合体制（参考: 条件2 は 2026-09-03 に廃止。検査としては有用）" \
   "$PY" "$HARNESS/tools/coverage_check.py" --config coverage.json
 step "生成器の入力（書き出し以外を読んでいないか）" \
   "$PY" "$HARNESS/tools/gen_input_check.py"

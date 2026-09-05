@@ -71,7 +71,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
 
 HERE = Path(__file__).resolve().parent
-STEP_RX = re.compile(r'^\s*step\s+"([^"]+)"\s+(.*)$')
+STEP_RX = re.compile(r'^\s*(?:step|note)\s+"([^"]+)"\s+(.*)$')
 TOOL_RX = re.compile(r'(?:\$HARNESS|harness)/tools/([a-z_]+)\.py')
 #: 段が走らせるファイルの名前（パスは落とす）。案件シム経由でも同じ名前になる
 FILE_RX = re.compile(r"(?:^|[\s/\"'])([a-z_][a-z0-9_]*\.(?:py|sh))\b")

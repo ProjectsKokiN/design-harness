@@ -32,7 +32,8 @@ TEMPLATE = ROOT / "ci" / "app-verify.yml.template"
 
 
 def slice_between(text, start, end):
-    m = re.search(re.escape(start) + r"(.*?)" + re.escape(end), text, re.S)
+    # 印の行の残り（説明文）は script に入れない。行末まで飛ばす
+    m = re.search(re.escape(start) + r"[^\n]*\n(.*?)" + re.escape(end), text, re.S)
     if not m:
         raise SystemExit(
             f"印が見つかりません: {start} … {end}\n"
@@ -57,8 +58,9 @@ def run_case(stages, live=("1", "5", "7", "8", "9")):
         script = "\n".join([
             "set -u", f'H="{d}/tools"', head, stages, tail, "exit $FAILED"])
         (d / "tools").mkdir()
+        # bash が途中で切った多バイト文字を出すことがあるので、読めない byte で落とさない
         r = subprocess.run(["bash", "-c", script], capture_output=True,
-                           text=True, cwd=d)
+                           text=True, errors="replace", cwd=d)
         return r.returncode, r.stdout + r.stderr
 
 
@@ -87,6 +89,14 @@ CASES = [
      "\n".join(f'run "段（条件{c}）" - true' for c in ("1", "5", "7", "8", "9"))
      + '\nskip_gate "見なかったもの" "gaps.json がありません"',
      1, "飛ばした = 誰も見ていません"),
+    ("**報せ（note）が落ちても CI は赤にならない**（#65）",
+     "\n".join(f'run "段（条件{c}）" - true' for c in ("1", "5", "7", "8", "9"))
+     + '\nnote "参考の段" false',
+     0, "CI は落としません"),
+    ("報せも「走った」に数える",
+     "\n".join(f'run "段（条件{c}）" - true' for c in ("1", "5", "7", "8", "9"))
+     + '\nnote "参考の段" true',
+     0, "走らせた段: 6"),
     ("段が落ちたら落ちる",
      "\n".join(f'run "段（条件{c}）" - true' for c in ("1", "5", "7", "8", "9"))
      + '\nrun "落ちる段" - false',
@@ -115,7 +125,7 @@ def main():
                             'run "段（条件1）" - true', tail, "exit $FAILED"])
         Path(td, "tools").mkdir()
         r = subprocess.run(["bash", "-c", script], capture_output=True,
-                           text=True, cwd=td)
+                           text=True, errors="replace", cwd=td)
         if r.returncode != 1 or "条件の一覧がありません" not in r.stdout + r.stderr:
             print(f"NG: 条件の一覧が無いのに落ちなかった（exit {r.returncode}）")
             ok = False
