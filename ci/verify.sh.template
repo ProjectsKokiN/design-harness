@@ -137,6 +137,12 @@ step "生成物の可搬性（機体固有の文字列が入っていないか�
 
 step "機体の担当（担当外のパスを変えていないか）" \
   "$PY" "$HARNESS/tools/machine_scope.py" --config design/machine-scope.json --check
+# 担当の宣言そのものが生きているか（#80）。改名・移動でパスがずれると、そこは静かに
+# 「担当なし」に落ち、**担当分けの関門がコードが動いた分だけ面積を失う**
+# （2026-09-06 実測: planttalk は宣言17件中2件が幽霊で、追跡256件中124件が担当なし）。
+# これから作るものは machine-scope.json の `$これから作る` に理由つきで書く
+step "担当の宣言（実体を指しているか）" \
+  "$PY" "$HARNESS/tools/machine_scope.py" --config design/machine-scope.json --check-paths
 
 # **Windows でだけ落ちる書き方**を Mac / Linux から見つける。検査そのものが
 # macOS でしか回っていなかったため、aub では3日で5件出た（うち2件は検査自身）。

@@ -330,6 +330,8 @@ def main(argv=None):
                     help="--handoff で作業ツリーからも外す（**変更はパッチに残る**）")
     ap.add_argument("--check", action="store_true",
                     help="担当外のパスを変えていないか")
+    ap.add_argument("--check-paths", action="store_true",
+                    help="担当の宣言が実体を指しているか（#80。改名でずれると静かに担当なしになる）")
     ap.add_argument("--root", type=Path, default=Path("."))
     ap.add_argument("--self-test", action="store_true")
     ap.add_argument("cmd", nargs=argparse.REMAINDER,
@@ -377,6 +379,9 @@ def main(argv=None):
 
     if args.check:
         return do_check(machine, conf, args.root, args.config)
+
+    if args.check_paths:
+        return do_check_paths(conf, args.root, args.config)
 
     if args.handoff:
         return do_handoff(machine, conf, args.root, args.apply)
@@ -514,12 +519,85 @@ def do_handoff(machine, conf, root, apply=False):
     return 0
 
 
+def ghost_paths(conf, root):
+    """**宣言したのに実在しないパス**（2026-09-06 新設・#80）。
+
+    `machines` と `shared` は手で書いたパス接頭辞の一覧です。**実在するかを誰も見ていません
+    でした。** ディレクトリを1つ改名・移動しただけで、そのパスは静かに「担当なし」に落ち、
+    担当分けの関門が**コードが動いた分だけ静かに面積を失います**。
+
+    実測（2026-09-06）: planttalk は宣言17件のうち2件（`lib/data/` `lib/router/`）が実体を
+    指しておらず、追跡256件のうち**124件が担当なし**でした。既定は `strict: false` なので
+    注意が1行出るだけで exit 0 です。
+
+    **これから作るものは宣言で通します。** 担当を先に決めてから書く運用は正当なので
+    （`design/ios.json` が実際にそれ）、`$これから作る` に理由つきで載せます。
+
+        "$これから作る": {"design/ios.json": "Mac mini がこれから測って書く（2026-09-06）"}
+
+    戻り: ([(担当, パス)], 理由の無い宣言の一覧)
+    """
+    coming = conf.get("$これから作る") or {}
+    no_reason = [k for k, v in coming.items() if not str(v).strip()]
+    out = []
+    for m, paths in (conf.get("machines") or {}).items():
+        for x in paths:
+            rel = str(x).rstrip("/")
+            if rel in coming or (Path(root) / rel).exists():
+                continue
+            out.append((m, str(x)))
+    for x in (conf.get("shared") or []):
+        rel = str(x).rstrip("/")
+        if rel in coming or (Path(root) / rel).exists():
+            continue
+        out.append((SHARED, str(x)))
+    return out, no_reason
+
+
+def do_check_paths(conf, root, conf_path=''):
+    """**宣言したパスが実体を指しているか**だけを見る（2026-09-06 新設・#80）。
+
+    `--check`（担当外の変更を見る）とは別の段にしています。あちらは「何を変えたか」、
+    こちらは「**宣言そのものが生きているか**」で、問いが違うためです。段を分けると
+    `stage_check --stages` から見え、案件が外したときに「黙って落ちた段」として捕まります。
+    """
+    ghosts, no_reason = ghost_paths(conf, root)
+    n = sum(len(v) for v in (conf.get("machines") or {}).values()) + len(conf.get("shared") or [])
+    if not n:
+        print(f"担当の宣言が1つもありません: {conf_path or '(設定)'}\n"
+              f"  **0件は「担当分けなし」ではなく「見ていない」です。**", file=sys.stderr)
+        return 2
+    coming = conf.get("$これから作る") or {}
+    if not ghosts and not no_reason:
+        print(f"担当の宣言: {n} 件、すべて実体を指しています"
+              + (f"（これから作る {len(coming)} 件は理由つきで宣言済み）" if coming else ""))
+        return 0
+    print(f"**担当の宣言が実体を指していません**（{len(ghosts)}件 / 宣言 {n} 件）。\n"
+          f"  改名・移動でパスがずれると、そこは静かに「担当なし」に落ちます。\n"
+          f"  **担当分けの関門が、コードが動いた分だけ面積を失います**"
+          f"（2026-09-06 実測: planttalk は宣言17件のうち2件が幽霊で、"
+          f"追跡256件のうち124件が担当なしでした）:", file=sys.stderr)
+    for m, x in ghosts:
+        print(f"  - {m}: `{x}`", file=sys.stderr)
+    for k in no_reason:
+        print(f"  - `$これから作る` の `{k}` に理由がありません", file=sys.stderr)
+    print("  → 実体に合わせて直すか、これから作るものなら "
+          "`$これから作る` に理由つきで書いてください", file=sys.stderr)
+    return 1
+
+
 def do_check(machine, conf, root, conf_path=''):
     files = changed_files(root)
     if files is None:
         print(f"git の状態が読めません: {root}\n"
               f"  担当外の変更を確かめられないので通しません。", file=sys.stderr)
         return 2
+
+    ghosts, no_reason = ghost_paths(conf, root)
+    coming = conf.get("$これから作る") or {}
+    if coming:
+        print(f"これから作るパスの宣言: {len(coming)} 件"
+              + "".join(f"\n  {k}（{v}）" for k, v in sorted(coming.items())))
 
     mine, others, unowned = [], [], []
     for f in sorted(files):
@@ -538,6 +616,14 @@ def do_check(machine, conf, root, conf_path=''):
 
     print(f"機体の担当: **{machine}** / 変更 {len(files)}件"
           f"（担当内 {len(mine)} / 担当外 {len(others)} / 担当なし {len(unowned)}）")
+    if ghosts or no_reason:
+        # ここでは落とさない（担当外の変更を見る段の判定を変えない）。
+        # **落とすのは独立した段**（`--check-paths`）。段にすると stage_check から見え、
+        # 案件が外したときに「黙って落ちた段」として捕まる
+        print(f"注意: 担当の宣言 {len(ghosts) + len(no_reason)} 件が実体を指していません"
+              f"（`--check-paths` が落とします）: "
+              + " / ".join(x for _, x in ghosts[:4]) + (" …" if len(ghosts) > 4 else ""))
+
     if unowned:
         print(f"  担当の宣言が無いパス（{len(unowned)}件）: "
               + " / ".join(unowned[:6]) + (" …" if len(unowned) > 6 else ""))
@@ -614,6 +700,10 @@ def self_test():
         for p in ("design/x.json", "lib/data/y.dart", "SESSION_LOG.md"):
             (root / p).parent.mkdir(parents=True, exist_ok=True)
             (root / p).write_text("{}", encoding="utf-8")
+        # 宣言したパスの**置き場だけ**作る（#80 の判定は実在を見る）。
+        # **ファイルは置かない**——置くと担当外の変更として数えられ、この節の問いが変わる
+        for d in ("lib/ui", "ios", "scripts"):
+            (root / d).mkdir(parents=True, exist_ok=True)
 
         R = ["--root", str(root)]
         # Windows が design/ を変えている → 落ちる（この回の本体）
@@ -865,6 +955,41 @@ def self_test():
     check("set -e" in (__doc__ or ""), "**set -e の受け方が docstring に無い**")
     check("|| rc=$?" in (__doc__ or "") or "|| rc=" in (__doc__ or ""),
           "安全な受け方の例が docstring に無い")
+
+    # ─── #80: 宣言したパスが実在するか ─────────────────────────────
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"; (root / "lib" / "ui").mkdir(parents=True)
+        (root / "lib" / "ui" / "a.dart").write_text("1\n", encoding="utf-8")
+        c = {"machines": {"A": ["lib/ui/"], "B": ["lib/data/"]}, "shared": ["docs/"]}
+        g, nr = ghost_paths(c, root)
+        check(sorted(x for _, x in g) == ["docs/", "lib/data/"],
+              f"**実在しない宣言を見つけられない**: {g}")
+        check(nr == [], "理由の無い宣言が無いのに出た")
+        # これから作るものは理由つきで通る
+        c2 = dict(c, **{"$これから作る": {"lib/data": "B がこれから書く", "docs": "置き場を作る"}})
+        check(ghost_paths(c2, root)[0] == [], f"理由つきの宣言を通さない: {ghost_paths(c2, root)[0]}")
+        # 理由が空なら名指しする
+        c3 = dict(c, **{"$これから作る": {"lib/data": "", "docs": "x"}})
+        check(ghost_paths(c3, root)[1] == ["lib/data"], "理由の無い宣言を見逃した")
+        # 実在するものは何も出さない
+        c4 = {"machines": {"A": ["lib/ui/"]}}
+        check(ghost_paths(c4, root)[0] == [], "実在する宣言を咎めた")
+        # --check-paths の帰り道まで見る（--check は判定を変えない）
+        subprocess.run(["git", "init", "-q", "-b", "main", str(root)], capture_output=True)
+        cfp = Path(td) / "c.json"
+        A = ["--config", str(cfp), "--root", str(root), "--machine", "A"]
+        cfp.write_text(json.dumps(c, ensure_ascii=False), encoding="utf-8")
+        check(main(A + ["--check-paths"]) == 1,
+              "**実在しない宣言があるのに --check-paths が通した**")
+        check(main(A + ["--check"]) == 0,
+              "--check の判定まで変えた（担当外の変更を見る段は別の問い）")
+        cfp.write_text(json.dumps(c2, ensure_ascii=False), encoding="utf-8")
+        check(main(A + ["--check-paths"]) == 0, "理由つきの宣言があるのに落ちた")
+        cfp.write_text(json.dumps(c3, ensure_ascii=False), encoding="utf-8")
+        check(main(A + ["--check-paths"]) == 1, "理由の無い `$これから作る` を通した")
+        cfp.write_text(json.dumps({"machines": {}}, ensure_ascii=False), encoding="utf-8")
+        check(main(A + ["--check-paths"]) == 2,
+              "宣言が0件なのに 2 で止まらなかった（0件は見ていない）")
 
     # ─── strict: 担当の宣言が無いパスを変えたら落ちる ───────────────
     # （変異試験 2026-09-05: `return 1` を `return 0` にしても自己検査が通っていた）
