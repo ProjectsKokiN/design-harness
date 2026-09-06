@@ -24,7 +24,7 @@
 
 ## 何を見るか
 
-    python3 tools/reachability_check.py            # tools/ と templates/ を見る
+    python3 tools/reachability_check.py            # tools/ engine/ shims/ build/ を見る
     python3 tools/reachability_check.py --self-test
 
 **実行時に読む参照だけを落とします。** 案内文（「`source ~/.claude/.env` を実行して
@@ -141,16 +141,27 @@ def scan_file(path: Path) -> list[str]:
     return out
 
 
-def scan(root: Path) -> list[str]:
-    problems = []
-    for p in sorted((root / "tools").glob("*.py")):
-        if p.name in ("reachability_check.py",):
+#: 歩く場所。**共有層は tools/ だけではない**（2026-09-06 に build/ が増えた）。
+#: 階層を作ったら網も広げる——広げないと、新しい道具はこの検査の外で緑になる
+SCAN_DIRS = ("tools", "engine", "shims", "build")
+
+
+def scan(root: Path) -> tuple[list[str], int]:
+    """戻り: (見つけた問題, 見たファイル数)。**0件は「見ていない」と区別する。**"""
+    problems, n = [], 0
+    for d in SCAN_DIRS:
+        base = root / d
+        if not base.exists():
             continue
-        found = scan_file(p)
-        if found and p.name in ALLOW:
-            continue
-        problems.extend(found)
-    return problems
+        for p in sorted(base.glob("*.py")):
+            if p.name in ("reachability_check.py",):
+                continue
+            n += 1
+            found = scan_file(p)
+            if found and p.name in ALLOW:
+                continue
+            problems.extend(found)
+    return problems, n
 
 
 def self_test() -> int:
@@ -224,7 +235,12 @@ def main(argv=None) -> int:
     if args.self_test:
         return self_test()
 
-    problems = scan(args.root)
+    problems, seen = scan(args.root)
+    if seen == 0:
+        print(f"道具が1本も見つかりません（{args.root} の "
+              f"{' / '.join(SCAN_DIRS)}）。**0件は「読んでいない」ではなく「見ていない」です。**",
+              file=sys.stderr)
+        return 2
     if problems:
         print("共有層の道具が `~/.claude` を実行時に読んでいます。", file=sys.stderr)
         print("**CI と他人のクローンには無いので、落ちるか、黙って緑になります。**",
@@ -236,9 +252,8 @@ def main(argv=None) -> int:
               "  読むのが目的そのものなら ALLOW に理由つきで宣言してください。",
               file=sys.stderr)
         return 1
-    n = len(list((args.root / "tools").glob("*.py")))
-    print(f"到達性: 道具 {n} 本。`~/.claude` を実行時に読むものはありません"
-          f"（宣言つきの例外 {len(ALLOW)} 本）。")
+    print(f"到達性: 道具 {seen} 本（{' / '.join(SCAN_DIRS)}）。"
+          f"`~/.claude` を実行時に読むものはありません（宣言つきの例外 {len(ALLOW)} 本）。")
     return 0
 
 

@@ -188,7 +188,9 @@ def main(argv=None):
         for f in ("README.md", "DESIGN.md"):
             if (ROOT / f).exists():
                 shutil.copy(ROOT / f, work / f)
-        survivors, measured, paths_total, fossils = [], 0, 0, []
+        # **飛ばした道具を必ず名前で出す。** 出さないと「素通り 0」が
+        # 「見た結果 0」なのか「見なかったから 0」なのか分からない（分母が黙って縮む形）
+        survivors, measured, paths_total, fossils, skipped = [], 0, 0, [], []
         # **共有層は tools/ だけではない**（2026-09-06 に build/ が増えた）。
         # 階層を作ったら網も広げる——広げないと、新しい道具は測られないまま緑になる
         candidates = sorted((work / "tools").glob("*.py"))
@@ -196,12 +198,16 @@ def main(argv=None):
         for f in candidates:
             src = f.read_text(encoding="utf-8")
             if '"--self-test"' not in src and "--selftest" not in src:
+                skipped.append((f.name, "`--self-test` の旗が無い"))
                 continue
             targets = failure_returns(src)
             if not targets:
+                skipped.append((f.name, "落とす帰り道（return 1 / 2）が無い"))
                 continue
             if selftest_ok(f, work) is not True:
-                continue                      # 基準で通らない道具は測れない（別の段が見る）
+                # 基準で通らない道具は測れない（別の段が見る）。**黙って消さない**
+                skipped.append((f.name, "**いま self-test が通らない**（測れない）"))
+                continue
             measured += 1
             lines = src.splitlines(keepends=True)
             survived_here = set()
@@ -235,6 +241,11 @@ def main(argv=None):
           f"**理由なし {len(unlisted)}**）")
     for key, code, _, _ in dup:
         print(f"注意: {key} の印は要りません（型で許されています）: {code}")
+    if skipped:
+        print(f"測れなかった道具: {len(skipped)} 本"
+              f"（**「素通り 0」は、この {len(skipped)} 本については「見ていない」という意味です**）")
+        for name, why in skipped:
+            print(f"  {name}  {why}")
     if fossils:
         print(f"要らなくなった印があります（{len(fossils)}件）。"
               f"**その行は落とす経路ではないか、self-test がすでに見ています:**", file=sys.stderr)
