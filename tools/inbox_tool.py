@@ -21,11 +21,23 @@
     python3 tools/inbox_tool.py --check-target
     python3 tools/inbox_tool.py --check-target --require-for "ビルド|APK|TestFlight|配布"   # ビルドの依頼に対象が無ければ落とす
 
-## 書式（machine-relay と同じ）
+## 書式（2通り）
+
+**案件の受信箱**（依頼はその案件の話）:
 
     ## YYYY-MM-DD 宛先: <宛先> [未対応|完了] — 要件
     対象の commit: main@<sha>（この依頼を書いたときの main）
     …本文…
+
+**横断の受信箱**（`machine-relay`。依頼は別のリポジトリの話・2026-09-06・#88）:
+
+    ## YYYY-MM-DD 宛先: <宛先> [未対応|完了] — 要件
+    対象: <リポジトリ名>@<sha>
+
+後者は `~/dev/<リポジトリ名>` を探して**そちらの HEAD と比べます**。
+**「いま居るリポジトリ」で比べると、受信箱自身の sha を見て黙って通ります**
+（#71 と同じ穴が横断の受信箱で開いていた）。対象のリポジトリが手元に無ければ
+**確かめられないので落とします**（黙って通さない）。
 
     ## 未対応の依頼（索引）
     - YYYY-MM-DD 宛先: <宛先> — **要件**（**着手できます**）
@@ -51,6 +63,11 @@ INDEX_HEAD = "## 未対応の依頼（索引）"
 #: 索引の見出しは案件で少し違う（FlashEnglish は「## 未対応の依頼」）。行頭の一致で探す
 INDEX_HEAD_RX = re.compile(r"^## 未対応の依頼.*$", re.M)
 TARGET_RX = re.compile(r"^対象の commit: (\w+)@([0-9a-f]{7,40})", re.M)
+#: 横断の受信箱の書式（2026-09-06・#88）。`対象: <リポジトリ名>@<sha>`
+#: 案件の受信箱は「いま居るリポジトリ」の話なので上の形。横断の受信箱は**別のリポジトリ**の話
+CROSS_RX = re.compile(r"^対象: ([A-Za-z0-9._-]+)@([0-9a-f]{7,40})", re.M)
+#: 対象のリポジトリを探す場所
+REPO_HOME = Path.home() / "dev"        # reachability-ok: ~/.claude ではなく開発の置き場
 ARCHIVE_TITLE = "# マシン間の申し送り（完了ぶんの保管）"
 
 
@@ -161,21 +178,35 @@ def do_check_target(path, root, require_for):
     for s, e, date, to, _, title in secs:
         body = text[s:e]
         m = TARGET_RX.search(body)
-        if not m:
+        cross = CROSS_RX.search(body)
+        if not m and not cross:
             if req and req.search(title):
                 errs.append(f"  {date} 宛先: {to} — {title}: **ビルドの依頼に対象の commit がありません。**"
                             f"受け取った機体は「いまの main」で作るしかなく、古い版を配ります（#71）")
             continue
         seen += 1
-        sha = m.group(2)
-        rc, _ = git(root, "cat-file", "-e", f"{sha}^{{commit}}")
+        if cross:
+            # **横断の受信箱**（#88）。対象は別のリポジトリなので、そちらの HEAD と比べる。
+            # ここを「いま居るリポジトリ」で比べると、**受信箱自身の sha を見て黙って通る**
+            name, sha = cross.group(1), cross.group(2)
+            where = REPO_HOME / name
+            if not (where / ".git").exists():
+                errs.append(f"  {date} 宛先: {to} — {title}: 対象のリポジトリ `{name}` が "
+                            f"{where} にありません。**確かめられないので通しません**"
+                            f"（黙って通すと #71 と同じ穴が開きます）")
+                continue
+            target_root, label = where, f"{name}@{sha}"
+        else:
+            sha = m.group(2)
+            target_root, label = root, sha
+        rc, _ = git(target_root, "cat-file", "-e", f"{sha}^{{commit}}")
         if rc != 0:
-            warns.append(f"  {date} — {title}: 対象 {sha} がこの手元にありません（**取り込んでいない**）。"
+            warns.append(f"  {date} — {title}: 対象 {label} がこの手元にありません（**取り込んでいない**）。"
                          f"git fetch / pull してから作ってください")
             continue
-        rc, _ = git(root, "merge-base", "--is-ancestor", sha, "HEAD")
+        rc, _ = git(target_root, "merge-base", "--is-ancestor", sha, "HEAD")
         if rc != 0:
-            errs.append(f"  {date} 宛先: {to} — {title}: **いまの HEAD は依頼の対象（{sha}）より古い。**"
+            errs.append(f"  {date} 宛先: {to} — {title}: **いまの HEAD は依頼の対象（{label}）より古い。**"
                         f"このまま作ると直す前の版を配ります（aub で 2 回起きた）。先に取り込んでください")
     for w in warns:
         print(f"注意: {w.strip()}")
@@ -341,6 +372,46 @@ def self_test():
                 rc = main(["--file", str(ib), "--root", td2, "--add", "--to", "Windows",
                            "--title", "x", "--body", str(body2), "--no-target"])
             check(rc == 0, f"--no-target なら git 無しでも足せるはず（{rc}）")
+
+        # ─── 横断の受信箱（#88）: 対象は別のリポジトリ ───────────────
+        cross = root / "cross.md"
+        cross.write_text(
+            f"# 横断の受信箱\n\n{INDEX_HEAD}\n\n"
+            f"## 2026-09-06 宛先: Windows [未対応] — 別のリポジトリの話\n"
+            f"対象: machine-relay-no-such-repo@{new}\n\n本文\n", encoding="utf-8")
+        X = ["--file", str(cross), "--root", str(root)]
+        b3 = io.StringIO()
+        with contextlib.redirect_stdout(b3), contextlib.redirect_stderr(b3):
+            rc = main(X + ["--check-target"])
+        check(rc == 1 and "確かめられないので通しません" in b3.getvalue(),
+              f"**対象のリポジトリが無いのに通した（{rc}）**\n   {b3.getvalue()[:200]}")
+        # 対象のリポジトリが手元にあれば、そちらの HEAD と比べる
+        import machine_scope as _ms  # noqa: F401  （tools/ が sys.path に居ることの確認）
+        global REPO_HOME
+        keep_home = REPO_HOME
+        REPO_HOME = root.parent
+        try:
+            cross.write_text(
+                f"# 横断の受信箱\n\n{INDEX_HEAD}\n\n"
+                f"## 2026-09-06 宛先: Windows [未対応] — 別のリポジトリの話\n"
+                f"対象: {root.name}@{new}\n\n本文\n", encoding="utf-8")
+            b4 = io.StringIO()
+            with contextlib.redirect_stdout(b4), contextlib.redirect_stderr(b4):
+                rc = main(X + ["--check-target"])
+            check(rc == 0 and "対象あり 1 件" in b4.getvalue(),
+                  f"対象のリポジトリの HEAD と比べられない（{rc}）\n   {b4.getvalue()[:250]}")
+            # **受信箱自身の sha を見ていないこと。** 受信箱の HEAD には無い sha を対象にする
+            cross.write_text(
+                f"# 横断の受信箱\n\n{INDEX_HEAD}\n\n"
+                f"## 2026-09-06 宛先: Windows [未対応] — 別のリポジトリの話\n"
+                f"対象: {root.name}@deadbeefcafe1\n\n本文\n", encoding="utf-8")
+            b5 = io.StringIO()
+            with contextlib.redirect_stdout(b5), contextlib.redirect_stderr(b5):
+                rc = main(X + ["--check-target"])
+            check(rc == 0 and "取り込んでいない" in b5.getvalue(),
+                  f"手元に無い対象を注意にしていない（{rc}）")
+        finally:
+            REPO_HOME = keep_home
 
         # 索引の見出しが「## 未対応の依頼」だけの案件（FlashEnglish）でも足せる
         inbox.write_text(t.replace(INDEX_HEAD, "## 未対応の依頼"), encoding="utf-8")
