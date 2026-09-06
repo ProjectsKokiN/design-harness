@@ -66,6 +66,11 @@ HEAD_BYTES = 4096
 CODE_MARK_LINES = 5
 
 
+#: `$手で書き換えない` の値がこれで始まるなら、**生成物ではない**という宣言として読む
+#: （キーの存在だけで判定すると、否定を書いたファイルまで生成物になる）
+DENIALS = ("いいえ", "no", "false", "手で書", "ちがい", "違い")
+
+
 def is_generated(path) -> tuple[bool, str]:
     """生成物か。**理由も返す**（報告でどの印を見たか示すため）。
 
@@ -88,6 +93,11 @@ def is_generated(path) -> tuple[bool, str]:
             return False, "JSON として読めない"
         if isinstance(d, dict):
             if JSON_ROOT_MARK in d:
+                # **値まで読む。** キーがあるだけで生成物にすると、「これは手で書く定義です」と
+                # 否定を書いたファイルまで拾う（2026-09-06 実測: build/inventory-schema.json）
+                val = str(d[JSON_ROOT_MARK]).strip()
+                if any(val.lower().startswith(x) for x in DENIALS):
+                    return False, f"`{JSON_ROOT_MARK}` の値が否定（{val[:20]}…）"
                 return True, f"ルートに `{JSON_ROOT_MARK}`"
             meta = d.get("$meta")
             if isinstance(meta, dict):
@@ -97,26 +107,37 @@ def is_generated(path) -> tuple[bool, str]:
     return False, "印が無い"
 
 
-def list_generated(root, subdir="design") -> list[tuple[Path, str]]:
-    """`root/subdir` の下から生成物を**導出**する（一覧を宣言しない）。
+def list_generated(root, subdirs=None) -> list[tuple[Path, str]]:
+    """`root` の下から生成物を**導出**する（一覧を宣言しない）。
 
-    `design/harness`（submodule）と `__pycache__` は見ない。
+    `subdirs` は歩く場所。既定は `["design"]`（案件の形）。**`"."` を渡すとリポジトリ全体**を
+    歩く。ハーネス自身のように `design/` を持たないリポジトリでは、既定のままだと
+    **必ず 0 件になり、検査が空振りの緑になります**（2026-09-06 実測: design-harness で
+    `生成物 0 件。機体固有の文字列はありません（共有して安全）` と出ていたが、
+    `gate/conditions.json` は生成物だった）。
+
+    `design/harness`（submodule）と `__pycache__` と `.git` は見ない。
     """
     root = Path(root)
-    base = root / subdir
-    out = []
-    if not base.exists():
-        return out
-    for p in sorted(base.rglob("*")):
-        if not p.is_file():
+    out, seen = [], set()
+    for sub in (subdirs or ["design"]):
+        base = root if sub == "." else root / sub
+        if not base.exists():
             continue
-        parts = set(p.parts)
-        if "harness" in parts or "__pycache__" in parts or ".git" in parts:
-            continue
-        ok, why = is_generated(p)
-        if ok:
-            out.append((p.relative_to(root), why))
-    return out
+        for p in sorted(base.rglob("*")):
+            if not p.is_file():
+                continue
+            parts = set(p.relative_to(root).parts)
+            if "harness" in parts or "__pycache__" in parts or ".git" in parts:
+                continue
+            rel = p.relative_to(root)
+            if rel in seen:
+                continue
+            ok, why = is_generated(p)
+            if ok:
+                seen.add(rel)
+                out.append((rel, why))
+    return sorted(out)
 
 
 def self_test() -> int:
@@ -142,6 +163,12 @@ def self_test() -> int:
         ("拾わない: 壊れた JSON", "f.json", "{壊れている", False),
         ("拾わない: source が GENERATED で始まらない", "g.json",
          '{"$meta": {"source": "手書き。GENERATED ではない"}, "x": 1}', False),
+        # **キーの存在だけで判定しない。** 値が否定なら生成物ではない
+        # （2026-09-06 実測: build/inventory-schema.json が誤判定されていた）
+        ("拾わない: 印の値が否定", "i.json",
+         '{"$手で書き換えない": "いいえ。これは手で書く定義です", "x": 1}', False),
+        ("拾う: 印の値が生成器の名前", "j.json",
+         '{"$手で書き換えない": "tools/gen_gate.py が生成します", "x": 1}', True),
     ]
     with tempfile.TemporaryDirectory() as td:
         d = Path(td)
@@ -152,6 +179,21 @@ def self_test() -> int:
             if got != want:
                 print(f"self-test NG: {name} → {got}（期待 {want}・理由 {why}）")
                 ok = False
+
+        # **歩く場所を変えられる。** `design/` を持たないリポジトリで既定のまま回すと
+        # 必ず0件になり、検査が空振りの緑になる（2026-09-06 に design-harness で実測）
+        (d / "gate").mkdir(exist_ok=True)
+        (d / "gate" / "conditions.json").write_text(
+            '{"$手で書き換えない": "gen_gate.py が生成します"}', encoding="utf-8")
+        if list_generated(d):
+            print("self-test NG: design/ の外を既定で歩いた"); ok = False
+        if len(list_generated(d, ["."])) < 1:
+            print("self-test NG: `.` を渡してもリポジトリ全体を歩かない"); ok = False
+        if len(list_generated(d, ["gate"])) != 1:
+            print("self-test NG: 場所を指定して歩けない"); ok = False
+        # 同じファイルを2つの場所から拾っても1件（重複しない）
+        if len(list_generated(d, [".", "gate"])) != len(list_generated(d, ["."])):
+            print("self-test NG: 場所を重ねると同じファイルを二重に数える"); ok = False
 
         # 消えたファイルは「生成物ではない」に倒す（分からないものを共有にしない）
         got, _ = is_generated(d / "no-such.json")

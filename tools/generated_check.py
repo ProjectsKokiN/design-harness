@@ -74,9 +74,9 @@ def scan_text(text: str) -> list[str]:
     return out
 
 
-def scan(root: Path) -> tuple[list[str], int]:
+def scan(root: Path, subdirs=None) -> tuple[list[str], int]:
     problems, n = [], 0
-    for rel, _why in list_generated(root):
+    for rel, _why in list_generated(root, subdirs):
         n += 1
         try:
             text = (root / rel).read_text(encoding="utf-8")
@@ -148,13 +148,15 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", type=Path, default=Path("."))
+    ap.add_argument("--subdir", action="append", metavar="DIR",
+                    help="歩く場所（複数可。既定 design。`.` でリポジトリ全体）")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
     if args.self_test:
         return self_test()
 
-    problems, n = scan(args.root)
+    problems, n = scan(args.root, args.subdir)
     if problems:
         print("生成物に機体固有の文字列が入っています。", file=sys.stderr)
         print("**このままだと共有できません**（2台が上書きし合い、"
@@ -164,6 +166,14 @@ def main(argv=None) -> int:
         print("\n  生成器を直してください。リポジトリ相対 + `as_posix()` が正しい形です\n"
               "  （2026-09-06 の gen_notcaptured.py・gen_gate.py が例）。", file=sys.stderr)
         return 1
+    if n == 0:
+        where = " / ".join(args.subdir or ["design"])
+        print(f"生成物が1件も見つかりません（{args.root} の {where}）。\n"
+              f"  **0件は「共有して安全」ではなく「見ていない」です。**\n"
+              f"  歩く場所が違うか（`--subdir`）、生成器が印を書いていません"
+              f"（2026-09-06 実測: design/ を持たないリポジトリで既定のまま回して"
+              f"空振りの緑になっていました）。", file=sys.stderr)
+        return 2
     print(f"生成物 {n} 件。機体固有の文字列はありません（共有して安全）。")
     return 0
 

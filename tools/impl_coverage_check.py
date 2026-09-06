@@ -120,6 +120,112 @@ def declared_problems(export_paths):
     return out
 
 
+#: `impl` が指す実装の定義。Dart のトップレベルの宣言
+IMPL_DEF = ("class", "mixin", "enum", "extension", "typedef")
+
+
+def impl_targets(value):
+    """`impl` の値から、指している先の一覧を作る。**書き方が案件で違う。**
+
+    受ける形: `"lib/ui/x.dart#AppButton"` / `"AppButton"` / それらの配列 /
+    `{"class": "AppButton", "file": "lib/ui/x.dart"}`。
+    """
+    def one(x):
+        if isinstance(x, str):
+            return x.strip()
+        if isinstance(x, dict):
+            f = x.get("file") or x.get("path")
+            c = x.get("class") or x.get("name")
+            return f"{f}#{c}" if f and c else (c or f or "")
+        return ""
+    vals = value if isinstance(value, list) else [value]
+    return [s for s in (one(v) for v in vals) if s]
+
+
+def repo_root_of(start):
+    """設定の置き場からリポジトリの根を探す。
+
+    設定は案件の根に置くことも `design/` に置くこともある（aub は根、FlashEnglish は
+    どちらでも拾う）。**`base.parent` と決め打ちすると片方で必ず外れる**（#64 と同じ形）。
+    `.git` か `pubspec.yaml` を上へたどって探し、見つからなければ元の場所に倒す。
+    """
+    cur = Path(start).resolve()
+    for d in [cur, *cur.parents]:
+        if (d / ".git").exists() or (d / "pubspec.yaml").exists():
+            return d
+    return cur
+
+
+def check_impl_targets(map_path, root, lib_dir="lib"):
+    """`impl` が**実在する実装を指しているか**を見る（2026-09-06 新設）。
+
+    それまで `bool(c.get("impl"))` で「文字が入っていれば実装あり」と数えていました。
+    値は `lib/ui/widgets/chips.dart#ChipsDefault` のような**人が書き写したパスとクラス名**
+    なのに、**それが実在するかを共有層の誰も見ていませんでした**。
+
+    実害の形: クラスかファイルを1つ改名した瞬間に宣言が実体を指さなくなりますが、
+    **赤くなりません**。関門の**条件7（実装網羅 100%）が改名1つで空振りの緑**に変わります。
+    同じ失敗は FlashEnglish で先に起きていて、案件が自分で試験を書いて塞いでいました
+    （`test/design/component_map_paths_test.dart` に改名後の古いパス5件の実測が残っている）。
+    **その塞ぎが共有層に無い**ので、他の案件は無防備でした。
+
+    **名前だけの宣言**（`{"class": "AppButton"}` のようにパスを持たない形）は
+    `lib/` があるときだけ見ます。無い案件では見ていないことを呼び出し側が必ず言います
+    （0件を「綺麗」と読ませないため）。
+
+    戻り: (指した先の総数, [(figma 名, 指した先, 理由)], 見ていない名前だけの宣言の数)
+    """
+    try:
+        doc = json.loads(map_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0, [], 0
+    comps = None
+    if isinstance(doc, dict) and isinstance(doc.get("components"), list):
+        comps = doc["components"]
+    elif isinstance(doc, list):
+        comps = doc
+    if comps is None:
+        return 0, [], 0       # 辞書の形は名前だけで、指す先を持たない
+    lib = Path(root) / lib_dir
+    texts = {}
+    if lib.exists():
+        for f in sorted(lib.rglob("*.dart")):
+            try:
+                texts[f] = f.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+
+    def defined_in(text, name):
+        return re.search(r"\b(?:" + "|".join(IMPL_DEF) + r")\s+"
+                         + re.escape(name) + r"\b", text) is not None
+
+    bad, n, skipped = [], 0, 0
+    for c in comps:
+        if not isinstance(c, dict):
+            continue
+        figma = c.get("figma") or c.get("name") or "?"
+        for target in impl_targets(c.get("impl")):
+            n += 1
+            if "#" in target:
+                rel, cls = target.split("#", 1)
+                f = Path(root) / rel
+                if not f.exists():
+                    bad.append((figma, target, "そのファイルがありません"))
+                    continue
+                try:
+                    body = f.read_text(encoding="utf-8", errors="ignore")
+                except OSError as e:
+                    bad.append((figma, target, f"読めません（{e}）"))
+                    continue
+                if not defined_in(body, cls):
+                    bad.append((figma, target, "そのファイルに定義がありません"))
+            elif not texts:
+                skipped += 1          # lib/ が無い。名前だけの宣言は見られない
+            elif not any(defined_in(x, target) for x in texts.values()):
+                bad.append((figma, target, f"{lib_dir}/ のどこにも定義がありません"))
+    return n, bad, skipped
+
+
 def mapped_impl(map_path):
     """対応表から name → 実装があるか の対応を返す。**3つの形を受けます。**
 
@@ -440,7 +546,19 @@ def main(argv=None):
                     and identifier_of(n) not in excluded_ids)
     done = len(targets) - len(unimplemented)
 
+    # **指した先が実在するか。** 「文字が入っていれば実装あり」だと、改名1つで
+    # 条件7 が空振りの緑になる（2026-09-06 新設）
+    n_targets, dangling, unchecked = check_impl_targets(
+        cmap, repo_root_of(base), conf.get("lib_dir", "lib"))
+
     print(f"実装網羅: {done} / {len(targets)} 件")
+    if n_targets:
+        print(f"  対応表が指す実装: {n_targets} 件"
+              + ("、すべて実在します" if not dangling
+                 else f"、**実在しないもの {len(dangling)} 件**"))
+        if unchecked:
+            print(f"    うち {unchecked} 件は名前だけの宣言で、"
+                  f"`{conf.get('lib_dir', 'lib')}/` が無いので**実在を見ていません**")
     if excluded:
         print(f"  書き出しが除外している: {len(excluded)} 件"
               f"（{', '.join(sorted(excluded))}）")
@@ -471,6 +589,16 @@ def main(argv=None):
               f"次に名前の取り違え、最後に Figma 側の削除を疑います:")
         for n in ghosts:
             print(f"  - {n}")
+        rc = 1
+    if dangling:
+        print(f"\n対応表の `impl` が**実在しない実装を指しています**"
+              f"（{len(dangling)} 件）。\n"
+              f"  **この状態でも「実装あり」と数えていました**"
+              f"（文字が入っていれば実装ありとしていたため）。"
+              f"改名したときに宣言を直し忘れると、関門の条件7 が空振りの緑になります:",
+              file=sys.stderr)
+        for figma, target, why in dangling:
+            print(f"  - {figma}: `{target}` — {why}", file=sys.stderr)
         rc = 1
     if tok_problems:
         print(f"\nトークンの検査そのものが成り立っていません:", file=sys.stderr)
@@ -504,6 +632,11 @@ def self_test():
             "singleComponents": {"Header": 1},
         }), encoding="utf-8")
 
+        # `impl` が指す先の実在も見るので、固定具に実装を置く（2026-09-06）
+        (base / "lib").mkdir(exist_ok=True)
+        (base / "lib" / "w.dart").write_text(
+            "class A {}\nclass B {}\nclass C {}\nclass D {}\n", encoding="utf-8")
+
         def write_map(entries):
             (base / "map.json").write_text(json.dumps({"components": entries},
                                                       ensure_ascii=False),
@@ -529,6 +662,45 @@ def self_test():
                    {"figma": "Header", "impl": [{"class": "C"}]}])
         if main(cfg) != 1:
             print("self-test NG: 対応表に行が無くても落ちなかった"); ok = False
+
+        # ─── `impl` が指す先の実在（2026-09-06 新設）────────────────
+        # それまで「文字が入っていれば実装あり」だった。**改名1つで条件7 が空振りの緑**
+        (base / "lib" / "ui").mkdir(parents=True, exist_ok=True)
+        (base / "lib" / "ui" / "widgets.dart").write_text(
+            "class AppButton {}\nmixin Chippy {}\n", encoding="utf-8")
+        write_map([{"figma": "Buttons/M", "impl": "lib/ui/widgets.dart#AppButton"},
+                   {"figma": "Chips", "impl": "lib/ui/widgets.dart#Chippy"},
+                   {"figma": "Header", "impl": [{"class": "C"}]}])
+        if main(cfg) != 0:
+            print("self-test NG: 実在する実装を指しているのに落ちた"); ok = False
+        write_map([{"figma": "Buttons/M", "impl": "lib/ui/nope.dart#AppButton"},
+                   {"figma": "Chips", "impl": "lib/ui/widgets.dart#Chippy"},
+                   {"figma": "Header", "impl": [{"class": "C"}]}])
+        if main(cfg) != 1:
+            print("self-test NG: **ファイルが無い impl を通した**"); ok = False
+        write_map([{"figma": "Buttons/M", "impl": "lib/ui/widgets.dart#ChangedName"},
+                   {"figma": "Chips", "impl": "lib/ui/widgets.dart#Chippy"},
+                   {"figma": "Header", "impl": [{"class": "C"}]}])
+        if main(cfg) != 1:
+            print("self-test NG: **改名でクラスが無くなった impl を通した**"); ok = False
+        # 名前だけの宣言も lib/ があれば見る
+        write_map([{"figma": "Buttons/M", "impl": [{"class": "AppButton"}]},
+                   {"figma": "Chips", "impl": [{"class": "NoSuchClass"}]},
+                   {"figma": "Header", "impl": [{"class": "C"}]}])
+        if main(cfg) != 1:
+            print("self-test NG: lib に無い名前だけの宣言を通した"); ok = False
+        # lib/ が無ければ名前だけの宣言は見ない（見ていないことを言う）
+        import shutil as _sh
+        _sh.rmtree(base / "lib")
+        write_map([{"figma": "Buttons/M", "impl": [{"class": "NoSuchClass"}]},
+                   {"figma": "Chips", "impl": [{"class": "B"}]},
+                   {"figma": "Header", "impl": [{"class": "C"}]}])
+        if main(cfg) != 0:
+            print("self-test NG: lib/ が無いのに名前だけの宣言で落ちた"); ok = False
+        # **後の場面のために固定具を戻す**（状態を持ち越さない）
+        (base / "lib").mkdir(exist_ok=True)
+        (base / "lib" / "w.dart").write_text(
+            "class A {}\nclass B {}\nclass C {}\nclass D {}\n", encoding="utf-8")
 
         write_map([{"figma": "Buttons/M", "impl": [{"class": "A"}]},
                    {"figma": "Chips", "impl": [{"class": "B"}]},

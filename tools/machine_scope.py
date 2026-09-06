@@ -194,8 +194,12 @@ def owner_of(path, conf, root=None):
             f = Path(root) / norm(path)
             if f.is_file() and is_generated(f)[0]:
                 return SHARED
-        except Exception:  # noqa: BLE001  判定できないときは宣言に従う（安全側）
-            pass
+        except Exception as e:  # noqa: BLE001  判定できないときは宣言に従う（安全側）
+            # **黙って倒れない。** 判定器が無いと「生成物は共有」の規則が消え、
+            # #78 の行き止まり（生成器を直した機体が適用できない）が無言で戻る
+            print(f"注意: 生成物の判定器が使えません（{e}）。宣言どおりの担当に倒します。\n"
+                  f"  **決定論的な生成物を共有にする規則が効いていません**"
+                  f"（tools/generated.py を確かめてください）。", file=sys.stderr)
     target, best, best_len = norm(path), None, -1
     for m, paths in conf.get("machines", {}).items():
         for own in paths:
@@ -378,10 +382,12 @@ def main(argv=None):
         return do_handoff(machine, conf, args.root, args.apply)
 
     if args.test_owns:
-        if owns(machine, args.test_owns, conf):
+        # **root を渡す。** 渡さないと「決定論的な生成物は SHARED」の規則が効かず、
+        # --check と答えが食い違う（#29 と同じ形が別の入口に残っていた・2026-09-06）
+        if owns(machine, args.test_owns, conf, args.root):
             print(f"この機体（**{machine}**）は {args.test_owns} を担当しています。")
             return 0
-        holder = owner_of(args.test_owns, conf)
+        holder = owner_of(args.test_owns, conf, args.root)
         if holder is None:
             return _no_owner(args.test_owns, args.config, known)
         holder = holder
@@ -392,13 +398,13 @@ def main(argv=None):
         return 3
 
     if args.owns:
-        if owns(machine, args.owns, conf):
+        if owns(machine, args.owns, conf, args.root):
             cmd = [a for a in args.cmd if a != "--"]
             if not cmd:
                 print(f"この機体（{machine}）は {args.owns} を担当しています。")
                 return 0
             return subprocess.run(cmd).returncode
-        holder = owner_of(args.owns, conf)
+        holder = owner_of(args.owns, conf, args.root)
         if holder is None:
             return _no_owner(args.owns, args.config, known)
         # **黙って飛ばさない。** 機体名と理由を必ず出す
@@ -649,6 +655,28 @@ def self_test():
         for m in c2["machines"]:
             check(owns(m, f, c2) == (m == holder),
                   f"**{f} で owns({m}) と owner_of が食い違う**（owner={holder}）")
+    # **root ありでも owns と owner_of がそろうか**（生成物→SHARED の規則を通す経路）。
+    # 2026-09-06: --owns / --test-owns が root を渡しておらず、--check と答えが違った
+    with tempfile.TemporaryDirectory() as _td:
+        _r = Path(_td)
+        (_r / "design" / "figma").mkdir(parents=True)
+        _gen = _r / "design" / "figma" / "notcaptured.json"
+        _gen.write_text('{"$手で書き換えない": "gen_notcaptured.py が生成します"}',
+                        encoding="utf-8")
+        (_r / "design" / "hand.json").write_text('{"x": 1}', encoding="utf-8")
+        _c = {"machines": {"MacBook Air": ["design/"], "Windows": ["lib/data/"]}}
+        check(owner_of("design/figma/notcaptured.json", _c, _r) == SHARED,
+              "**生成物が共有にならない**（root あり）")
+        check(owner_of("design/hand.json", _c, _r) == "MacBook Air",
+              "手で書くファイルまで共有にした")
+        for _m in ("MacBook Air", "Windows"):
+            _h = owner_of("design/figma/notcaptured.json", _c, _r)
+            check(owns(_m, "design/figma/notcaptured.json", _c, _r) == (_h in (_m, SHARED)),
+                  f"**root ありで owns({_m}) と owner_of が食い違う**")
+        # root を渡さないと規則が効かない＝入口が root を渡し忘れると食い違う
+        check(owner_of("design/figma/notcaptured.json", _c) == "MacBook Air",
+              "root なしの答えが変わった（後方互換）")
+
     check(owner_of("design/emulator_runs.json", c2) == "Windows", "最長一致になっていない")
     check(not owns("MacBook Air", "design/emulator_runs.json", c2),
           "**広い宣言を持つ機体が、上書きされたファイルまで担当と出る**")
