@@ -23,9 +23,14 @@ Mac mini（iOS）と Windows（Android）が**別々に**ビルドの実態を�
 | `依存` が語彙の外 | **統合の判定はこの列だけで決まる**ので、崩れると判定できない |
 | `案件差` が語彙の外 | どの案件に効くかが機械で読めない（iOS には PlantTalk がある） |
 | `案件差` が `差あり` なのに中身が空 | 「違う」だけ書かれても、どう違うかが残らない |
+| 列の型が違う | `所要: "はやい"` が通ると、秒として比べられない（#85） |
 | `依存` が none 以外なのに `依存の理由` が空 | 「Windows だから」で分けると、統合できるものまで分かれる |
 | `検証状態` が `measured` なのに `出典` が空 | 測ったと言い切るなら、どこを見たか要る |
 | `id` の重複 | 突き合わせの鍵に使う |
+
+**何を見るかは項目表の `列の規約` から導きます**（型・語彙・条件で必須になる列）。
+**この道具に一覧を持たせません。** 列を足すときは項目表に足せば、ここは触らずに検査が当たります
+（issue #85: 検査が宣言に追いついておらず、`所要` の型が素通りしていた）。
 
 ## 捕まえないもの
 
@@ -56,14 +61,33 @@ def _load_schema() -> dict:
     return json.loads(SCHEMA.read_text(encoding="utf-8"))
 
 
+def _type_ok(value, spec: str) -> bool:
+    """`列の規約.型` の1語に当てる。`|` で並べたどれかに当たれば通る。"""
+    for want in spec.split("|"):
+        want = want.strip()
+        if want == "null" and value is None:
+            return True
+        if want == "int" and isinstance(value, int) and not isinstance(value, bool):
+            return True
+        if want == "number" and isinstance(value, (int, float)) and not isinstance(value, bool):
+            return True
+        if want == "str" and isinstance(value, str):
+            return True
+    return False
+
+
 def check(doc: dict, schema: dict) -> list[str]:
-    """違反を**行番号ではなく id で**返す（行番号はすぐ古くなる。#79 の教訓）。"""
+    """違反を**行番号ではなく id で**返す（行番号はすぐ古くなる。#79 の教訓）。
+
+    **検査の一覧は持たない。** 何を見るかは `列の規約` から導く（issue #85）。
+    列を足すときは項目表に足せば、ここは触らずに検査が当たる。
+    """
     problems: list[str] = []
-    stages = set(schema["工程"]["値"])
-    deps = set(schema["依存"]["値"])
-    states = set(schema["検証状態"]["値"])
-    scopes = set(schema["案件差"]["値"])
     required = schema["必須の列"]
+    rule = schema["列の規約"]
+    types = rule["型"]
+    vocab = {col: set(schema[sec]["値"]) for col, sec in rule["語彙のある列"].items()}
+    conds = rule["条件で必須になる列"]
 
     rows = doc.get("工程一覧")
     if not isinstance(rows, list):
@@ -85,29 +109,34 @@ def check(doc: dict, schema: dict) -> list[str]:
             if col not in r:
                 problems.append(f"id {rid}: 必須の列 `{col}` がありません")
 
-        st = r.get("工程")
-        if st is not None and st not in stages:
-            problems.append(f"id {rid}: `工程` が語彙の外です（{st}）。使える語: {'/'.join(sorted(stages))}")
+        # 型（**宣言から導く**。ここを飛ばすと `所要: \"はやい\"` が素通りする・#85）
+        for col, spec in types.items():
+            if col in r and not _type_ok(r[col], spec):
+                problems.append(
+                    f"id {rid}: `{col}` の型が違います（{r[col]!r} · 期待 {spec}）")
 
-        dep = r.get("依存")
-        if dep is not None and dep not in deps:
-            problems.append(f"id {rid}: `依存` が語彙の外です（{dep}）。使える語: {'/'.join(sorted(deps))}")
-        elif dep is not None and dep != "none" and not str(r.get("依存の理由", "")).strip():
-            problems.append(
-                f"id {rid}: `依存` が {dep} なのに `依存の理由` が空です"
-                "（何に縛られているかを具体で。『Windows だから』は理由になりません）")
+        # 語彙
+        bad_vocab = set()
+        for col, allowed in vocab.items():
+            v = r.get(col)
+            if v is not None and isinstance(v, str) and v not in allowed:
+                bad_vocab.add(col)
+                problems.append(
+                    f"id {rid}: `{col}` が語彙の外です（{v}）。"
+                    f"使える語: {'/'.join(sorted(allowed))}")
 
-        sc = r.get("案件差")
-        if sc is not None and sc not in scopes:
-            problems.append(f"id {rid}: `案件差` が語彙の外です（{sc}）。使える語: {'/'.join(sorted(scopes))}")
-        elif sc == "差あり" and not str(r.get("案件差の中身", "")).strip():
-            problems.append(f"id {rid}: `案件差` が 差あり なのに `案件差の中身` が空です（何がどう違うか要ります）")
-
-        vs = r.get("検証状態")
-        if vs is not None and vs not in states:
-            problems.append(f"id {rid}: `検証状態` が語彙の外です（{vs}）")
-        elif vs == "measured" and not str(r.get("出典", "")).strip():
-            problems.append(f"id {rid}: `measured` なのに `出典` が空です（測ったなら、どこを見たか要ります）")
+        # 条件で必須になる列。
+        # **語彙の外だった列では見ない。** 根が1つなのに2件報告すると、直す人が
+        # 2か所直そうとする（同じ形の二重判定を machine_scope で1度やっている・#29）
+        for c in conds:
+            col, want, need = c["列"], c["が"], c["要る列"]
+            v = r.get(col)
+            if v is None or col in bad_vocab:
+                continue
+            hit = (v != want.split()[0]) if want.endswith("以外") else (v == want)
+            if hit and not str(r.get(need, "")).strip():
+                problems.append(
+                    f"id {rid}: `{col}` が {want} なのに `{need}` が空です（{c['なぜ']}）")
 
     return problems
 
@@ -126,7 +155,8 @@ def self_test() -> int:
         ("通る: 正しい行", {"工程一覧": [row()]}, 0),
         ("落とす: 必須の列が無い", {"工程一覧": [{k: v for k, v in row().items() if k != "所要"}]}, 1),
         ("落とす: 工程が語彙の外", {"工程一覧": [row(工程="コンパイル")]}, 1),
-        ("落とす: 依存が語彙の外", {"工程一覧": [row(依存="windows")]}, 1),
+        # 語彙の外のときは条件必須を重ねて報告しない（根が1つなので1件）
+        ("落とす: 依存が語彙の外（理由が空でも1件）", {"工程一覧": [row(依存="windows")]}, 1),
         ("落とす: 依存が none 以外で理由が空", {"工程一覧": [row(依存="env")]}, 1),
         ("通る: 依存に理由がある", {"工程一覧": [row(依存="env", 依存の理由="cp932 の端末で print が死ぬ")]}, 0),
         ("落とす: measured なのに出典が空", {"工程一覧": [row(検証状態="measured", 出典="")]}, 1),
@@ -137,6 +167,13 @@ def self_test() -> int:
         ("落とす: 案件差が語彙の外", {"工程一覧": [row(案件差="qnd")]}, 1),
         ("落とす: 差あり なのに中身が空", {"工程一覧": [row(案件差="差あり")]}, 1),
         ("通る: 差あり に中身がある", {"工程一覧": [row(案件差="差あり", 案件差の中身="aub=A / flash=B")]}, 0),
+        # **型**（#85: `所要: "はやい"` が素通りしていた）
+        ("落とす: 所要が文字列", {"工程一覧": [row(所要="はやい")]}, 1),
+        ("通る: 所要が数値", {"工程一覧": [row(所要=90)]}, 0),
+        ("通る: 所要が null", {"工程一覧": [row(所要=None)]}, 0),
+        ("落とす: id が文字列", {"工程一覧": [row(id="いち")]}, 1),
+        ("落とす: 手順が数値", {"工程一覧": [row(手順=1)]}, 1),
+        ("落とす: 所要が真偽値", {"工程一覧": [row(所要=True)]}, 1),
         ("落とす: 工程一覧が無い", {"事例": []}, 1),
         ("落とす: 工程一覧が空", {"工程一覧": []}, 1),
     ]
