@@ -28,7 +28,9 @@
 | 根拠が**片側だけ** | 「両方で成り立つ」と言えない。片側の規約は各プラットフォームのスキルへ |
 | 根拠の行の**中身が変わった** | id は生きているのに主張が別物になった。**上の実害がまさにこれ** |
 | **スキル本文と食い違った** | 共有の規約はスキルからも消さない（消すと手順から「なぜそうするか」が落ちる）。重複を許す代わりに、引いた文が今もスキルにあるかを見る |
-| 同じ id が**別々の規約で重複** | 1行から2つの規約が出ているので、意図か事故かを人が確かめる（警告） |
+| 同じ id が**別々の規約で重複**していて、**理由が書かれていない** | 1行から2つの規約が出るのは**あり得る**ので落とさない——**ただし理由を書かせる**（`$重複ok`）。2026-09-07、注意のままだった重複が丸1日読まれず、当たっていない根拠が残った |
+| `スキルの根拠` の **`文` が空**で、理由も無い | 照合の正本が無いので、スキルと食い違っても気づけない。`$見つからない: "一致 0.35"` は**失敗の記録**であって通してよい理由ではない（同日・同じ形で残った） |
+| 上の理由が書いてあるのに、**その注意がもう出ない** | 当たらなくなった宣言（化石）。他の道具と同じ扱い |
 
 **id の実在だけを見ても、上の実害は捕まりません。** 104 は消えていないし `none` のままで、
 **中身だけが変わった**からです。そこで各規約に `根拠の指紋`（引いた行の `手順` の短い
@@ -90,8 +92,23 @@ def check_skill(merge: dict, skill_text: str) -> list[str]:
     for r in merge.get("確定した共有の規約", []):
         for sn in r.get("スキルの根拠", []):
             if not sn.get("文"):
-                # **見つからないと記録されているもの**。ここで落とすと、記録した
-                # 「見つからない」がそのまま赤になり続ける。人が見る対象なので注意に回す
+                # **見つからないと記録されているもの。**
+                # 2026-09-07 まではここで素通り（注意）にしていましたが、
+                # `$見つからない: "一致 0.35"` は**失敗の記録**であって**通してよい理由ではない**ため、
+                # 丸1日読まれずに残りました。**理由を書いてあるときだけ通します。**
+                has, why = reason_of(sn, SKILL_OK)
+                if has and why:
+                    continue
+                if has:
+                    out.append(f"規約 {r.get('id')}: iOS {sn['iOS']} の `{SKILL_OK}` に"
+                               f"**理由がありません**（印だけでは通しません）")
+                    continue
+                out.append(
+                    f"規約 {r.get('id')}: iOS {sn['iOS']} の**文が空です**"
+                    f"（照合の正本が無いので、スキルと食い違っても気づけません）\n"
+                    f"      スキルを読んで `文` を埋めるか、`{SKILL_OK}` に理由を書いてください\n"
+                    f"      記録: {str(sn.get('$見つからない') or '（記録なし）')[:60]}"
+                    f"  ← これは**失敗の記録**であって、通してよい理由ではありません")
                 continue
             if squash(sn["文"]) not in body:
                 out.append(
@@ -99,6 +116,24 @@ def check_skill(merge: dict, skill_text: str) -> list[str]:
                     f"      探した文: {sn['文'][:70]}\n"
                     f"      規約の文: {str(r.get('規約'))[:70]}")
     return out
+
+
+#: 注意を「そのまま通してよい」とする理由の置き場（2026-09-07）。
+#: 握りつぶし・到達性・変異試験の**行の印と同じ形**を、コードではなくデータに置いたもの。
+#: **理由が無ければ落とす。**
+#: （ここに印の名前をそのまま書くと、変異試験が**この行を印と読みます**。書きません）
+DUP_OK = "$重複ok"        #: 規約の側。値は「なぜ1行が2つの規約を支えてよいか」
+SKILL_OK = "$文が無くてよい"  #: `スキルの根拠` の側。値は「なぜ文が無くてよいか」
+
+
+def reason_of(obj: dict, key: str):
+    """(印があるか, 理由) を返す。**理由が空白だけなら「印はあるが理由なし」。**
+
+    `swallow_check` などの行の印とそろえています——**例外は許すが、理由は必ず書かせる。**
+    """
+    if key not in obj:
+        return False, ""
+    return True, str(obj.get(key) or "").strip()
 
 
 def fingerprint(row: dict) -> str:
@@ -149,13 +184,43 @@ def check(merge: dict, ios: dict, android: dict) -> tuple[list[str], list[str]]:
                 warns.append(f"規約 {r.get('id')}: iOS {sn['iOS']} の文がスキルに見つかりません"
                              f"（{sn.get('$見つからない','')}）。**規約がスキルに書かれていない可能性**")
 
-    for (side, i), n in seen.items():
-        if n > 1:
-            table = ios if side == "iOS" else android
-            row = table.get(i, {})
-            warns.append(f"{side} の id {i} が {n} つの規約の根拠になっています"
-                         f"（1行から2つの規約が出ています。意図か事故かを確かめてください）\n"
-                         f"      その行: {str(row.get('手順'))[:70]}")
+    # **重複は「あり得る」ので落とさない。ただし理由を書かせる。**
+    # `swallow-ok:` などの行の印と同じ扱い（**理由の無い宣言は落とす**）。
+    # 2026-09-07: 注意のまま2件が丸1日読まれずに残った（iOS 334 の重複と、規約14 の文）
+    dup = {k: n for k, n in seen.items() if n > 1}
+    for (side, i), n in dup.items():
+        table = ios if side == "iOS" else android
+        row = table.get(i, {})
+        holders = [r for r in merge.get("確定した共有の規約", [])
+                   if i in r.get("ios_ids" if side == "iOS" else "android_ids", [])]
+        marked = [(r, *reason_of(r, DUP_OK)) for r in holders]
+        given = [(r, why) for r, has, why in marked if has and why]
+        empty = [r for r, has, why in marked if has and not why]
+        if empty:
+            problems.append(
+                f"{side} の id {i}: 規約 {', '.join(str(r.get('id')) for r in empty)} の "
+                f"`{DUP_OK}` に**理由がありません**（印だけでは通しません）")
+        elif not given:
+            problems.append(
+                f"{side} の id {i} が {n} つの規約（{', '.join(str(r.get('id')) for r in holders)}）の"
+                f"根拠になっています。**意図なら、どれかの規約に `{DUP_OK}` で理由を書いてください。**\n"
+                f"      その行: {str(row.get('手順'))[:70]}\n"
+                f"      （2026-09-07: ここが注意のままだったため、当たっていない根拠が丸1日残りました）")
+        else:
+            warns.append(f"{side} の id {i} が {n} つの規約の根拠です（理由あり）\n"
+                         f"      理由: {given[0][1][:90]}")
+
+    # **化石**: 理由が書いてあるのに、その重複がもう起きていない（当たらなくなった宣言）
+    for r in merge.get("確定した共有の規約", []):
+        has, why = reason_of(r, DUP_OK)
+        if not has:
+            continue
+        mine = [("iOS", i) for i in r.get("ios_ids", [])] + \
+               [("Android", i) for i in r.get("android_ids", [])]
+        if not any(k in dup for k in mine):
+            problems.append(
+                f"規約 {r.get('id')}: `{DUP_OK}` が書いてありますが、**重複はもう起きていません**"
+                f"（当たらなくなった宣言。外してください）\n      理由: {why[:70]}")
     return problems, warns
 
 
@@ -206,15 +271,36 @@ def self_test() -> int:
     if not check(merge({"id": 1, "ios_ids": [1], "android_ids": [2]}), tbl(row(1)), tbl(row(2)))[1]:
         print("self-test NG: 指紋が無いのに警告が出ない"); ok = False
 
-    # 重複は**警告**であって落とさない（1行から2規約は意図のこともある）
-    mg = merge({"id": 1, "ios_ids": [1], "android_ids": [2]},
-               {"id": 2, "ios_ids": [1], "android_ids": [3]})
-    p, w = check(mg, tbl(row(1)), tbl(row(2), row(3)))
-    if p:
-        print(f"self-test NG: 重複で落ちてしまった（{p}）"); ok = False
-    dup = [x for x in w if "つの規約の根拠" in x]
-    if len(dup) != 1:
-        print(f"self-test NG: 重複の警告が {len(dup)} 件（期待 1）"); ok = False
+    # ─── 重複: **理由を書けば通す。書かなければ落とす**（2026-09-07） ───────
+    # 1行から2規約は意図のこともあるので落としきらない。ただし**注意のままだと読まれない**
+    # （同日、注意のままだった重複が丸1日残り、当たっていない根拠が生き延びた）
+    def dup2(extra=None):
+        r2 = {"id": 2, "ios_ids": [1], "android_ids": [3]}
+        if extra is not None:
+            r2[DUP_OK] = extra
+        return merge({"id": 1, "ios_ids": [1], "android_ids": [2]}, r2)
+
+    T = (tbl(row(1)), tbl(row(2), row(3)))
+    # 理由なし → 落とす
+    pr, _ = check(dup2(), *T)
+    if len([x for x in pr if "つの規約" in x]) != 1:
+        print(f"self-test NG: **理由の無い重複が落ちない**（{pr}）"); ok = False
+    # 印だけで理由が空 → 落とす（空白だけも同じ）
+    for empty in ("", "   "):
+        pr, _ = check(dup2(empty), *T)
+        if len([x for x in pr if "理由がありません" in x]) != 1:
+            print(f"self-test NG: 理由が空（{empty!r}）の印が通った（{pr}）"); ok = False
+    # 理由あり → 通す（警告には出す）
+    pr, w = check(dup2("記録の作法そのもので、検品と記録の両方を支えるため"), *T)
+    if pr:
+        print(f"self-test NG: 理由を書いたのに落ちた（{pr}）"); ok = False
+    if len([x for x in w if "理由あり" in x]) != 1:
+        print(f"self-test NG: 理由ありの重複が警告に出ない（{w}）"); ok = False
+    # **化石**: 理由が書いてあるのに重複が起きていない → 落とす
+    fossil = merge({"id": 1, "ios_ids": [1], "android_ids": [2], DUP_OK: "むかし重複していた"})
+    pr, _ = check(fossil, tbl(row(1)), tbl(row(2)))
+    if len([x for x in pr if "もう起きていません" in x]) != 1:
+        print(f"self-test NG: **当たらなくなった `{DUP_OK}` が落ちない**（{pr}）"); ok = False
 
     # スキル本文との食い違い
     sk = merge({"id": 1, "ios_ids": [1], "android_ids": [2],
@@ -223,6 +309,23 @@ def self_test() -> int:
         print("self-test NG: 空白と全角半角を落とせば一致するのに落ちた"); ok = False
     if len(check_skill(sk, "## 手順\n\n毎回 verify.sh を回す\n")) != 1:
         print("self-test NG: スキルから文が消えたのに落ちない"); ok = False
+
+    # ─── `文` が空: **理由を書けば通す。書かなければ落とす**（2026-09-07） ───
+    # それまでは素通り（注意）で、`$見つからない: "一致 0.35"` が**失敗の記録**なのに
+    # 「通してよい理由」として働いてしまい、丸1日読まれずに残った
+    def empty_sentence(extra=None):
+        sn = {"iOS": 1, "文": None, "$見つからない": "一致 0.35"}
+        if extra is not None:
+            sn[SKILL_OK] = extra
+        return merge({"id": 1, "ios_ids": [1], "android_ids": [2], "スキルの根拠": [sn]})
+
+    if len([x for x in check_skill(empty_sentence(), "本文") if "文が空です" in x]) != 1:
+        print("self-test NG: **理由の無い空の `文` が落ちない**"); ok = False
+    for empty in ("", "  "):
+        if len([x for x in check_skill(empty_sentence(empty), "本文") if "理由がありません" in x]) != 1:
+            print(f"self-test NG: 理由が空（{empty!r}）の `{SKILL_OK}` が通った"); ok = False
+    if check_skill(empty_sentence("iOS 側はスキルではなく道具に書かれているため"), "本文"):
+        print("self-test NG: 理由を書いたのに空の `文` で落ちた"); ok = False
 
     import contextlib, io, tempfile
     with tempfile.TemporaryDirectory() as td:
