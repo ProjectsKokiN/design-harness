@@ -50,6 +50,7 @@ import hashlib
 import contextlib
 import io
 import json
+import re
 import os
 import sys
 import urllib.request
@@ -559,6 +560,45 @@ def self_test() -> int:
         cases.append(('main --update --force: 承知の上なら 2 で止めない',
                       run_main(stale, argv=('x', '--update', '--force')) != 2))
 
+        # ─── --vocab-check（#86・2026-09-06）────────────────────────
+        # **分母に穴があると「読めていない0件」が嘘になる。** 指紋の項目と突き合わせる
+        import io as _io3, contextlib as _cx3, json as _js3
+        keep_vocab = globals()['VOCAB']
+        try:
+            vf = Path(td) / 'vocab.json'
+            globals()['VOCAB'] = vf
+
+            def run_vc(doc):
+                vf.write_text(_js3.dumps(doc, ensure_ascii=False), encoding='utf-8')
+                b3 = _io3.StringIO()
+                with _cx3.redirect_stdout(b3), _cx3.redirect_stderr(b3):
+                    rc = vocab_check()
+                return rc, b3.getvalue()
+
+            full = {'$meta': {'reviewBy': '2099-01-01'},
+                    'layout': {n: {'figma': 'x'} for n in DIGEST_FIELDS}}
+            cases.append(('--vocab-check: 全部あれば 0', run_vc(full)[0] == 0))
+            short = _js3.loads(_js3.dumps(full))
+            short['layout'].pop(DIGEST_FIELDS[0])
+            rc, out = run_vc(short)
+            cases.append(('--vocab-check: **指紋にあって一覧に無いものを落とす**',
+                          rc == 1 and DIGEST_FIELDS[0] in out))
+            # api 欄で束ねている書き方も読む（padding → paddingLeft …）
+            bundled = {'$meta': {'reviewBy': '2099-01-01'},
+                       'layout': {'padding': {'figma': 'x', 'api': ' / '.join(DIGEST_FIELDS)}}}
+            cases.append(('--vocab-check: api 欄の束ねを読む', run_vc(bundled)[0] == 0))
+            no_by = _js3.loads(_js3.dumps(full)); no_by['$meta'] = {}
+            cases.append(('--vocab-check: **棚卸しの期限が無ければ落とす**',
+                          run_vc(no_by)[0] == 1))
+            old = _js3.loads(_js3.dumps(full)); old['$meta']['reviewBy'] = '2020-01-01'
+            cases.append(('--vocab-check: **期限切れは落とす**', run_vc(old)[0] == 1))
+            cases.append(('--vocab-check: 一覧が空なら 2（0件は見ていない）',
+                          run_vc({'$meta': {'reviewBy': '2099-01-01'}})[0] == 2))
+            vf.unlink()
+            cases.append(('--vocab-check: 一覧が無ければ 2', vocab_check() == 2))
+        finally:
+            globals()['VOCAB'] = keep_vocab
+
         # ─── --has-token（#15・2026-09-04）──────────────────────────
         # **値に触らない。長さも出さない。** ここが無いと AI がシェルを書き、
         # トークンがセッションの記録に残る（2026-09-03 の事故）
@@ -830,9 +870,82 @@ def has_token() -> int:
     return 1
 
 
+VOCAB = Path(__file__).resolve().parent.parent / "vocab" / "figma-properties.json"
+
+
+def vocab_names(doc):
+    """読むべきプロパティの一覧から、**API の名前**を全部拾う。
+
+    分類ごとの入れ子で、`padding` のように1つの見出しが `api` 欄で
+    `paddingLeft / paddingRight / …` を束ねていることがある。
+    """
+    out = set()
+    for k, v in doc.items():
+        if k.startswith('$') or not isinstance(v, dict):
+            continue
+        for name, body in v.items():
+            out.add(name)
+            if isinstance(body, dict) and body.get('api'):
+                out |= set(re.findall(r'[A-Za-z][A-Za-z0-9]*', str(body['api'])))
+    return out
+
+
+def vocab_check() -> int:
+    """**2つの一覧を突き合わせる**（2026-09-06 新設・#86）。
+
+    Figma のプロパティの一覧が2か所にあります——`vocab/figma-properties.json`
+    （読むべきプロパティ）と、この道具の `DIGEST_FIELDS`（画面の指紋に入れる項目）。
+    **どちらも手書きで、突き合わせがありませんでした。**
+
+    `gen_notcaptured.py` は「器が読んでいるキー」を器のソースから導きますが、
+    その**分母（vocab の一覧）は 2026-08-20 の棚卸しで固定された手書き**です。
+    一覧に穴があると「読めていない0件」が嘘になります（2026-09-04 に
+    `itemReverseZIndex` で実際に起きた）。**指紋の項目が足りなくても指紋は計算できる**ので、
+    鮮度検査は緑のまま穴が開きます。
+    """
+    if not VOCAB.exists():
+        print(f'読むべきプロパティの一覧がありません: {VOCAB}', file=sys.stderr)
+        return 2
+    try:
+        doc = json.loads(VOCAB.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f'一覧が読めません: {VOCAB}: {e}', file=sys.stderr)
+        return 2
+    names = vocab_names(doc)
+    if not names:
+        print(f'一覧からプロパティを1つも読めません: {VOCAB}\n'
+              f'  **0件は「穴なし」ではなく「見ていない」です。**', file=sys.stderr)
+        return 2
+    meta = doc.get('$meta') or {}
+    problems = []
+    by = str(meta.get('reviewBy') or '')
+    if not by:
+        problems.append('$meta に reviewBy がありません（**期限が無いと誰も棚卸しに戻りません**）')
+    elif by < __import__('datetime').date.today().isoformat():
+        problems.append(f'棚卸しの期限が過ぎています（reviewBy: {by}）。'
+                        f'一覧に穴が無いか見直してください')
+    only_digest = [x for x in DIGEST_FIELDS if x not in names]
+    if only_digest:
+        problems.append('**指紋に入れているのに、読むべき一覧に無い**プロパティ: '
+                        + ' / '.join(only_digest)
+                        + '\n    一覧が分母なので、ここに無いものは'
+                          '「読めていない」の数にも入りません')
+    print(f'プロパティの一覧: {len(names)} 個 / 指紋の項目 {len(DIGEST_FIELDS)} 個'
+          f'（棚卸しの期限 {by or "なし"}）')
+    if problems:
+        print('読むべきプロパティの一覧に穴があります:', file=sys.stderr)
+        for m in problems:
+            print(f'  - {m}', file=sys.stderr)
+        return 1
+    print('  OK: 指紋の項目はすべて一覧にあります。')
+    return 0
+
+
 def main() -> int:
     if '--selftest' in sys.argv or '--self-test' in sys.argv:
         return self_test()
+    if '--vocab-check' in sys.argv:
+        return vocab_check()
     if '--has-token' in sys.argv:
         return has_token()
     if '--config' in sys.argv:
