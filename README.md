@@ -243,9 +243,20 @@ git -C design/harness pull origin main
 
 | 道具 | 理由 |
 |---|---|
-| `pin_check` | ネットワークが要る（本人が冒頭に明記） |
-| `figma_freshness` | 同上。Figma 本体を叩く |
 | `contact_sheet` / `token_query` / `harness_stats` | **合否を出さない**（人が見る道具） |
+
+**2026-09-06 に `pin_check` と `figma_freshness` をこの表から外しました。**
+どちらも `--self-test` を持っています（ネットワークに触らない範囲を測る形になった）。
+**表が古くなっていて、その道具の self-test が消えても例外として免除されるところでした。**
+いま何が測られていないかは `python3 attack/mutation_test.py` が
+「測れなかった道具」として毎回名前で出します（手で書いたこの表より新しい）。
+
+**`figma_names` と `gen_io` は `def self_test` を持ちますが `--self-test` の旗がありません。**
+`stage_check` からは「self-test あり」に見え、変異試験からは見えない二重帳簿です。
+2026-09-06 に旗を足そうとしましたが、**`__main__` の引数の受け口は self-test から
+実行できないので網羅が 52% → 48% に落ち、床（50%）を割りました**。
+測れないコードを、grep を通すためだけに足すのはこの repo の規律に反するので**戻しました**。
+どちらも落とす帰り道を持たないので、変異試験の対象になっても測るものはありません。
 
 `design/design_check.py`（案件のシム → エンジン）は `--self-test` を持たないが、
 **`attack/engine_attack_test.py` の39件がその役目**を果たす。`stage_check` からは
