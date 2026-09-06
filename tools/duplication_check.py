@@ -108,7 +108,7 @@ def main(argv=None):
               file=sys.stderr)
         return 2
 
-    allow, problems = {}, []
+    allow, problems, used = {}, [], set()
     for i, e in enumerate(conf.get("allow", [])):
         where = f"allow[{i}]"
         why, review = e.get("why"), e.get("reviewBy")
@@ -140,6 +140,7 @@ def main(argv=None):
         if len({h for _, _, h, _ in hits}) == 1:
             continue                      # 同名・同内容は複製だが乖離していない
         if name in allow:
+            used.add(name)
             continue
         candidates.append((name, hits))
 
@@ -147,6 +148,16 @@ def main(argv=None):
     print(f"案件をまたぐ複製: {len(roots)}案件 / {n_files}ファイルを走査 / "
           f"同名{len([k for k,v in seen.items() if len(v)>1])}種 / "
           f"宣言{len(allow)}件")
+
+    # **当たらなかった宣言**（2026-09-06・#81）。鍵が実体を指さなくなっても
+    # 逆向き（宣言だけ残る）は無音で、赤くならずに残る
+    fossils = sorted(set(allow) - used)
+    if fossils:
+        problems.append("当たらなくなった例外（allow.name）の宣言が "
+                        f"{len(fossils)} 件あります:\n      "
+                        + "\n      ".join(fossils)
+                        + "\n      **鍵が実体を指していません**（改名・削除で古くなった"
+                          "宣言は赤くならずに残ります・#81）。消すか、いまの名前に直してください")
 
     if candidates:
         print(f"\n**同名で中身が違うファイルが {len(candidates)} 種あります。**"
@@ -208,6 +219,13 @@ def self_test():
               "正しい宣言で落ちた")
         # why が無い宣言は落ちる
         check(main(cfg(allow=[{"name": "same.py"}])) == 1, "why の無い宣言を通した")
+        # **当たらなくなった宣言は落とす**（#81）。改名・削除で鍵が実体を指さなくなっても
+        # 逆向き（宣言だけ残る）は無音だった
+        check(main(cfg(allow=[{"name": "same.py", "why": "案件ごとに違ってよい理由",
+                               "reviewBy": "2099-01-01"},
+                              {"name": "gone.py", "why": "もう無いファイル",
+                               "reviewBy": "2099-01-01"}])) == 1,
+              "**当たらなくなった例外の宣言を通した**")
         # 期限切れ
         check(main(cfg(allow=[{"name": "same.py", "why": "案件ごとに違ってよい理由",
                                "reviewBy": "2020-01-01"}])) == 1,

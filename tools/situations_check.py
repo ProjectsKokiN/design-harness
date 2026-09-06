@@ -29,6 +29,10 @@
 ## 見るもの・見ないもの
 
 - 見る: 状況が**未確認**（記録が無い）／確認が**古い**（関わるファイルの指紋が動いた）
+- 見る: **導けなくなった状況**（`$消えた状況`）。理由が書かれていなければ落とす（#83）。
+  導けなくなる筋は複数あり（機能を消した／印が変わった／ファイルが `--extra` の外へ動いた）、
+  **道具には見分けられません**。「機能が消えた」と断定すると、実機確認の要求が
+  正しい理由の顔をして静かに無くなります
 - 見ない: 見た目が良いか。**確かめるのは実機で人がやる**（大小2台。#18）。この道具は
   「いつ・誰が・何を根拠に確かめたか」と「その後に関わる実装が動いたか」だけを持つ
 - 確かめた方法: --self-test（機能を足すと状況が増えること・関わるファイルを変えると確認が古くなること）
@@ -190,7 +194,18 @@ def main(argv=None):
         "状況": merged,
     }
     if gone:
-        doc["$消えた状況"] = {g: "実装からその機能が消えたので、守る対象から外れた" for g in gone}
+        # **理由を断定しない**（2026-09-06・#83）。状況が導けなくなる筋は複数あります
+        # ——機能を消した／パッケージを差し替えた／Flutter 側の名前が変わった／
+        # そのファイルが --extra の外へ動いた。「機能が消えた」と書くと、
+        # **実機確認の要求が、正しい理由の顔をして静かに無くなります。**
+        keep = (prev.get("$消えた状況") or {}) if isinstance(prev, dict) else {}
+        doc["$消えた状況"] = {
+            g: (keep.get(g) if isinstance(keep.get(g), str) and keep.get(g).strip()
+                and "実装からその機能が消えたので" not in keep.get(g)
+                else "**導けなくなりました。理由は未確認です。**"
+                     "機能を消したのか、印（パッケージ名・ウィジェット名）が変わったのか、"
+                     "そのファイルが --extra の外へ動いたのかを確かめて、ここに書いてください")
+            for g in gone}
     # **--check は読むだけ。** 検査の途中で design/ を書き換えると、design/ を担当しない
     # 機体（Windows）で verify.sh を回した瞬間に「担当外のパスを変えた」になる
     # （aub 2026-09-05 の取り込みで気づいた）。導き直しと確認の記録だけが書く
@@ -208,6 +223,18 @@ def main(argv=None):
         return 0
 
     errs = []
+    # **消えた状況を --check が見る**（2026-09-06・#83）。9つのうち1つが消えるのは
+    # いままで無音でした（総数0のガードはあるが、1件ずつは見ていない）
+    for g, why in sorted((prev.get("$消えた状況") or {}).items()
+                         if isinstance(prev, dict) else []):
+        if g in merged:
+            continue
+        if "未確認" in str(why) or not str(why).strip():
+            errs.append(f"  {g}: **導けなくなったのに、理由が書かれていません。** "
+                        f"機能を消したのか・印が変わったのか・ファイルが --extra の外へ"
+                        f"動いたのかを確かめて、`$消えた状況` に書いてください"
+                        f"（**実機確認の要求が黙って無くなります**）")
+
     for name, v in merged.items():
         c = v.get("確認")
         if not c:
@@ -290,6 +317,34 @@ def self_test():
         run()
         if "圏外・遅い通信" in json.loads(out.read_text(encoding="utf-8"))["状況"]:
             print("self-test NG: コメントの中の印から状況を導いた"); ok = False
+        # ─── #83: 導けなくなった状況を --check が見る ────────────────
+        # カメラを消す → 「許可を断られた」が導けなくなる
+        (lib / "cam.dart").unlink()
+        run()                                  # 導き直す（$消えた状況 が入る）
+        d = json.loads(out.read_text(encoding="utf-8"))
+        gone = d.get("$消えた状況") or {}
+        if "許可を断られた" not in gone:
+            print(f"self-test NG: 消えた状況を記録していない: {list(gone)}"); ok = False
+        if "実装からその機能が消えた" in str(gone.get("許可を断られた")):
+            print("self-test NG: **理由を断定して書いた**（導けなくなる筋は複数ある）"); ok = False
+        rc, txt = run("--check")
+        if rc != 1 or "導けなくなったのに、理由が書かれていません" not in txt:
+            print(f"self-test NG: **消えた状況を --check が見ていない（{rc}）**"); ok = False
+        # 理由を書けば通る（残りの状況が確認済みなら）
+        # cam.dart には TextField もあったので、消える状況は1つとは限らない
+        for g in list(d["$消えた状況"]):
+            d["$消えた状況"][g] = "その機能そのものを消した（2026-09-06）"
+        out.write_text(json.dumps(d, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        rc, txt = run("--check")
+        if "導けなくなったのに" in txt:
+            print(f"self-test NG: 理由つきの宣言を通さない\n   {txt[:200]}"); ok = False
+        # 固定具を戻す（状態を持ち越さない）
+        (lib / "cam.dart").write_text("final c = ImagePicker();\nfinal f = TextField();\n",
+                                      encoding="utf-8")
+        run()
+        for s in ("文字倍率", "許可を断られた", "キーボードで隠れる"):
+            run("--confirm", s, "--by", "試験機")
+
         # 導けない状況を --confirm しようとしたら止まる
         rc, _ = run("--confirm", "暗い配色")
         if rc != 2:

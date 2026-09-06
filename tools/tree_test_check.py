@@ -63,6 +63,15 @@ def load_sets(doc):
     return None
 
 
+#: **当たらなかった宣言**の言い方（2026-09-06・#81）。鍵が実体を指さなくなっても
+#: 逆向き（宣言だけ残る）は無音なので、どの道具でも同じ文で名指しする
+def fossil_msg(kind, keys):
+    return (f"当たらなくなった{kind}の宣言が {len(keys)} 件あります:\n      "
+            + "\n      ".join(sorted(keys))
+            + "\n      **鍵が実体を指していません**（改名・削除で古くなった宣言は"
+              "赤くならずに残ります・#81）。消すか、いまの名前に直してください")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="条件9 の網羅（書き出しから導く）")
     ap.add_argument("--config", type=Path, default=Path("design/tree-tests.json"))
@@ -145,10 +154,11 @@ def main(argv=None):
             if f.is_file() and f.suffix in SUFFIXES:
                 blob += f.read_text(encoding="utf-8", errors="ignore") + "\n"
 
-    missing, allowed = [], []
+    missing, allowed, used = [], [], set()
     for name, why in sorted(need.items()):
         if name in allow:
             allowed.append(f"{name}（{allow[name]}）")
+            used.add(name)
             continue
         # **セット名そのもの**で照合する。先頭の部品名（Buttons/M/Default →
         # Buttons）まで許すと、名前が似た別のテストで通ってしまい、関門が緩む。
@@ -163,6 +173,9 @@ def main(argv=None):
           f"例外 {len(allowed)} / 無し {len(missing)}")
     for a in allowed:
         print(f"  例外: {a}")
+    fossils = sorted(set(allow) - used)
+    if fossils:
+        problems.append(fossil_msg("例外（allow.set）", fossils))
     if missing:
         problems.append(
             "対象なのにテストが見当たらないセット:\n      "
@@ -219,6 +232,14 @@ def self_test():
               allow=[{"set": "Buttons/M", "why": "表示専用"}])
         if main(argv) != 0:
             print("self-test NG: 理由つきの例外で落ちた"); ok = False
+
+        # **当たらなくなった宣言は落とす**（#81）。改名・削除で鍵が実体を指さなくなっても
+        # 逆向き（宣言だけ残る）は無音だった
+        setup({"Buttons/M": {"variants": ["Hovered"]}},
+              tests={"t.dart": "testWidgets('Buttons/M hover', ...);\n"},
+              allow=[{"set": "Chips/Gone", "why": "もう無いセット"}])
+        if main(argv) != 1:
+            print("self-test NG: **当たらなくなった例外の宣言を通した**"); ok = False
         setup({"Buttons/M": {"variants": ["Hovered"]}},
               allow=[{"set": "Buttons/M"}])
         if main(argv) != 1:

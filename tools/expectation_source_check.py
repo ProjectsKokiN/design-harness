@@ -61,6 +61,15 @@ DEFAULT_GLOBS = ["figma/", "design/figma/", "frames.json", "components.json",
                  "variables.json", "styles.json"]
 
 
+#: **当たらなかった宣言**の言い方（2026-09-06・#81）。鍵が実体を指さなくなっても
+#: 逆向き（宣言だけ残る）は無音なので、どの道具でも同じ文で名指しする
+def fossil_msg(kind, keys):
+    return (f"当たらなくなった{kind}の宣言が {len(keys)} 件あります:\n      "
+            + "\n      ".join(sorted(keys))
+            + "\n      **鍵が実体を指していません**（改名・削除で古くなった宣言は"
+              "赤くならずに残ります・#81）。消すか、いまの名前に直してください")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="照合テストの期待値が書き出し由来か")
     ap.add_argument("--config", type=Path, default=Path("design/expectations.json"))
@@ -112,7 +121,7 @@ def main(argv=None):
               file=sys.stderr)
         return 2
 
-    checked, handwritten, allowed = 0, [], []
+    checked, handwritten, allowed, used = 0, [], [], set()
     for d in dirs:
         dp = base / d
         if not dp.exists():
@@ -126,6 +135,7 @@ def main(argv=None):
             checked += 1
             if rel in allow:
                 allowed.append(f"{rel}（{allow[rel] or '理由なし'}）")
+                used.add(rel)
                 continue
             text = f.read_text(encoding="utf-8", errors="ignore")
             if not any(g in text for g in globs):
@@ -135,6 +145,9 @@ def main(argv=None):
           f"{checked - len(handwritten) - len(allowed)}件が書き出しを読んでいます")
     for a in allowed:
         print(f"  例外: {a}")
+    fossils = sorted(set(allow) - used)
+    if fossils:
+        problems.append(fossil_msg("例外（allow.file）", fossils))
     if handwritten:
         problems.append(
             "書き出しを読んでいない照合テスト（手書きの期待値）:\n      "
@@ -190,6 +203,13 @@ def self_test():
         if main(setup({}, allow=[{"file": "test/design/b_test.dart",
                                   "why": "x", "reviewBy": "2020-01-01"}])) != 1:
             print("self-test NG: 期限切れの例外を通した"); ok = False
+
+        # **当たらなくなった宣言は落とす**（#81）。改名・削除で鍵が実体を指さなくなっても
+        # 逆向き（宣言だけ残る）は無音だった
+        if main(setup({"c_test.dart": "final doc = File('design/figma/frames.json');\n"},
+                      allow=[{"file": "test/design/gone_test.dart", "why": "消したテスト",
+                              "reviewBy": "2099-01-01"}])) != 1:
+            print("self-test NG: **当たらなくなった例外の宣言を通した**"); ok = False
 
         for f in (root / "test" / "design").glob("*"):
             f.unlink()

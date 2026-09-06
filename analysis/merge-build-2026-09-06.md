@@ -79,7 +79,7 @@ Android 側に同じ条件が無いので、**条件を戻すと今度は Androi
 
 どれも**両方の実体を読んで**確かめています。たとえば1件目（生成物が無ければ止める）は、
 iOS が `simulator_check.py:73-75` で `Runner.app` の不在を見て `flutter build ios --simulator --debug` を出し、
-Android が `verify.sh:29-33` で `build/content.db` の不在を見て `python3 scripts/build_db.py` を出す——
+Android が `verify.sh:29-33` で `build/content.db` の不在を見て `python3 scripts/build_db.py` を出す—— <!-- path-check-ignore: 案件のパス。この記録は別のリポジトリの中身を書いている -->
 **対象もコマンドも違うが、主張が同じ**という形です。
 
 ---
