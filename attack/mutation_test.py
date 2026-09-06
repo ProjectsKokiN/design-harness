@@ -148,10 +148,24 @@ def load_patterns(allow):
     return [(re.compile(x["match"]), x["why"]) for x in allow.get("$patterns", [])]
 
 
+def scanned_files(root=None):
+    """変異と印の一覧が**同じ範囲**を見るための、唯一の走査規則。
+
+    **2か所で別々に範囲を書くと必ずずれる。** 実際に 2026-09-06、変異のほうは
+    `build/` まで広げたのに印の一覧は `tools/` だけを見ていて、`build/` に印を
+    書いても一覧に出ない（＝理由が人の目に触れない）状態になっていた。
+    """
+    base = ROOT if root is None else root
+    out = sorted((base / "tools").glob("*.py"))
+    if (base / "build").exists():
+        out += sorted((base / "build").glob("*.py"))
+    return out
+
+
 def list_allowed():
     """いま許している印を一覧する（走査しない）。**一覧は持たず、コードから導く。**"""
     rows, no_reason = [], []
-    for f in sorted((ROOT / "tools").glob("*.py")):
+    for f in scanned_files():
         for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
             if MARK not in line:
                 continue
@@ -193,9 +207,7 @@ def main(argv=None):
         survivors, measured, paths_total, fossils, skipped = [], 0, 0, [], []
         # **共有層は tools/ だけではない**（2026-09-06 に build/ が増えた）。
         # 階層を作ったら網も広げる——広げないと、新しい道具は測られないまま緑になる
-        candidates = sorted((work / "tools").glob("*.py"))
-        candidates += sorted((work / "build").glob("*.py")) if (work / "build").exists() else []
-        for f in candidates:
+        for f in scanned_files(work):
             src = f.read_text(encoding="utf-8")
             if '"--self-test"' not in src and "--selftest" not in src:
                 skipped.append((f.name, "`--self-test` の旗が無い"))
