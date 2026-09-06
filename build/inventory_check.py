@@ -21,6 +21,8 @@ Mac mini（iOS）と Windows（Android）が**別々に**ビルドの実態を�
 | 必須の列が無い | 突き合わせのときに片側だけ空欄になる |
 | `工程` が語彙の外 | 行が対応しなくなる（iOS の「検品」と Android の「検証」が別物になる） |
 | `依存` が語彙の外 | **統合の判定はこの列だけで決まる**ので、崩れると判定できない |
+| `案件差` が語彙の外 | どの案件に効くかが機械で読めない（iOS には PlantTalk がある） |
+| `案件差` が `差あり` なのに中身が空 | 「違う」だけ書かれても、どう違うかが残らない |
 | `依存` が none 以外なのに `依存の理由` が空 | 「Windows だから」で分けると、統合できるものまで分かれる |
 | `検証状態` が `measured` なのに `出典` が空 | 測ったと言い切るなら、どこを見たか要る |
 | `id` の重複 | 突き合わせの鍵に使う |
@@ -30,7 +32,7 @@ Mac mini（iOS）と Windows（Android）が**別々に**ビルドの実態を�
 - **書いてある内容が正しいか。** 手順が実際に動くかは見ない（それは各機体の責任）
 - **統合すべきかどうか。** ここは形だけ。判定は両方が揃ってから
 - 確かめた方法: `--self-test`（各違反が1件ずつ落ちること・正しい形が通ること・
-  違反時に exit 1 で落ちること）
+  違反時に exit 1・読めない入力で exit 2 で落ちること）
 """
 
 from __future__ import annotations
@@ -60,6 +62,7 @@ def check(doc: dict, schema: dict) -> list[str]:
     stages = set(schema["工程"]["値"])
     deps = set(schema["依存"]["値"])
     states = set(schema["検証状態"]["値"])
+    scopes = set(schema["案件差"]["値"])
     required = schema["必須の列"]
 
     rows = doc.get("工程一覧")
@@ -94,6 +97,12 @@ def check(doc: dict, schema: dict) -> list[str]:
                 f"id {rid}: `依存` が {dep} なのに `依存の理由` が空です"
                 "（何に縛られているかを具体で。『Windows だから』は理由になりません）")
 
+        sc = r.get("案件差")
+        if sc is not None and sc not in scopes:
+            problems.append(f"id {rid}: `案件差` が語彙の外です（{sc}）。使える語: {'/'.join(sorted(scopes))}")
+        elif sc == "差あり" and not str(r.get("案件差の中身", "")).strip():
+            problems.append(f"id {rid}: `案件差` が 差あり なのに `案件差の中身` が空です（何がどう違うか要ります）")
+
         vs = r.get("検証状態")
         if vs is not None and vs not in states:
             problems.append(f"id {rid}: `検証状態` が語彙の外です（{vs}）")
@@ -122,6 +131,12 @@ def self_test() -> int:
         ("通る: 依存に理由がある", {"工程一覧": [row(依存="env", 依存の理由="cp932 の端末で print が死ぬ")]}, 0),
         ("落とす: measured なのに出典が空", {"工程一覧": [row(検証状態="measured", 出典="")]}, 1),
         ("落とす: id の重複（2 行目で1件）", {"工程一覧": [row(id=1), row(id=1)]}, 1),
+        ("通る: platform に理由がある", {"工程一覧": [row(依存="platform", 依存の理由="TestFlight 版と development 署名版は入れ替えられない")]}, 0),
+        ("落とす: platform なのに理由が空", {"工程一覧": [row(依存="platform")]}, 1),
+        ("通る: 案件差 planttalk", {"工程一覧": [row(案件差="planttalk")]}, 0),
+        ("落とす: 案件差が語彙の外", {"工程一覧": [row(案件差="qnd")]}, 1),
+        ("落とす: 差あり なのに中身が空", {"工程一覧": [row(案件差="差あり")]}, 1),
+        ("通る: 差あり に中身がある", {"工程一覧": [row(案件差="差あり", 案件差の中身="aub=A / flash=B")]}, 0),
         ("落とす: 工程一覧が無い", {"事例": []}, 1),
         ("落とす: 工程一覧が空", {"工程一覧": []}, 1),
     ]
@@ -149,6 +164,24 @@ def self_test() -> int:
             rc = main([str(f)])
         if rc != 0:
             print(f"self-test NG: 違反が無いのに exit {rc}（期待 0）"); ok = False
+
+        # **読めない入力で 2 を返すか**をここで見る。
+        # attack/broken_input_test.py は `tools/*.py` の `--config` を持つ道具しか走査しない
+        # ので、この道具（build/ 配下・位置引数）には届かない。**届かない試験を根拠に
+        # 変異試験の除外を書くと、除外そのものが空振りになる**（2026-09-06 に実際そうなった）
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = main([str(Path(td) / "no-such-file.json")])
+        if rc != 2:
+            print(f"self-test NG: 無いファイルで exit {rc}（期待 2）"); ok = False
+
+        broken = Path(td) / "broken.json"
+        broken.write_text("{壊れている", encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = main([str(broken)])
+        if rc != 2:
+            print(f"self-test NG: 壊れた JSON で exit {rc}（期待 2）"); ok = False
 
     if ok:
         print("self-test: OK")
@@ -184,9 +217,13 @@ def main(argv=None) -> int:
         return 1
 
     n = len(doc["工程一覧"])
-    dep_none = sum(1 for r in doc["工程一覧"] if r.get("依存") == "none")
+    from collections import Counter
+    c = Counter(r.get("依存") for r in doc["工程一覧"])
     print(f"{args.file}: {n} 行。形は項目表どおりです。")
-    print(f"  うち 依存=none は {dep_none} 行（統合の候補。判定は両機体が揃ってから）")
+    print(f"  依存=none {c['none']} 行（統合の候補）／platform {c['platform']} 行"
+          f"（**統合しない**・そのプラットフォームのスキルへ）")
+    print(f"  env {c['env']} / hardware {c['hardware']} / credential {c['credential']} / project {c['project']}")
+    print("  判定は両機体が揃ってから当てます（build/README.md）")
     return 0
 
 

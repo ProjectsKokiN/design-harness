@@ -33,8 +33,40 @@ python3 build/inventory_check.py --self-test
 | `依存` | 行き先 |
 |---|---|
 | `none` | ここ（`build/`）に統合 |
+| `platform` | **統合しない。** そのプラットフォームのスキルへ（iOS=Mac mini・Android=Windows） |
 | `env` / `credential` / `hardware` | 機体のスキルへ |
 | `project` | `<案件>/design/<platform>.json` へ |
+
+## 改訂1（2026-09-06・iOS 側の反証の申し送りによる）
+
+**`依存` に `platform` を足しました。** `none` と `env` の2択だと、
+**プラットフォーム固有の事実が `none` に落ちて `build/` へ統合されます。**
+統合すると「iOS でも Android でも同じ」という**嘘の規約**が共有層に入ります。
+
+実例（iOS 側の反証が申し送ったもの）:
+
+> 「TestFlight で確認する前に development 署名版を消してもらう」は none にしていたが、
+> **Android は同じ鍵なら上書き更新できる**ので対称ではない。
+
+**Windows へのお願い（書き直しは発生しません）**
+
+1. **`none` と付けた行だけ**、もう一度「Android を iOS に置き換えても同じことが言えるか」で
+   見直してください。言えないものは `platform` にしてください
+2. **判断の規約（記録の書き方・報告の形・見る順番）は `none` のままです。** ここを
+   `platform` に倒すと、統合できるものが分かれます
+3. 他の列はそのままで構いません
+
+**`案件差` にも語を足しました**（`planttalk` / `全部` / `該当なし`）。
+iOS には PlantTalk（`~/planttalk`・`design/` を持たないのでハーネス未導入）があり、
+Android 側には無い案件です。**Windows は使わないので影響はありません。**
+
+**`粒度` の規約を明記しました。** 対称な判断とその機体固有のコマンドを1行に混ぜないこと
+（実例: iOS 側の「pubspec が動いたら pod install」は判断が none・コマンドが env で、
+1行に混ざっていました）。
+
+検査も厳しくしました（`案件差` の語彙と `差あり` の中身を見ます）。
+**自分のファイルに `python3 build/inventory_check.py <file>` を当ててから push してください。**
+私（Mac mini）の iOS 側も、これで1件の空欄が見つかりました。
 
 ## なぜ `.json` も要るか
 
