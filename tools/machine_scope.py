@@ -517,9 +517,12 @@ def do_check(machine, conf, root, conf_path=''):
 
     mine, others, unowned = [], [], []
     for f in sorted(files):
-        if is_shared(f, conf):
-            continue
+        # **判定は owner_of だけ。** 以前はここで `is_shared()` を別に呼んでおり、
+        # `owner_of` が SHARED を返すもの（生成物）を「担当: （共有）」と表示しながら
+        # **担当外に数える**という食い違いが出た（2026-09-06。#29 と同じ形の再発）。
         holder = owner_of(f, conf, root)
+        if holder == SHARED:
+            continue
         if holder is None:
             unowned.append(f)
         elif holder == machine:
@@ -688,6 +691,24 @@ def self_test():
         # 存在しないファイルは宣言に従う（分からないものを共有にしない）
         check(owner_of("design/figma/no-such.json", c2, _r) == "MacBook Air",
               "**存在しないファイルを共有にした**")
+
+        # **表示と集計が食い違わないこと**（2026-09-06 に実際に出た。#29 と同じ形）。
+        # `--check` が別の判定（is_shared）を持っていたため、生成物を
+        # 「担当: （共有）」と表示しながら**担当外に数えて**落としていた。
+        import subprocess as _sp, io as _io, contextlib as _ctx
+        _sp.run(["git", "-C", str(_r), "init", "-q"], check=True)
+        _sp.run(["git", "-C", str(_r), "add", "-A"], check=True)
+        _sp.run(["git", "-C", str(_r), "-c", "user.email=t@t", "-c", "user.name=t",
+                 "commit", "-qm", "x"], check=True)
+        gen.write_text('{"$手で書き換えない": "gen が生成します", "v": 2}', encoding="utf-8")
+        _buf = _io.StringIO()
+        with _ctx.redirect_stdout(_buf), _ctx.redirect_stderr(_buf):
+            _rc = do_check("Mac mini", c2, _r)
+        check(_rc == 0,
+              f"**生成物だけを変えたのに担当外で落ちた（exit {_rc}）**"
+              f"——表示と集計が食い違っている")
+        check("担当外 0" in _buf.getvalue(),
+              f"生成物が担当外に数えられている: {_buf.getvalue()[:200]}")
     finally:
         shutil_rmtree(_td)
 
