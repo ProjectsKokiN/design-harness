@@ -49,7 +49,7 @@ jobs:
       - name: 関門の条件（正本と生成物のズレ）
         run: python3 tools/gen_gate.py --check
       - name: ツールの構文
-        run: python3 -m py_compile engine/design_check.py tools/*.py shims/*.py
+        run: python3 -m py_compile engine/design_check.py tools/*.py shims/*.py build/*.py
 
       # **一覧を手で書かない**（2026-09-02）。それまで5本を手で並べており、
       # 道具が22本に増えても**17本の self-test が CI で一度も走っていなかった**。
@@ -59,10 +59,10 @@ jobs:
       # 検査そのものが macOS でしか回っていなかったため、aub では3日で5件出た
       # （うち2件は「Windows 非互換を見つけるための検査」自身のバグ）。
       - name: 握りつぶし（溜めた指摘を早期 return で捨てていないか）
-        run: python3 tools/swallow_check.py --root tools engine
+        run: python3 tools/swallow_check.py --root tools engine build
 
       - name: 移植性（Windows でだけ落ちる書き方）
-        run: python3 tools/portable_check.py --root tools
+        run: python3 tools/portable_check.py --root tools build
 
       # **CI と他人のクローンには ~/.claude がありません。** 共有層の道具がそこを
       # 実行時に読むと、落ちるか（案件の pre-push が exit 2）、黙って緑になります
@@ -85,7 +85,7 @@ jobs:
           PYTHONIOENCODING: cp932
         run: |
           FAILED=0
-          for f in tools/*.py; do
+          for f in tools/*.py build/*.py; do
             case "$(basename "$f")" in _*) continue;; esac
             grep -q '"--self-test"' "$f" || continue
             if python3 "$f" --self-test 2>&1 | grep -q "UnicodeEncodeError"; then
@@ -98,7 +98,7 @@ jobs:
         run: |
           set -u
           FAILED=0; RAN=0; NONE=""
-          for f in tools/*.py; do
+          for f in tools/*.py build/*.py; do
             grep -q "def self_test" "$f" || { NONE="$NONE $(basename $f)"; continue; }
             RAN=$((RAN + 1))
             python3 "$f" --self-test || FAILED=1

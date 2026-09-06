@@ -181,14 +181,19 @@ def main(argv=None):
         return list_allowed()
     work = Path(tempfile.mkdtemp())
     try:
-        for d in ("tools", "engine", "gate", "rules", "ci", "fingerprint", "exporters"):
+        for d in ("tools", "engine", "gate", "rules", "ci", "fingerprint", "exporters",
+                  "build"):
             if (ROOT / d).exists():
                 shutil.copytree(ROOT / d, work / d, ignore=shutil.ignore_patterns("__pycache__"))
         for f in ("README.md", "DESIGN.md"):
             if (ROOT / f).exists():
                 shutil.copy(ROOT / f, work / f)
         survivors, measured, paths_total, fossils = [], 0, 0, []
-        for f in sorted((work / "tools").glob("*.py")):
+        # **共有層は tools/ だけではない**（2026-09-06 に build/ が増えた）。
+        # 階層を作ったら網も広げる——広げないと、新しい道具は測られないまま緑になる
+        candidates = sorted((work / "tools").glob("*.py"))
+        candidates += sorted((work / "build").glob("*.py")) if (work / "build").exists() else []
+        for f in candidates:
             src = f.read_text(encoding="utf-8")
             if '"--self-test"' not in src and "--selftest" not in src:
                 continue

@@ -58,7 +58,12 @@ NON_CP932 = re.compile(r"[\U0001F300-\U0001FAFF←-⯿〰️]")
 
 
 def _tools(root):
-    return [f for f in sorted(root.glob("*.py")) if not f.name.startswith("_")]
+    """道具の一覧。**歩く場所は1つとは限らない**（2026-09-06 に共有層へ build/ が増えた）。"""
+    roots = root if isinstance(root, (list, tuple)) else [root]
+    out = []
+    for r in roots:
+        out += [f for f in sorted(Path(r).glob("*.py")) if not f.name.startswith("_")]
+    return out
 
 
 def check_encoding(root, verbose=False):
@@ -153,7 +158,8 @@ def _bare_command(node):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Windows でだけ落ちる書き方を見つける")
-    ap.add_argument("--root", type=Path, default=HERE)
+    ap.add_argument("--root", type=Path, nargs="+", default=[HERE],
+                    metavar="DIR", help="歩く場所（複数可）")
     ap.add_argument("--encoding", action="store_true", help="出力の文字コードだけ")
     ap.add_argument("--style", action="store_true", help="書き方だけ")
     ap.add_argument("--verbose", action="store_true")
@@ -166,7 +172,7 @@ def main(argv=None):
     failed = 0
     tools = _tools(a.root)
     if not tools:
-        print(f"道具が1本もありません: {a.root}\n"
+        print(f"道具が1本もありません: {' / '.join(str(x) for x in a.root)}\n"
               f"  **走査が空振りしています。**0件は「綺麗」ではありません。",
               file=sys.stderr)
         return 2
