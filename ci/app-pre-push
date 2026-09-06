@@ -16,14 +16,18 @@ set -u
 # 次の判定が空を見る。雛形はここを踏みやすい
 REFS=$(cat)
 
-# 1) Mac から main への直 push を止める（PC の役割分担。Mac は PR 経由）
-if [ "$(uname)" = "Darwin" ]; then
-  if printf '%s\n' "$REFS" | awk '{print $3}' \
-       | grep -qE '^refs/heads/(main|master)$'; then
-    echo "Mac から main への直 push は止めています（PR を使ってください）。" >&2
-    exit 1
-  fi
-fi
+# 1) main への直 push は止めない（2026-09-05 ユーザー確定で廃止）
+#
+# 原文: 「macからメインへ直接プッシュしないというルールが枷になっている感じがするので、
+# 解除してもいいかなと思いました」「PRを私が見返すこと自体はないんですよね」。
+#
+# **どのマシンからも `git push origin main` でよい。** 残っていた利点は PR の記録だけで、
+# それを見返す運用が無かった。一方で実害が出ていた——受信箱（MACHINE_TASKS.md）は
+# 既定ブランチにしか置けないため、Mac が受信箱に書けなかった（aub 2026-09-05）。
+#
+# 検査は下の verify.sh と、main への push で走る CI が同じものを回す。
+# **`--no-verify` は引き続き禁止**（禁止の理由は中身を検査せずに送れてしまうこと）。
+# 復活させるときの置き場は ~/.claude/memory/feedback_mac_no_main_push_hook.md。
 
 # 2) 枝の削除だけなら検査を飛ばす（2026-09-04・#61）
 #
