@@ -452,12 +452,23 @@ def template_stages(path):
     コメントアウトされた段（`# step "静的解析" {{…}}`）は数えない。
     案件が具体化するひな形であって、走る段ではない。
     """
-    out = {}
-    for line in logical_lines(path.read_text(encoding="utf-8")):
-        m = STEP_RX.match(line)
-        if not m:
+    # **段は「見出しの行」ではなく「次の段までの塊」。**（2026-09-06・#84）
+    # 見出しの1行だけを見ていたため、`bash -c '…'` の中で呼ぶ道具が段の識別から
+    # 漏れていた。実測: 「鮮度（条件4）」は `machine_scope.py --owns` しか持たず、
+    # **実際に測る figma_freshness.py が識別に入っていなかった**
+    out, label, buf = {}, None, []
+    lines = logical_lines(logical_text(path.read_text(encoding="utf-8")))
+    for line in lines + [None]:
+        m = STEP_RX.match(line) if line is not None else None
+        if m or line is None:
+            if label is not None:
+                out[label] = invocations("\n".join(buf))
+            if line is None:
+                break
+            label, buf = m.group(1), [m.group(2)]
             continue
-        out[m.group(1)] = invocations(m.group(2))
+        if label is not None:
+            buf.append(line)
     return out
 
 
@@ -730,6 +741,8 @@ def matrix(template, projects):
     print(f"段 × 案件（雛形 {len(stages)}段 / 案件 {len(cols)}件）"
           f"  ○=走っている  宣=理由つきで不在  **×**=宣言も無く落ちている")
     print("  " + "段".ljust(width) + " | " + " | ".join(n for n, _, _ in cols))
+    # **判定は check_stages と同じ規則にする。** 片方だけ厳しくすると、同じファイルの
+    # 2つの口が違う答えを出す（#29 の「表示と集計の食い違い」と同じ形）
     dist = distinguishing(stages)
     nowhere, silent = [], []
     for label, tools in stages.items():
@@ -801,16 +814,17 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
             # 走らせるファイルが読めない段（案件固有のコマンド）。
             # **分母から外す**（`flutter test` などは案件ごとに形が違う）
             continue
-        # **走っているかは名前で見る**（今までどおり）。旗は「同じ道具を別の引数で
-        # 呼んでいないか」を**名指しする**のに使う（#84）。旗で落とすと、
-        # `--owns` と `--test-owns` のような正当な別表現で誤検出が出る（実測）
-        names = {n for n, _ in tools}
-        hit = [k for k in have if k[0] in names]
         want = {key_of(n, f, dist) for n, f in tools}
-        if hit and want and not (want & {key_of(*k, dist) for k in hit}):
-            exp = " / ".join(sorted(x for _, fs in tools for x in (fs & dist.get(_, frozenset()))))
-            got = " / ".join(sorted({x for k in hit for x in (k[1] & dist.get(k[0], frozenset()))}))
-            mismatched.append((label, exp or "（旗なし）", got or "（旗なし）"))
+        hit = [k for k in have if key_of(*k, dist) in want]
+        if not hit:
+            # 名前は合うのに旗が合わない＝**同じ道具を別の引数で呼んでいる**。
+            # 段が抜けているのか、同じ目的の別表現なのかを人が見分けられるよう名指しする
+            names = {n for n, _ in tools}
+            near = [k for k in have if k[0] in names]
+            if near:
+                exp = " / ".join(sorted(x for n, fs in tools for x in (fs & dist.get(n, frozenset())))) 
+                got = " / ".join(sorted({x for k in near for x in (k[1] & dist.get(k[0], frozenset()))}))
+                mismatched.append((label, exp or "（旗なし）", got or "（旗なし）"))
         if hit:
             ran.append(label)
             # **手元の verify.sh で走るか、CI だけで走るか。**（2026-09-06・#87）
