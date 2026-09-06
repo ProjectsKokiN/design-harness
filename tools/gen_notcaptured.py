@@ -73,8 +73,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
 
-DEFAULT_LIST = (Path.home() / ".claude" / "skills" / "mobile-implement-ui"
-                / "references" / "figma-properties.json")
+#: プロパティの一覧の正本。**このリポジトリの中**に置く（2026-09-06 に移設）。
+#:
+#: 以前は `~/.claude/skills/mobile-implement-ui/references/figma-properties.json`
+#: を見ていた。**案件の pre-push 関門がこの道具を回すので、`~/.claude` を
+#: 持たない実行主体（CI・他人のクローン）は push 前検査を通せなかった**
+#: （実測: HOME を空にすると `プロパティの一覧がありません` で exit 2）。
+#: 案件の `design/notcaptured.json` も `~/...` を書かず、submodule 相対で指す。
+DEFAULT_LIST = Path(__file__).resolve().parent.parent / "vocab" / "figma-properties.json"
 
 #: 器のソースからキーを拾う出方。`n.foo` / `'foo'` / `"foo"` / `foo:`
 KEY_RX = re.compile(r"""(?:\.([a-zA-Z][A-Za-z0-9_]*)\b|['"]([a-zA-Z][A-Za-z0-9_]*)['"])""")
@@ -127,7 +133,7 @@ def _portable(p, base=None):
             return p.resolve().relative_to(Path(base).resolve()).as_posix()
         except ValueError:
             pass  # リポジトリの外にある器はホームを ~ に畳んで出す
-    return p.as_posix().replace(Path.home().as_posix(), "~")
+    return p.as_posix().replace(Path.home().as_posix(), "~")  # reachability-ok: repo 相対を先に試したあとのフォールバック。ホームが違う機体でも同じ文字列になる
 
 
 def build(list_path, exporters, base=None):
@@ -177,7 +183,9 @@ def main(argv=None):
         print(f"設定が読めません: {args.config}: {e}", file=sys.stderr)
         return 2
     base = args.root.resolve()
-    lp = Path(str(conf.get("list", DEFAULT_LIST)).replace("~", str(Path.home())))
+    # 案件が `~/...` と書いていたら畳みを展開する（古い書き方への後方互換）。
+    # **新しい案件は submodule 相対で書く**（design/harness/vocab/figma-properties.json）。
+    lp = Path(str(conf.get("list", DEFAULT_LIST)).replace("~", str(Path.home())))  # reachability-ok: 案件の設定に残る古い `~` 表記の展開。既定は repo の中を指す
     if not lp.is_absolute():
         lp = base / lp
     if not lp.exists():

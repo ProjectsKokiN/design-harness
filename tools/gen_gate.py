@@ -15,7 +15,7 @@ FlashEnglish の実害（2026-09-03）: 条件5（再現性の判定）と条件
 
 ## 正本がリポジトリの外にある問題
 
-条件の正本は `~/.claude/skills/mobile-harness-setup/references/production-gate.md`
+条件の正本は `gate/production-gate.md`（このリポジトリの中）
 で、**どの案件のリポジトリからも、GitHub Actions からも見えない。** 手で写せば
 古くなる（このハーネスが繰り返し潰してきた病そのもの）。
 
@@ -50,9 +50,33 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
 
-DEFAULT_SOURCE = (Path.home() / ".claude" / "skills" / "mobile-harness-setup"
-                  / "references" / "production-gate.md")
+#: 合格条件の正本。**このリポジトリの中**に置く（2026-09-06 に移設）。
+#:
+#: 以前は `~/.claude/skills/mobile-harness-setup/references/production-gate.md` を
+#: 見ていた。**その結果、公開 CI では正本が存在せず、下の `--check` が
+#: 「鮮度は見ていません」と出して exit 0 を返し続けていた**（実測。
+#: `.github/workflows/attack.yml` がこの道具を回している）。
+#: 関門6条件の鮮度検査が、CI ではずっと空振りの緑だった。
+#:
+#: 正本を repo の中に持てば、CI でも案件のクローンでも必ず在る。
+#: 劣化して緑を返す経路は残すが（生成物だけを配った機体のため）、
+#: **CI からは到達しない**。skills 側にはポインタだけ置く。
+DEFAULT_SOURCE = Path(__file__).resolve().parent.parent / "gate" / "production-gate.md"
 DEFAULT_OUT = Path("gate/conditions.json")
+
+
+def _repo_rel(p):
+    """このリポジトリからの相対パスにする（区切りは `/` に揃える）。
+
+    リポジトリの外にあるものはホームを `~` に畳む。どちらの形でも
+    **機体固有の文字列（ホーム名・OS の区切り）を残さない**のが目的。
+    """
+    p = Path(p).resolve()
+    root = Path(__file__).resolve().parent.parent
+    try:
+        return p.relative_to(root).as_posix()
+    except ValueError:
+        return p.as_posix().replace(Path.home().as_posix(), "~")  # reachability-ok: repo 相対を先に試したあとのフォールバック。ホームが違う機体でも同じ文字列になる
 
 #: 合格条件の表の行。`| 7 | **実装網羅 …** | `impl_coverage_check.py` … |`
 ROW_RX = re.compile(r"^\|\s*(\d+)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|")
@@ -86,7 +110,11 @@ def build(source):
     if not conds:
         return None, "正本から条件の表を読めませんでした（表の形が変わった？）"
     return {
-        "$生成元": str(source).replace(str(Path.home()), "~"),
+        # **機体に依らない書き方で出す**（2026-09-06。gen_notcaptured と同じ直し）。
+        # `str(source).replace(str(Path.home()), "~")` は、HOME が違う機体
+        # （CI・別のホーム名の Mac）で置換が起きず、絶対パスがそのまま入る。
+        # `--check` は文字列で比べるので、**中身が同じでも必ず食い違う**。
+        "$生成元": _repo_rel(source),
         "$生成元の指紋": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
         "$手で書き換えない": "tools/gen_gate.py が生成します",
         "生きている条件": conds,

@@ -1,0 +1,153 @@
+{
+ "$meta": {
+  "unit": "Figma のフレームから読むべきプロパティの一覧（読み取りの品質ゲート）",
+  "source": "FlashEnglish の 2026-08-19 棚卸し（フェーズ 1a）。代表ノード4件の全プロパティダンプ（607 ノード・9 種別）と、確定ページ全体 6,764 ノードの値の分布集計から確定した。記憶で列挙していない",
+  "origin": "flash-compose/design/FIGMA_PROPERTIES.md（分布の実測値と経緯はそちら）",
+  "なぜ機械可読か": "散文の表のままだと AI が読み飛ばしても誰も気づかない。抽出のたびにこの全キーの取得状況（取得した値 / 未取得）を列挙させ、読み落としを名指しできる形にする（2026-08-20 の監査での是正）",
+  "使い方": "figma-extraction.md の「手順」の 5 を参照。除外は無し（現状すべて同じ値の項目も枠を用意する。2026-08-19 ユーザー確定）",
+  "updatedAt": "2026-08-20",
+  "追記": "2026-09-04: itemReverseZIndex を追加（#21）。一覧は「6,764 ノードの実測で確定済み」としていたが、**実際に誤読を起こしたプロパティが載っていなかった**。分母そのものに穴がある状態は、tools/gen_notcaptured.py の「読めていない0件」を嘘にする"
+ },
+ "layout": {
+  "layoutMode": {
+   "figma": "Auto layout の方向",
+   "values": "VERTICAL / HORIZONTAL / NONE"
+  },
+  "layoutSizingHorizontal": {
+   "figma": "幅の決まり方（Fill / Hug / Fixed）",
+   "values": "FILL / HUG / FIXED"
+  },
+  "layoutSizingVertical": {
+   "figma": "高さの決まり方（Fill / Hug / Fixed）",
+   "values": "FILL / HUG / FIXED"
+  },
+  "primaryAxisAlignItems": {
+   "figma": "中身の揃え（主軸）",
+   "values": "MIN / CENTER / MAX / SPACE_BETWEEN"
+  },
+  "counterAxisAlignItems": {
+   "figma": "中身の揃え（交差軸）",
+   "values": "MIN / CENTER / MAX"
+  },
+  "itemSpacing": {
+   "figma": "中身の間隔",
+   "note": "boundVariables に変数（Gap/*）が付いていれば値ではなく変数名を記録する"
+  },
+  "padding": {
+   "figma": "内側の余白",
+   "api": "paddingLeft / paddingTop / paddingRight / paddingBottom",
+   "note": "boundVariables を先に見る"
+  },
+  "layoutWrap": {
+   "figma": "折り返し（Wrap）",
+   "values": "WRAP / NO_WRAP"
+  },
+  "counterAxisSpacing": {
+   "figma": "折り返し時の行間"
+  },
+  "minWidth": {
+   "figma": "最小幅"
+  },
+  "maxWidth": {
+   "figma": "最大幅"
+  },
+  "minHeight": {
+   "figma": "最小高さ"
+  },
+  "maxHeight": {
+   "figma": "最大高さ"
+  },
+  "layoutPositioning": {
+   "figma": "絶対配置（Absolute position）",
+   "values": "AUTO / ABSOLUTE"
+  },
+  "clipsContent": {
+   "figma": "はみ出しを隠す（Clip content）"
+  },
+  "itemReverseZIndex": {
+   "figma": "キャンバススタッキング（後の子を下に敷く）",
+   "values": "true / false",
+   "note": "**children の並びだけで重なり順を判断しないこと。** これを読まずに並びだけで判断して「Figma が壊れている」と誤報した（FlashEnglish2026-09-03。実際は Figma が正しかった）。2026-09-04 に一覧へ追加——**それまで一覧そのものに載っておらず、分母に穴があった**"
+  }
+ },
+ "layoutの別表現": {
+  "note": "layoutGrow / layoutAlign / primaryAxisSizingMode / counterAxisSizingMode は「幅・高さの決まり方」を Figma が内部で持つ別表現。同じ概念なので独立した記録にしない（layoutSizing* を正とする）"
+ },
+ "text": {
+  "textAutoResize": {
+   "figma": "伸び方（Auto height / Auto width / 固定）",
+   "values": "HEIGHT / WIDTH_AND_HEIGHT / NONE / TRUNCATE"
+  },
+  "textAlignHorizontal": {
+   "figma": "左右の揃え"
+  },
+  "textAlignVertical": {
+   "figma": "上下の揃え"
+  },
+  "maxLines": {
+   "figma": "行数制限",
+   "note": "省略（textTruncation）と1組で扱う。省略は行数制限とセットでしか成立しない（2026-08-19 ユーザー指摘）"
+  },
+  "textTruncation": {
+   "figma": "省略記号（…）"
+  },
+  "leadingTrim": {
+   "figma": "行間のトリム"
+  },
+  "textWrapStyle": {
+   "figma": "折り返し方式"
+  },
+  "textStyleId": {
+   "figma": "テキストスタイル",
+   "note": "スタイル名 → 参照トークンまで辿る。値の写しは作らない"
+  }
+ },
+ "component": {
+  "variantProperties": {
+   "figma": "バリアント（Style=Accent、State=Hovered 等）",
+   "note": "変種ごとの使用トークンの特定に必須"
+  },
+  "componentProperties": {
+   "figma": "コンポーネントプロパティ"
+  }
+ },
+ "stroke": {
+  "strokeWeight": {
+   "figma": "線幅",
+   "note": "boundVariables（Stroke/*）を先に見る。内部の VECTOR / ELLIPSE まで降りる"
+  },
+  "strokeAlign": {
+   "figma": "線の位置（内側 / 中央 / 外側）",
+   "values": "INSIDE / CENTER / OUTSIDE"
+  },
+  "strokesIncludedInLayout": {
+   "figma": "線を寸法に含めるか"
+  },
+  "strokeIndividualWeights": {
+   "figma": "辺ごとの線幅",
+   "api": "strokeTopWeight / strokeBottomWeight / strokeLeftWeight / strokeRightWeight"
+  },
+  "cornerRadius": {
+   "figma": "角丸",
+   "note": "boundVariables（CornerRadius/*）を先に見る"
+  },
+  "cornerSmoothing": {
+   "figma": "角丸のなめらかさ（Squircle）"
+  },
+  "blendMode": {
+   "figma": "ブレンドモード"
+  }
+ },
+ "colorAndEffects": {
+  "boundVariables": {
+   "figma": "当たっている変数",
+   "note": "**すべての読み取りで最初に見る。** 値ではなく変数名（参照先）を記録する。同じ色でも別トークンなら差し替え時に取り残される"
+  },
+  "fillStyleId": {
+   "figma": "塗りスタイル"
+  },
+  "effectStyleId": {
+   "figma": "エフェクトスタイル"
+  }
+ }
+}

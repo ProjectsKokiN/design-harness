@@ -59,6 +59,13 @@ jobs:
       - name: 移植性（Windows でだけ落ちる書き方）
         run: python3 tools/portable_check.py --root tools
 
+      # **CI と他人のクローンには ~/.claude がありません。** 共有層の道具がそこを
+      # 実行時に読むと、落ちるか（案件の pre-push が exit 2）、黙って緑になります
+      # （この CI の gen_gate が「鮮度は見ていません」で exit 0 を返し続けていた）。
+      # 2026-09-06 に正本を repo の中へ移して直したので、戻らないように段にします。
+      - name: 到達性（共有層が ~/.claude を実行時に読んでいないか）
+        run: python3 tools/reachability_check.py
+
       # cp932 の端末を作って全道具を回す。**絵文字を print した瞬間に死ぬ**のを
       # Windows を用意せずに捕まえる（MacBook Air で再現を実測済み）。
       - name: 出力の文字コード（cp932 の端末で全道具）

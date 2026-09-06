@@ -34,6 +34,7 @@
 | **`tools/screen_export_check.py`** | **画面のノード木が全部書き出されているか**（記録層を消せる前提条件）。「在る」と「足りている」を分ける |
 | **`tools/hollow_check.py`** | **空振りの検査**: 例外を捨てる・期待値の自己参照・緩い finder・誰も見ていない文字。**検査は回っているのに中身が空**の形を見る |
 | **`tools/portable_check.py`** | **Windows でだけ落ちる書き方**（`encoding=` 抜け・素のコマンド名）と、cp932 で全道具を回して死なないか |
+| **`tools/reachability_check.py`** | **共有層が `~/.claude` を実行時に読んでいないか**（CI と他人のクローンには無い）。落ちるか、黙って緑になる。理由つきの `# reachability-ok:` で除外 |
 | `tools/_utf8.py` | 出力の文字コードで死なないようにする（各道具が import するだけ。単体では回さない） |
 | `tools/issue_scan.py` | 前回まとめた日時以降のやりとりを取り出す（`/harness-issues` が使う） |
 | **`seeds/<stack>/`** | 種のひな形（わざと違反させたコード）。案件の `design/seeds/` へコピーする |
@@ -282,5 +283,5 @@ git -C design/harness pull origin main
 ## 関係する正本
 
 - ハーネスの手順・テンプレート: `~/.claude/skills/mobile-harness-setup/`
-- 本番リリースの合格条件: 同 `references/production-gate.md`
+- 本番リリースの合格条件: **このリポジトリの `gate/production-gate.md`**（2026-09-06 に skills から移設。正本が repo の外にあると公開 CI で照合が空振りしていた）
 - Web の参照実装: `qnd-database/site/design/harness/`

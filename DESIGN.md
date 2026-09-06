@@ -54,7 +54,7 @@ git -C design/harness pull origin main
    AI が判断しません。**（原則1の裏返し。1が「無いものを作らない」、これが
    「あるものは全部作る」）使わない部品があるなら、消すのは Figma 側で
    デザイナーが行います。詳細は
-   `~/.claude/skills/mobile-harness-setup/references/production-gate.md` の条件7。
+   `design/harness/gate/production-gate.md` の条件7。
 6. **見た目の合否は判断しない。** Figma と実装をスクリーンショットで見比べて
    合否を決めません。AI の役目は Figma のトークン・スタイル・コンポーネントで
    数値的・構造的に組み、その数値が合っているかを定量的に検証することです。
@@ -342,7 +342,7 @@ hook は書いている最中の即時フィードバックとして置きます
 
 | 内容 | 場所 |
 |---|---|
-| 本番リリースの合格条件 | `~/.claude/skills/mobile-harness-setup/references/production-gate.md` |
+| 本番リリースの合格条件 | このリポジトリの `gate/production-gate.md`（2026-09-06 に skills から移設） |
 | ハーネスの構築手順 | `~/.claude/skills/mobile-harness-setup/` |
 | 画面実装の手順 | `~/.claude/skills/mobile-implement-ui/` |
 | 検査エンジン・道具 | このリポジトリの `engine/` `tools/` |
