@@ -107,7 +107,9 @@ step "鮮度（条件4: Figma 本体 → 書き出し。design/ の担当機の�
       if [ -z "${FIGMA_TOKEN:-}" ]; then
         echo "FIGMA_TOKEN がありません。鮮度を確認せずに通すことはしません。" >&2
         echo "  source ~/.claude/.env を実行してから再実行してください。" >&2
-        exit 1
+        # 鮮度を「確かめられなかった」ので 2。1 は「確かめたうえで違反」に取っておく
+        # （規約22 の実装の目安。道具側 tools/figma_freshness.py:103-108 は既に 2）
+        exit 2
       fi
       '"$PY"' design/figma_freshness.py'
 
