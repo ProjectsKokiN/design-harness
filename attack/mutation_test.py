@@ -154,11 +154,12 @@ def scanned_files(root=None):
     **2か所で別々に範囲を書くと必ずずれる。** 実際に 2026-09-06、変異のほうは
     `build/` まで広げたのに印の一覧は `tools/` だけを見ていて、`build/` に印を
     書いても一覧に出ない（＝理由が人の目に触れない）状態になっていた。
+
+    **2026-09-07 に `build/` は machine-relay（非公開）へ移した**ので、範囲は
+    `tools/` に戻っている。**階層を増やしたら、ここも増やすこと。**
     """
     base = ROOT if root is None else root
     out = sorted((base / "tools").glob("*.py"))
-    if (base / "build").exists():
-        out += sorted((base / "build").glob("*.py"))
     return out
 
 
@@ -205,8 +206,8 @@ def main(argv=None):
         # **飛ばした道具を必ず名前で出す。** 出さないと「素通り 0」が
         # 「見た結果 0」なのか「見なかったから 0」なのか分からない（分母が黙って縮む形）
         survivors, measured, paths_total, fossils, skipped = [], 0, 0, [], []
-        # **共有層は tools/ だけではない**（2026-09-06 に build/ が増えた）。
-        # 階層を作ったら網も広げる——広げないと、新しい道具は測られないまま緑になる
+        # **階層を作ったら網も広げる**——広げないと、新しい道具は測られないまま緑になる
+        # （2026-09-06 に build/ が増えて広げた。2026-09-07 に machine-relay へ移して戻した）
         for f in scanned_files(work):
             src = f.read_text(encoding="utf-8")
             if '"--self-test"' not in src and "--selftest" not in src:

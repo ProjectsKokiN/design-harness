@@ -54,7 +54,7 @@ jobs:
       - name: プロパティの一覧（分母に穴が無いか・棚卸しの期限）
         run: python3 tools/figma_freshness.py --vocab-check
       - name: ツールの構文
-        run: python3 -m py_compile engine/design_check.py tools/*.py shims/*.py build/*.py
+        run: python3 -m py_compile engine/design_check.py tools/*.py shims/*.py
 
       # **一覧を手で書かない**（2026-09-02）。それまで5本を手で並べており、
       # 道具が22本に増えても**17本の self-test が CI で一度も走っていなかった**。
@@ -90,7 +90,7 @@ jobs:
           PYTHONIOENCODING: cp932
         run: |
           FAILED=0
-          for f in tools/*.py build/*.py; do
+          for f in tools/*.py; do
             case "$(basename "$f")" in _*) continue;; esac
             grep -q '"--self-test"' "$f" || continue
             if python3 "$f" --self-test 2>&1 | grep -q "UnicodeEncodeError"; then
@@ -103,7 +103,7 @@ jobs:
         run: |
           set -u
           FAILED=0; RAN=0; NONE=""
-          for f in tools/*.py build/*.py; do
+          for f in tools/*.py; do
             grep -q "def self_test" "$f" || { NONE="$NONE $(basename $f)"; continue; }
             RAN=$((RAN + 1))
             python3 "$f" --self-test || FAILED=1

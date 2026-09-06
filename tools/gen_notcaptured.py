@@ -121,7 +121,7 @@ def _portable(p, base=None):
 
     2026-09-06 実測（aub-familywalk）: `$読んだ器` に `str(p)` をそのまま書いていたため、
     ホームが違う機体で生成し直すと**中身と関係なく必ず食い違った**
-    （MacBook Air は `/Users/nishikawakoki/...`、Mac mini は `/Users/k.nishikawa/...`）。
+    （機体ごとに `/Users/<誰か>/...` のホームの名前が違うため）。
     `--check` は文字列で比べるので、**どちらの機体で作り直しても、もう片方が落ちる**。
 
     リポジトリ相対にし、区切りは `as_posix()` で揃える（`str()` は OS の区切りを返すので

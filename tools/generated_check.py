@@ -14,7 +14,7 @@
 
 | 生成器 | 何が入っていたか |
 |---|---|
-| `gen_notcaptured.py` | `$読んだ器` にホーム入りの絶対パス **28 箇所**（`/Users/nishikawakoki/...`）。Mac mini（`/Users/k.nishikawa`）では**中身が同じでも必ず食い違い**、push できない行き止まりになった |
+| `gen_notcaptured.py` | `$読んだ器` にホーム入りの絶対パス **28 箇所**（`/Users/<誰か>/...`）。ホームの名前が違う機体では**中身が同じでも必ず食い違い**、push できない行き止まりになった |
 | `gen_gate.py` | `$生成元` が `str(p).replace(str(Path.home()), "~")`。**HOME の下に無いパスでは置換が起きず**、絶対パスがそのまま残った |
 | （同上） | 上の結果、公開 CI では正本が見つからず「鮮度は見ていません」で **exit 0**。空振りの緑 |
 
@@ -92,7 +92,7 @@ def self_test() -> int:
     import tempfile
     ok = True
     CASES = [
-        ("落とす: mac のホーム", '{"a": "/Users/nishikawakoki/dev/x.js"}', True),
+        ("落とす: mac のホーム", '{"a": "/Users/someone/dev/x.js"}', True),
         ("落とす: linux のホーム", '{"a": "/home/runner/work/x.js"}', True),
         ("落とす: Windows のホーム", '{"a": "C:\\\\Users\\\\koki\\\\x.js"}', True),
         ("落とす: 円記号の区切り", '{"a": "design\\\\figma\\\\x.json"}', True),

@@ -80,7 +80,7 @@
 | `tools/stage_check.py --min-coverage N` | **self-test が本体の N% を通ることを求める**（持っているだけでは何も証明していない） |
 | `tools/stage_check.py --matrix <案件…>` | **段 × 案件の行列を導出する**（#76。どの案件でも走っていない段を名指しする。手で行列を組み直さない） |
 | `ci/` | 各リポジトリへ配る workflow の雛形 |
-| `build/` | **ビルドの仕組みの共有の置き場**（2026-09-06 開始・iOS と Android 共通）。`build/inventory_check.py` が棚卸しの項目表（`build/inventory-schema.json`）に沿っているかを見る。手順と進み具合は `build/README.md` |
+| ~~`build/`~~ | **2026-09-07 に `machine-relay`（非公開）へ移しました。** ビルドの棚卸し・共有の規約・その検査は、**デザインの検査とは別の主題**で、さらに**機体のホームのパスや個人名が入る**ため、公開リポジトリに置きません（西川さん指示）。いまの置き場は `machine-relay` の `build/` と `analysis/` |
 
 ### 例外は「その行の印」で宣言する
 
