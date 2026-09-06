@@ -8,6 +8,108 @@
 
 ---
 
+## 2026-09-06（Mac mini / iOS ビルド）iOS ビルドの棚卸しと、項目表の改訂2件
+
+### 作業概要
+
+`build/inventory-schema.json` に沿って **iOS ビルドの実態**を書き出しました。Windows の
+Android 分と突き合わせるための1段目です。**統合の可否は判定していません。**
+
+- `analysis/build-ios-2026-09-06.json` — **377行**。依存 = none **102** / platform **41** /
+  env 81 / hardware 65 / credential 14 / project 74。検証状態 measured 46行（12%）
+- `analysis/build-ios-2026-09-06.md` — 作り方・数字・スキルに無い発見5件・書けなかったもの・
+  Windows への申し送り
+
+作り方: 領域を7つに分けて並列に読み出し（SKILL.md を3分割・道具・案件設定・
+セッションログ2案件 32,099行）、**各領域を別の主体が敵対的に反証**しました。
+評価軸は3つだけ（出典の実在・依存の分類・検証状態の誠実さ）。**116件を直しました。**
+捨てた行は0で、代わりに出典を正しい位置へ差し替えています。
+
+**`検証状態` は厳しく取りました。** 文書に「実測」と書いてあっても、この作業中に
+走らせていなければ `read`。**ビルドは1度も走らせていません**（副作用の無い確認だけ:
+`df` / `xcrun simctl list` / `ls` / `which` / `diff` / `git log`）。
+
+#### 項目表の改訂1 — `依存` に `platform` を足した
+
+反証から申し送りが出ました。「TestFlight 前に development 署名版を消す」を `none` に
+したが、**Android は同じ鍵なら上書き更新できる**ので対称ではない、と。
+
+`none` と `env` の2択だと、**プラットフォーム固有の事実が `none` に落ちて共有層に入り**、
+「iOS でも Android でも同じ」という嘘の規約になります。`platform` を足し、`none` の
+143行を18行ずつ8組で再監査、**`platform` に倒した行だけ別の主体が二次判定**しました。
+
+**41行（29%）が iOS 固有でした。** 二次判定で2行が `none` に差し戻されています
+（「破壊的な手を最後に回す」などは判断の規約なので共有できる）。
+**再監査しなければ、41件の嘘の共通規約が共有層に入っていました。**
+
+`案件差` にも `planttalk` / `全部` / `該当なし` を足しました（iOS には第3の案件
+`~/planttalk` があり、Android 側には無い）。粒度の規約も明記しました。
+
+#### 項目表の改訂2 — 検査を宣言から導く形にした（#85・close 済み）
+
+指摘の3つのうち2つは改訂1で既に直っていましたが、**`所要: "はやい"` が exit 0 で
+通る**のは本当でした。検査に一覧を持たせるのをやめ、項目表の `列の規約`（型・
+語彙のある列・条件で必須になる列）から導く形にしました。**列を足すときは項目表に
+足せば、検査は触らずに当たります。**
+
+語彙の外だった列では条件必須の検査を重ねません（根が1つなのに2件報告すると、
+直す人が2か所直そうとする。同じ形の二重判定を `machine_scope` で1度やっている・#29）。
+
+#### 空振りの緑を2つ塞ぎました
+
+- `attack/mutation_test.py` が `tools/*.py` しか変異させておらず、**新設した
+  `build/inventory_check.py`（exit 1 で落とす検査）が無試験のまま緑**でした。
+  MacBook Air が同時に同じ穴を直していたので（`7378acd`）、私の編集は捨てて
+  相手側を採用しました
+- その `return 2` の除外は `attack/broken_input_test.py` を根拠にしていましたが、
+  **あの試験は `tools/*.py` の `--config` を持つ道具しか見ないので、この道具には
+  届きません**。届かない試験を根拠にした除外は空振りなので、自己試験で塞ぎました（除外は消えた）
+- 変異の走査は `build/` を見るのに `--allowed`（印の一覧）は `tools/` だけ、という
+  ずれも `scanned_files()` に一本化しました（2か所で範囲を書くと必ずずれる）
+
+検査（終了コードは直後に `rc=$?` で退避して確認）:
+
+| 検査 | rc |
+|---|---|
+| `build/inventory_check.py --self-test` | 0 |
+| `build/inventory_check.py analysis/build-ios-2026-09-06.json` | 0 |
+| `attack/mutation_test.py` | 0（道具45本 / 落とす経路215本 / **理由なし素通り 0**） |
+| `attack/mutation_test.py --self-test` | 0 |
+| `attack/broken_input_test.py` | 0 |
+| `tools/reachability_check.py` | 0 |
+| `tools/generated_check.py --root . --subdir .` | 0 |
+| `tools/readme_check.py` | 0 |
+
+### 途中・引き継ぎ
+
+- **2段目（突き合わせ）は Windows 待ちです。** Android 分は改訂1の**前**に書かれたので
+  `platform` が 0行です。**統合の判定はこの列で決まる**ので、`none` の78行の再監査が
+  済むまで突き合わせても意味がありません。依頼は `build/README.md` に書きました
+- **Android 分に検査が2行落としています**（id 145・150 の `差あり` の中身が空）。
+  何がどう違うかは測った本人しか書けないので、こちらでは埋めていません
+- **`upload_apk.py` の差分行数が食い違います**（Mac mini 426 / Windows 472）。
+  数え方が違うだけの可能性が高い（当方は行末の空白を落として `^[<>]` を数えた）。
+  **どちらも未確定**なので、突き合わせのときに数え方を1つに決める必要があります
+- **PlantTalk を1行も書けていません。** `~/planttalk` は実在し `DEVELOPMENT_TEAM` も
+  入っていますが、`design/` も `SESSION_LOG.md` も `core.hooksPath` も無し（ハーネス未導入）。
+  issue #80 が同じものを指しています
+- **`MACHINE_TASKS.md` が design-harness にまだありません。** 本日 `attack/mutation_test.py` で
+  **3回衝突**しました（3台が同じ1時間に push）。受信箱が無いので依頼を書く場所がありません。
+  ただしこのリポジトリは公開なので、**セッションログに日々の作業を書き続ける公開範囲の判断が
+  ユーザー未決**です（公開のまま／非公開化／仕組み専用の別リポジトリ の3択を提示済み）
+- 「取得」が7行しかありません（Android は12行）。埋まる項目6つは `.md` の 4-2 に名指ししました
+
+### 戻したもの
+
+- `[harness]` `build/inventory-schema.json` の改訂1・2、`build/inventory_check.py`、
+  `build/README.md`、`attack/mutation_test.py` の走査一本化、`analysis/build-ios-2026-09-06.{json,md}`
+- `[project]` flash-compose をこの機体で最新化（4コミット遅れ→0）。submodule のピンを
+  `280eddc` に同期し、`design/verify.sh` が **rc=0・735件**通ることを確認
+- `[skill]` 無し（`flutter-ios-build-check` は棚卸しの対象なので触っていません。層分割は3段目）
+- `[確認待ち]` 公開範囲の判断（受信箱の新設がこれ待ち）。`upload_apk.py` の数え方の統一
+
+---
+
 ## 2026-09-06（Windows / データ・ロジック）Android ビルドの棚卸し
 
 ### 作業概要
