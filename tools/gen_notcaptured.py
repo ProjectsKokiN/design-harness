@@ -188,6 +188,18 @@ def main(argv=None):
     lp = Path(str(conf.get("list", DEFAULT_LIST)).replace("~", str(Path.home())))  # reachability-ok: 案件の設定に残る古い `~` 表記の展開。既定は repo の中を指す
     if not lp.is_absolute():
         lp = base / lp
+    if not lp.exists() and lp.name == DEFAULT_LIST.name and DEFAULT_LIST.exists():
+        # **宣言が古い。** 2026-09-06 に一覧を skills から repo の中へ移した
+        # （`~/.claude` は CI と他人のクローンに無いため。issue #78 の族）。
+        # 案件の宣言が消えた場所を指しているので、repo 内の既定へ倒す。
+        # **黙って倒さない。** 宣言を直すまで毎回言う（黙ると古い宣言が残り続ける）。
+        print(f"注意: 一覧の宣言が古い場所を指しています（{lp}）。\n"
+              f"  repo の中の既定を使います: "
+              f"{DEFAULT_LIST.relative_to(DEFAULT_LIST.parent.parent)}\n"
+              f"  **案件の設定を直してください**: notcaptured.json の `list` を消すか、\n"
+              f"  `design/harness/vocab/{DEFAULT_LIST.name}` に書き換える",
+              file=sys.stderr)
+        lp = DEFAULT_LIST
     if not lp.exists():
         print(f"プロパティの一覧がありません: {lp}", file=sys.stderr)
         return 2
