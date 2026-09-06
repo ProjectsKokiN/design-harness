@@ -344,7 +344,11 @@ def self_test():
 
         # 索引の見出しが「## 未対応の依頼」だけの案件（FlashEnglish）でも足せる
         inbox.write_text(t.replace(INDEX_HEAD, "## 未対応の依頼"), encoding="utf-8")
-        rc, _ = run("--add", "--to", "Windows", "--title", "短い見出しの索引", "--body", str(body2), "--no-target")
+        # **日付を渡す。** 渡さないと当日の日付で書かれ、下の照合（2026-09-05）と
+        # 食い違う。**書いた日だけ通り、翌日から全機体で落ちる**（2026-09-06 に発生）。
+        # 他の `--add` は全部 `--date` を渡していて、ここだけ抜けていた。
+        rc, _ = run("--add", "--to", "Windows", "--title", "短い見出しの索引",
+                    "--body", str(body2), "--date", "2026-09-05", "--no-target")
         t3 = inbox.read_text(encoding="utf-8")
         check(rc == 0 and "## 未対応の依頼\n\n- 2026-09-05 宛先: Windows — **短い見出しの索引**" in t3
               or rc == 0 and "- 2026-09-05 宛先: Windows — **短い見出しの索引**" in t3,
