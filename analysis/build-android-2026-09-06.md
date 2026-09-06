@@ -9,22 +9,61 @@
 
 ## 数字
 
-| | |
-|---|---:|
-| 行数 | **198** |
-| 依存 = none（統合の候補） | **78** |
-| 依存 = env | 60 |
-| 依存 = project | 28 |
-| 依存 = hardware | 18 |
-| 依存 = credential | 14 |
-| 検証状態 measured | 23 |
-| 所要を実測した行 | 1（release ビルド 143 秒） |
+| | 初版 | **再監査後** |
+|---|---:|---:|
+| 行数 | 198 | **198** |
+| 依存 = none（統合の候補） | 78 | **64** |
+| 依存 = **platform**（統合しない） | — | **12** |
+| 依存 = env | 60 | **62** |
+| 依存 = project | 28 | 28 |
+| 依存 = hardware | 18 | 18 |
+| 依存 = credential | 14 | 14 |
+| 検証状態 measured | 23 | 23 |
+| 所要を実測した行 | 1（release ビルド 143 秒） | 1 |
 
 工程別: 前提 36 / 配布 39 / 仮想機の確認 29 / 検品 25 / 記録 18 / ビルド 16 / 取得 12 / 報告 9 /
 依存解決 8 / 実機の確認 6。
 
 5領域（flash の .ps1 経路・aub の手作業経路・仮想機/実機/記録・配布の2実装比較・罠と前提）を並列で
 書き出した 222 行から、**情報量が厳密に少ない重複 28 行**を畳んで 194 行、主担当の実測 4 行を足して 198 行です。
+
+---
+
+## 0. 再監査（2026-09-06・項目表の改訂1 に合わせた追記）
+
+初版は `platform` の枠より前に書いたので、`platform` が 0 行でした。`依存 = none` の 78 行を
+**「iOS に置き換えても同じことが言えるか」**で見直し、**12 行を `platform` に倒しました**（15%）。
+iOS 側は 143 行中 41 行（29%）だったので、こちらのほうが低い割合です。初版の時点で Android 固有の
+機構の多くを既に `env` / `hardware` / `project` に振っていたためだと見ています。
+
+**判断の規約（記録の書き方・報告の形・見る順番）は `none` のままにしました。**
+ここを倒すと統合できるものが分かれます。
+
+| id | 手順 | iOS では何が違うか |
+|---|---|---|
+| 167 | release APK は debug 鍵で署名される（keystore が無い） | **iOS は署名なしでは release ビルド自体ができない。**証明書と provisioning profile が要る。「debug 鍵のまま配る」が成立しない |
+| 74 | `flutter build apk --release`・分割しない | `apk` は Android 固有。`--split-per-abi` の ABI に当たる概念が iOS に無い |
+| 195 | 記録どおりのレシピ（`--target-platform android-arm64`） | iOS は `flutter build ios` / `ipa`。`--target-platform` に当たる指定が無い |
+| 83 | `adb install -r` → `pm grant` → `am start` | iOS は `xcrun simctl install` / `launch`。実行時の許可を先に与える仕組みが無い（初回起動時のダイアログ） |
+| 86 | 立ち上げ直したらアプリを入れ直す（`-no-snapshot-save`） | iOS シミュレータは shutdown してもアプリが残る（消すのは `erase`） |
+| 72 | 版番号は pubspec → `flutter.versionCode` / `versionName` 経由 | iOS は `CFBundleVersion` / `CFBundleShortVersionString`（Info.plist と project.pbxproj 経由） |
+| 165 | Gradle wrapper 8.14 | Gradle は Android 固有。iOS は CocoaPods と Xcode で、wrapper で版を固定する仕組みが無い |
+| 166 | `android/gradle.properties` | 同上（Podfile と Build Settings に分かれる） |
+| 97 | `emulator_runs.json`（`apk_digest` を持つ） | iOS は `simulator_runs.json` で、指紋の対象が `.app` / `.ipa` |
+| 98 | `build/emulator-check.json` | AVD 名・density に当たる項目が iOS のシミュレータに無い |
+| 137 | Android と iOS で記録の形が違う | 行の主張そのものがプラットフォーム差 |
+| 44 | `-dirty` は「成果物の中身に入る場所」の未コミットだけで判定 | 見るパスの集合が違う。iOS は `android/` ではなく `ios/`（`Runner.xcodeproj`・`Info.plist`・`Podfile.lock`） |
+
+**あわせて 2 行を `env` に直しました**（`platform` ではありません）。id 2・4 の PowerShell の作法
+（`Set-StrictMode` / `$ErrorActionPreference` / `Invoke-Native` ラッパ）は、**機体の shell を替えると
+変わる**ので `env` です。Mac 側の同じ役目は `set -euo pipefail` と `$?` になります。
+
+**粒度の印を 4 行に付けました**（id 3・38・39・126）。判断は対称なのに実体が Android / PowerShell
+固有という混在行です。項目表の「粒度」の規約に従い、行を割らずに `罠` へ
+「対称性あり・統合時に分割が要る」と書いています。**割るのは 2 段目の担当**です。
+
+検査が落としていた 2 行（id 145・150 の `案件差の中身` が空）も埋めました。中身は `実体` の列に
+測ってあったものを書き下ろしたので、新しく測り直してはいません。
 
 ---
 
