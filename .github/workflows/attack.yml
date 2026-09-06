@@ -134,6 +134,12 @@ jobs:
       - name: 課題の台帳（Issue の無い課題）
         run: python3 tools/issue_sync.py --check --root .
 
+      # **既定の口（CI の workflow が参照するパス）も回す。** ここを回していなかったので、
+      # `ci/verify.sh.template` を `ci/verify.sh` で切る誤検出が CI では緑のまま残っていた
+      # （2026-09-06・Windows が手で回して見つけた）
+      - name: CI が参照するパスが実在するか
+        run: python3 tools/ci_path_check.py
+
       - name: 案内しているパスが実在するか
         # 上流なので design/ は「取り込む側」のパス。除外して自分のパスだけ見る
         run: python3 tools/ci_path_check.py --sources '**/*.py' '**/*.md' 'ci/*' --ignore 'design/' 'tools/ghost' 'tools/gone' 'tools/real'

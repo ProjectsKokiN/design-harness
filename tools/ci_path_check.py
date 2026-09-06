@@ -51,9 +51,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
 
-#: パスらしい文字列。拡張子つきの相対パスだけを拾う（コマンド名や URL は拾わない）
+#: パスらしい文字列。拡張子つきの相対パスだけを拾う（コマンド名や URL は拾わない）。
+#: **拡張子の後ろにもう1つ続くときは、そこまで取る**（2026-09-06・Windows が報告）。
+#: `\b` は `h` と `.` の間でも成立するので、`ci/verify.sh.template` を **`ci/verify.sh` で
+#: 切って**「実在しません」と嘘をついていた。切った先は実在しないので、**必ず赤になる誤検出**
 PATH_RX = re.compile(
-    r"(?<![\w/$])((?:[\w.-]+/)+[\w.-]+\.(?:py|sh|json|ya?ml|js|mjs|dart|md|txt))\b")
+    r"(?<![\w/$])((?:[\w.-]+/)+[\w.-]+\.(?:py|sh|json|ya?ml|js|mjs|dart|md|txt)"
+    r"(?:\.[\w-]+)?)\b")
 
 
 #: 人に案内している実行コマンド。`python3 design/foo.py` の <path> を拾う
@@ -390,6 +394,27 @@ def self_test():
         if rc != 1:
             print(f"self-test NG: 実在しないパスで落ちなかった（exit {rc}）")
             ok = False
+
+        # **拡張子の後ろにもう1つ続くパスを切らない**（2026-09-06・Windows が報告）。
+        # `\b` は `h` と `.` の間でも成立するので、`ci/verify.sh.template` を
+        # `ci/verify.sh` で切って「実在しません」と嘘をついていた（**必ず赤になる誤検出**）
+        (root / "ci").mkdir(exist_ok=True)
+        (root / "ci/verify.sh.template").write_text("", encoding="utf-8")
+        (wf / "b.yml").write_text(
+            "jobs:\n  b:\n    steps:\n"
+            "      - run: python3 tools/real.py --verify ci/verify.sh.template\n",
+            encoding="utf-8")
+        (wf / "a.yml").write_text(
+            "jobs:\n  a:\n    steps:\n      - run: python3 tools/real.py\n",
+            encoding="utf-8")
+        if main(["--workflows", str(wf), "--root", str(root)]) != 0:
+            print("self-test NG: **拡張子の後ろが続くパスを途中で切った**"); ok = False
+        # 切った先が実在しても、切らずに取れていること
+        (root / "ci/verify.sh").write_text("", encoding="utf-8")
+        if PATH_RX.findall("ci/verify.sh.template") != ["ci/verify.sh.template"]:
+            print("self-test NG: 拡張子の後ろまで取れていない"); ok = False
+        (root / "ci/verify.sh").unlink()
+        (wf / "b.yml").unlink()
         (wf / "a.yml").write_text(
             "jobs:\n  a:\n    steps:\n      - run: python3 tools/real.py\n",
             encoding="utf-8")
