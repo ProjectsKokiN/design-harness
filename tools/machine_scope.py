@@ -539,6 +539,10 @@ def ghost_paths(conf, root):
     """
     coming = conf.get("$これから作る") or {}
     no_reason = [k for k, v in coming.items() if not str(v).strip()]
+    # **できあがったら宣言を消す。** `$これから作る` に載ったまま実体ができると、
+    # その宣言は何も守らずに残ります（`platform_values_check` の「すでに正しいのに
+    # 未対応の宣言が残っている」と同じ形。2026-09-06 に design/ios.json で実際に起きた）
+    done = [k for k in coming if (Path(root) / str(k).rstrip("/")).exists()]
     out = []
     for m, paths in (conf.get("machines") or {}).items():
         for x in paths:
@@ -551,7 +555,7 @@ def ghost_paths(conf, root):
         if rel in coming or (Path(root) / rel).exists():
             continue
         out.append((SHARED, str(x)))
-    return out, no_reason
+    return out, no_reason, done
 
 
 def do_check_paths(conf, root, conf_path=''):
@@ -561,13 +565,21 @@ def do_check_paths(conf, root, conf_path=''):
     こちらは「**宣言そのものが生きているか**」で、問いが違うためです。段を分けると
     `stage_check --stages` から見え、案件が外したときに「黙って落ちた段」として捕まります。
     """
-    ghosts, no_reason = ghost_paths(conf, root)
+    ghosts, no_reason, done = ghost_paths(conf, root)
     n = sum(len(v) for v in (conf.get("machines") or {}).values()) + len(conf.get("shared") or [])
     if not n:
         print(f"担当の宣言が1つもありません: {conf_path or '(設定)'}\n"
               f"  **0件は「担当分けなし」ではなく「見ていない」です。**", file=sys.stderr)
         return 2
     coming = conf.get("$これから作る") or {}
+    if done and not ghosts and not no_reason:
+        print(f"**できあがったのに `$これから作る` の宣言が残っています**（{len(done)}件）:",
+              file=sys.stderr)
+        for k in done:
+            print(f"  - `{k}`（実体があります）", file=sys.stderr)
+        print("  → 宣言を消してください。**残しても何も守りません**"
+              "（宣言だけ残る化石・#80）", file=sys.stderr)
+        return 1
     if not ghosts and not no_reason:
         print(f"担当の宣言: {n} 件、すべて実体を指しています"
               + (f"（これから作る {len(coming)} 件は理由つきで宣言済み）" if coming else ""))
@@ -581,6 +593,9 @@ def do_check_paths(conf, root, conf_path=''):
         print(f"  - {m}: `{x}`", file=sys.stderr)
     for k in no_reason:
         print(f"  - `$これから作る` の `{k}` に理由がありません", file=sys.stderr)
+    for k in done:
+        print(f"  - `$これから作る` の `{k}` はできあがっています（宣言を消してください）",
+              file=sys.stderr)
     print("  → 実体に合わせて直すか、これから作るものなら "
           "`$これから作る` に理由つきで書いてください", file=sys.stderr)
     return 1
@@ -593,7 +608,7 @@ def do_check(machine, conf, root, conf_path=''):
               f"  担当外の変更を確かめられないので通しません。", file=sys.stderr)
         return 2
 
-    ghosts, no_reason = ghost_paths(conf, root)
+    ghosts, no_reason, done = ghost_paths(conf, root)
     coming = conf.get("$これから作る") or {}
     if coming:
         print(f"これから作るパスの宣言: {len(coming)} 件"
@@ -961,7 +976,7 @@ def self_test():
         root = Path(td) / "repo"; (root / "lib" / "ui").mkdir(parents=True)
         (root / "lib" / "ui" / "a.dart").write_text("1\n", encoding="utf-8")
         c = {"machines": {"A": ["lib/ui/"], "B": ["lib/data/"]}, "shared": ["docs/"]}
-        g, nr = ghost_paths(c, root)
+        g, nr, dn = ghost_paths(c, root)
         check(sorted(x for _, x in g) == ["docs/", "lib/data/"],
               f"**実在しない宣言を見つけられない**: {g}")
         check(nr == [], "理由の無い宣言が無いのに出た")
@@ -971,6 +986,23 @@ def self_test():
         # 理由が空なら名指しする
         c3 = dict(c, **{"$これから作る": {"lib/data": "", "docs": "x"}})
         check(ghost_paths(c3, root)[1] == ["lib/data"], "理由の無い宣言を見逃した")
+        # **できあがったら宣言を消す**（2026-09-06。design/ios.json で実際に起きた）
+        (root / "lib" / "data").mkdir(parents=True, exist_ok=True)
+        check(ghost_paths(c2, root)[2] == ["lib/data"], "**できあがった宣言を見つけられない**")
+        import shutil as _sh2
+        _sh2.rmtree(root / "lib" / "data")
+        check(ghost_paths(c2, root)[2] == [], "実体が無いのにできあがったと言った")
+        # **できあがった宣言だけが残る場合も落とす**（main の帰り道）
+        (root / "lib" / "data").mkdir(parents=True, exist_ok=True)
+        cfp2 = Path(td) / "c2.json"
+        cfp2.write_text(json.dumps(dict(c2, **{"machines": {"A": ["lib/ui/"]},
+                                               "shared": []}), ensure_ascii=False),
+                        encoding="utf-8")
+        subprocess.run(["git", "init", "-q", "-b", "main", str(root)], capture_output=True)
+        check(main(["--config", str(cfp2), "--root", str(root), "--machine", "A",
+                    "--check-paths"]) == 1,
+              "**できあがった宣言だけが残っているのに通した**")
+        _sh2.rmtree(root / "lib" / "data")
         # 実在するものは何も出さない
         c4 = {"machines": {"A": ["lib/ui/"]}}
         check(ghost_paths(c4, root)[0] == [], "実在する宣言を咎めた")
