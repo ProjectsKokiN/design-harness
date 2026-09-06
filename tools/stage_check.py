@@ -155,7 +155,9 @@ def self_test_stages():
                 'python3 $HARNESS/tools/seed_check.py\n'
                 'python3 $HARNESS/tools/portable_check.py --style\n')
 
-        def run(sh, waiver=None, tpl_text=None, gate_data=None):
+        ci_dir = root / "workflows"
+
+        def run(sh, waiver=None, tpl_text=None, gate_data=None, ci=None):
             verify.write_text(sh, encoding="utf-8")
             tpl.write_text(tpl_text or TPL, encoding="utf-8")
             gate.write_text(json.dumps(gate_data or GATE, ensure_ascii=False),
@@ -164,9 +166,17 @@ def self_test_stages():
             if waiver is not None:
                 waivers.write_text(json.dumps({"notHere": waiver},
                                               ensure_ascii=False), encoding="utf-8")
+            # CI の YAML（#87: 手元の verify.sh と CI で段が違うことがある）
+            if ci_dir.exists():
+                for f in ci_dir.iterdir():
+                    f.unlink()
+            if ci:
+                ci_dir.mkdir(exist_ok=True)
+                for name, body in ci.items():
+                    (ci_dir / name).write_text(body, encoding="utf-8")
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-                rc = check_stages(tpl, verify, None, waivers, gate)
+                rc = check_stages(tpl, verify, ci_dir if ci else None, waivers, gate)
             return rc, buf.getvalue()
 
         def case(name, want, needle=None, **kw):
@@ -214,6 +224,13 @@ def self_test_stages():
              tpl_text=TPL + 'step "段の健全性" "$PY" "$HARNESS/tools/stage_check.py" '
                             '--verify design/verify.sh\n',
              sh=full + 'echo "design/verify.sh を回しました"\n')
+        # **CI だけで走る段を必ず言う**（#87。手元で緑でも CI が落ちる）
+        case("CI だけで走る段を名指しする", 0, "**CI だけで走る段: 1 件。**",
+             sh=full.replace("python3 $HARNESS/tools/portable_check.py --style\n", ""),
+             ci={"verify.yml": "run: python3 $H/portable_check.py --style\n"})
+        case("verify.sh と CI が同じ段なら、そう言う", 0,
+             "CI だけで走る段はありません", sh=full)
+
         case("その道具を本当に呼んでいれば通る", 0,
              tpl_text=TPL + 'step "段の健全性" "$PY" "$HARNESS/tools/stage_check.py" '
                             '--verify design/verify.sh\n',
@@ -440,8 +457,54 @@ def template_stages(path):
         m = STEP_RX.match(line)
         if not m:
             continue
-        out[m.group(1)] = set(FILE_RX.findall(m.group(2))) - NOT_EVIDENCE
+        out[m.group(1)] = invocations(m.group(2))
     return out
+
+
+#: 呼び出しの長い旗（`--stages` `--style` …）。**同じ道具を共有する段を分ける**のに使う
+FLAG_RX = re.compile(r"(?<![\w-])(--[a-z][a-z0-9-]*)")
+
+
+def invocations(text):
+    """1つの段が呼ぶ「(ファイル名, 旗の集合)」の集合（2026-09-06・#84）。
+
+    **ファイル名だけでは、同じ道具を別の引数で呼ぶ段を区別できません。**
+    実測: FlashEnglish は `verify.sh` で `stage_check.py --stages`、CI で
+    `stage_check.py --verify` を呼んでいます。名前だけで照合すると**片方しか
+    回していなくても両方走っていることになります**（`exporter_check.py` は
+    `--style` / `--samples` / `--pages` / 素の4段で共有）。
+
+    旗はその行に出てくるもの全部を持ち、**どれが段を分けるか**は
+    `distinguishing()` が元ファイルから導きます（一覧を手で書かない）。
+    """
+    flags = frozenset(FLAG_RX.findall(text))
+    return {(n, flags) for n in FILE_RX.findall(text) if n not in NOT_EVIDENCE}
+
+
+def distinguishing(stages):
+    """道具ごとに「段を分ける旗」を**導く**（2026-09-06・#84）。
+
+    その道具を使う段が1つだけなら、分ける旗は要りません（今までどおり名前で照合）。
+    複数あるなら、**段によって有無が変わる旗**だけが識別に効きます。
+    全部の段に共通の旗（`--config` など）は識別に使いません。
+    """
+    by_tool = {}
+    for tools in stages.values():
+        for name, flags in tools:
+            by_tool.setdefault(name, []).append(flags)
+    out = {}
+    for name, sets in by_tool.items():
+        if len(sets) < 2:
+            out[name] = frozenset()
+            continue
+        common = frozenset.intersection(*sets)
+        out[name] = frozenset().union(*sets) - common
+    return out
+
+
+def key_of(name, flags, dist):
+    """照合の鍵。道具名と、**その道具で段を分ける旗**だけを見る。"""
+    return (name, flags & dist.get(name, frozenset()))
 
 
 #: 段の識別に使わない名前。**どの案件も必ず持っている**ので、これで一致しても
@@ -476,11 +539,10 @@ def project_tools(verify_path, ci_dir):
     seen, where = set(), {}
 
     def eat(text, src):
-        for name in FILE_RX.findall(logical_text(text)):
-            if name in NOT_EVIDENCE:
-                continue
-            seen.add(name)
-            where.setdefault(name, src)
+        for line in logical_lines(logical_text(text)):
+            for name, flags in invocations(line):
+                seen.add((name, flags))
+                where.setdefault((name, flags), src)
 
     if verify_path.exists():
         eat(verify_path.read_text(encoding="utf-8"), verify_path.name)
@@ -668,11 +730,13 @@ def matrix(template, projects):
     print(f"段 × 案件（雛形 {len(stages)}段 / 案件 {len(cols)}件）"
           f"  ○=走っている  宣=理由つきで不在  **×**=宣言も無く落ちている")
     print("  " + "段".ljust(width) + " | " + " | ".join(n for n, _, _ in cols))
+    dist = distinguishing(stages)
     nowhere, silent = [], []
     for label, tools in stages.items():
+        want = {key_of(n, f, dist) for n, f in tools}
         marks, ran_any, all_waived = [], False, True
         for _n, have, waived in cols:
-            if tools & have:
+            if want & {key_of(n, f, dist) for n, f in have}:
                 marks.append("○"); ran_any = True; all_waived = False
             elif label in waived:
                 marks.append("宣")
@@ -725,7 +789,8 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
             print(f"段の宣言が読めません: {waivers_path}: {e}", file=sys.stderr)
             return 2
 
-    errs, waived, ran = [], [], []
+    dist = distinguishing(stages)
+    errs, waived, ran, ci_only, mismatched = [], [], [], [], []
     covered = set()          # この案件で実際に測っている関門の条件
     claimed = set()          # 元ファイルが測ると言っている条件
 
@@ -736,8 +801,23 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
             # 走らせるファイルが読めない段（案件固有のコマンド）。
             # **分母から外す**（`flutter test` などは案件ごとに形が違う）
             continue
-        if tools & have:
+        # **走っているかは名前で見る**（今までどおり）。旗は「同じ道具を別の引数で
+        # 呼んでいないか」を**名指しする**のに使う（#84）。旗で落とすと、
+        # `--owns` と `--test-owns` のような正当な別表現で誤検出が出る（実測）
+        names = {n for n, _ in tools}
+        hit = [k for k in have if k[0] in names]
+        want = {key_of(n, f, dist) for n, f in tools}
+        if hit and want and not (want & {key_of(*k, dist) for k in hit}):
+            exp = " / ".join(sorted(x for _, fs in tools for x in (fs & dist.get(_, frozenset()))))
+            got = " / ".join(sorted({x for k in hit for x in (k[1] & dist.get(k[0], frozenset()))}))
+            mismatched.append((label, exp or "（旗なし）", got or "（旗なし）"))
+        if hit:
             ran.append(label)
+            # **手元の verify.sh で走るか、CI だけで走るか。**（2026-09-06・#87）
+            # 手元で verify.sh を回して緑でも、CI が落ちることがある。実際に落とした
+            srcs = {where.get(k) for k in hit}
+            if verify.name not in srcs:
+                ci_only.append((label, " / ".join(sorted(s for s in srcs if s))))
             covered |= conds
             if label in waivers:
                 errs.append(f"  「{label}」は走っているのに、"
@@ -834,6 +914,28 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
               f"（{' / '.join(str(m.get('what')) for m in mitig[:3])}）。")
     print(f"段の数: 元ファイル {len(stages)}段 → この案件 {len(ran)}段{note}。"
           f"関門の条件 {len(live)} 件、すべて測っています。")
+    # **同じ道具を別の引数で呼んでいないか**（2026-09-06・#84）。段の照合は道具の
+    # ファイル名で行うので、`exporter_check.py --style` と `--samples` のように
+    # 1本の道具を共有する段は、**片方しか回していなくても両方走っていることになる**
+    if mismatched:
+        print(f"\n注意: 同じ道具を**別の引数**で呼んでいる段が {len(mismatched)} 件あります。"
+              f"段の照合は道具の名前で行うので、**片方しか回していなくても両方走っている**"
+              f"ことになります（#84）:")
+        for label, exp, got in mismatched:
+            print(f"  - {label}: 元ファイルは `{exp}`、この案件は `{got}`")
+        print("  → 同じ目的の別表現なら問題ありません"
+              "（`--owns` と `--test-owns` など）。違うなら段が抜けています")
+
+    # **手元で緑 ≠ CI で緑**（2026-09-06・#87）。手元は `design/verify.sh` を回すだけなので、
+    # CI だけで走る段はここで初めて落ちる。実際に FlashEnglish の CI を1回赤にした
+    if ci_only:
+        print(f"\n**CI だけで走る段: {len(ci_only)} 件。**"
+              f"手元で `{verify.name}` を回して緑でも、この段はまだ見ていません:")
+        for label, src in ci_only:
+            print(f"  - {label}（{src}）")
+        print(f"  → push する前に、この段も手元で回してください")
+    else:
+        print(f"CI だけで走る段はありません（`{verify.name}` と CI は同じ段を見ています）。")
     return 0
 
 
