@@ -16,22 +16,26 @@
    "2026-09-07 改訂2: 行 378 を追加（書き込む道具には空回しを）。**2026-09-06 に自分で踏んだ実害**が根拠。棚卸しは 2026-09-06 の時点の実態なので、その日以降に分かったことは行として足す",
    "2026-09-07 改訂3: 行 379 を追加（数には測った時点を添える）。**id 61 から判断の半分を分けた**。61 は `env` だが、縛られているのは実体（ホームの履歴に依るパス）で、判断は機体に依らない。Windows が 105 → 203 に分けたのと同じ形",
    "2026-09-07 改訂4: `110` を `5` と分けた。同文だったが、`110` が持っているのは**案件ごとに何が消えて何が落ちるか**（flash=`build/content.db` / aub=`build/web` とカタログの段）。**判断は `5`（`none`）・案件の中身は `110`（`project`）** に寄せた。Windows が `105` → `203` に分けたのと同じ形",
-   "2026-09-07 改訂5: **束ね走査**（`依存=none` かつ確定で未使用の 64行 → 手順に文の切れ目がある 18行を読んだ）。**本当に束ねていた4行を割った**（292・371・224・214 → 380・381・382・383）。残る14行は「主張＋理由」「主張＋例」で束ねではない。Windows の走査（45行→22行→9行）と同じ形"
-  ]
+   "2026-09-07 改訂5: **束ね走査**（`依存=none` かつ確定で未使用の 64行 → 手順に文の切れ目がある 18行を読んだ）。**本当に束ねていた4行を割った**（292・371・224・214 → 380・381・382・383）。残る14行は「主張＋理由」「主張＋例」で束ねではない。Windows の走査（45行→22行→9行）と同じ形",
+   "2026-09-07 改訂6: **`実体` が空だった39行を埋めた**（埋めた 38 / 指せるものが無く空のまま 1）。各行に `$実体の根拠`（出典のどこを見たか）か `$実体が無い理由` を付けた。MacBook Air の依頼——Windows の分類器（記録＝人の判断 / スクリプト＝道具の仕組み）が**iOS では 24% が空で当てられない**という指摘による",
+   "2026-09-07 改訂7: `出典の行番号について` を追加。**8行で行番号が別の内容を指していた**（SKILL.md が今日 515 → 564行）。**行番号は直さず、内容で引き直せる情報を持たせる**方針を明記"
+  ],
+  "出典の行番号について": "**`出典` の行番号は動きます。** 2026-09-06〜07 に `flutter-ios-build-check/SKILL.md` は515 → 564行になり（段3-A で +20、配信前の関門で +18、規約1の復元で +8 ほか）、**8行で出典の行番号が別の内容を指していることが分かりました**（`実体` を埋める作業の反証が見つけた。例: `3` の出典 :286 は現在コマンド行で、同文は :306 にある）。\n\n**照合の正本は行番号ではありません。** `実体` と `$実体の根拠`（出典のどこを見てそう決めたか・引用つき）、および `merge-build` の `スキルの根拠`（文そのもの）で照合します。**#79（変異試験の除外を行番号で宣言していた）と同じ族です。**\n\n**行番号を全部直すことはしません。** 直してもまた動きます。行番号は「そのとき見た場所」の記録として残し、**内容で引き直せる情報を各行に持たせる**方針です"
  },
  "工程一覧": [
   {
    "id": 1,
    "工程": "前提",
    "手順": "2台起動する前に Step 0（前提チェック）を先に回す",
-   "実体": "",
+   "実体": "SKILL.md:271,327",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:251,307",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持（訂正なし）。20行ずれの主張を自分で検証: commit 87b3431（2026-09-06 23:44・+20行のみ）の親を git show したところ 旧251=「足りないまま起動すると描画が壊れます（Step 0 を先に回すこと）。」、旧307=「**空き容量に注意。** 1台あたり 1〜2Gi 使うので、**2台起動する前に Step 0 を回す。**」で出典と一致。現行ファイル（564行）の 271/327 が同じ文。手順「2台起動する前に Step 0 を先に回す」は 327 の文言そのもの。なお 271 は 270 から始まる文の後半（270=「**空きが 10GiB を切っていたら、そこで止まります。** 2台で 2〜4GiB 使うので、」）。出典の 251,307 は現行では別の行を指すので、出典側が古い"
   },
   {
    "id": 2,
@@ -51,14 +55,15 @@
    "id": 3,
    "工程": "前提",
    "手順": "Xcode を上げて両端が変わったときだけ作り直す。毎回調べ直さない",
-   "実体": "",
+   "実体": "SKILL.md:306",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:286",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持（訂正なし）。git show 87b3431^ の 286 行が「**Xcode を上げて両端が変わったときだけ作り直す。** 毎回調べ直さない。」で手順と一致し、現行では 306 行に同文。現行 286 行は `S=$(xcrun simctl create \"確認用-最小-SE2\" ...)` というコマンドで別物なので、行番号をそのまま使うと取り違える"
   },
   {
    "id": 4,
@@ -90,14 +95,15 @@
    "id": 6,
    "工程": "前提",
    "手順": "iOS ビルド確認を依頼されたら、記載の順序どおりに実行し、Step 0 の前提チェックを飛ばさない",
-   "実体": "",
+   "実体": "SKILL.md:13-15",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "ビルドエラーの原因の多くはビルド以前にある。いきなりビルドすると環境問題の切り分けに時間の大半を使う（2026-08-01 FlashEnglish の反省として明記されている）",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:13-15",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持（訂正なし）。現行 13-15 行を実読: 13=「Mac mini で Flutter アプリの iOS ビルド確認を依頼されたら、必ずこの順序で実行する。」14=「2026-08-01 の FlashEnglish iOS 確認で「環境問題の切り分けに時間の大半を使った」反省から、」15=「**Step 0 の前提チェックを飛ばさない**こと。ビルドエラーの原因の多くはビルド以前にある。」。手順・罠の両方がこの3行に収まっている。この範囲は 87b3431 の追加箇所（後方）より前なのでずれていない"
   },
   {
    "id": 7,
@@ -131,27 +137,29 @@
    "id": 9,
    "工程": "前提",
    "手順": "前提チェックは順に確認し、NG があればその場で直してから先へ進む（NG を持ち越さない）",
-   "実体": "",
+   "実体": "SKILL.md:19",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:19",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持（訂正なし）。現行 19 行が「順に確認し、NG があればその場で直してから先へ進む。」で手順と一致。直後の 21-34 行は bash ブロック（df -h / ls && git pull / ls artifacts / export LANG）だが、それらは個々のチェック項目であって「NG を持ち越さない」という縛りは 19 行の文にしかない。コマンドを貼ると手順とずれるので文書:行のままが正しい"
   },
   {
    "id": 10,
    "工程": "前提",
    "手順": "回収先は大きい順に見る（小さいものから消さない）",
-   "実体": "",
+   "実体": "SKILL.md:54",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:54",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持（訂正なし）。現行 54 行が「**回収先は大きい順に見る。** この案件では `iOS DeviceSupport` が最大だった。」。続く 56-60 行は実測サイズの表（iOS DeviceSupport 8.7G 等）で、順序の判断そのものは 54 行にある"
   },
   {
    "id": 11,
@@ -212,7 +220,7 @@
    "id": 15,
    "工程": "前提",
    "手順": "署名が要る操作（実機インストール・TestFlight 配布）は、指示があるまで行わない",
-   "実体": "",
+   "実体": "/Users/k.nishikawa/dev/aub-familywalk/SESSION_LOG.md:4347,7163",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
@@ -220,7 +228,8 @@
    "所要": null,
    "罠": "",
    "出典": "SESSION_LOG.md:4347, SESSION_LOG.md:7163",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "内容は確認できたのでパス指定だけ訂正した（「aub SESSION_LOG.md」→ 絶対パス）。裸の SESSION_LOG.md は4本ある（machine-relay 1715行 / design-harness 186行 / flash-compose 12780行 / aub-familywalk 19319行）ため、行番号だけでは flash-compose とも当たってしまう。実際に flash-compose の 4347 は「音量… iOS の音声セッションを `mixWithOthers` だけから…」、7163 は「ずれる余地がありました）。」で無関係だと確かめた。aub 側 4347=「- 署名が要る操作（TestFlight への配布）は**指示があるまで行いません**」、7163=「- **署名が要る作業（実機・TestFlight）は行っていません。** 指示どおり西川さんに残します」。どちらも引き継ぎ欄の決定文"
   },
   {
    "id": 16,
@@ -1107,7 +1116,8 @@
    "所要": null,
    "罠": "取得工程が無いこと自体が発見。CI から呼ぶと「どのコードを確かめたか」は記録の commit 欄でしか分からない",
    "出典": "私が実行: grep -n -E 'clone|pull|fetch' で3本（skill simulator_check.py 146行 / skill seed_captures.py 92行 / aub-familywalk/scripts/simulator_check.py 155行）→ 一致0件（exit 1）",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体が無い理由": "空のまま維持（訂正なし）。$実体が無い理由: 「取得工程を持たない」という不在の指摘で、指せる行もコマンドも無い。grep -n -E 'clone|pull|fetch' を3本に自分で再実行し、3本とも一致0件（exit 1）を確認した。ただし出典の行数は現状と合わない: skills/.../simulator_check.py は 146行（一致）、aub-familywalk/scripts/simulator_check.py は 155行（一致）だが、skills/.../seed_captures.py は出典の「92行」ではなく現在 155行（HEAD も 155）。結論（0件）は変わらない"
   },
   {
    "id": 81,
@@ -1127,14 +1137,15 @@
    "id": 82,
    "工程": "取得",
    "手順": "リポジトリが無ければ ~/dev にクローンする。git pull ではなくクローンが必要なケースがある",
-   "実体": "",
+   "実体": "SKILL.md:25",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "「クローンが必要なケース」の中身が SKILL.md に書かれていない。どう見分けるかを読み手が判断できないまま置かれている",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:25",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持（訂正なし）。25 行は bash ブロック内のコメント「# 2. リポジトリの存在と最新化（無ければ ~/dev/ にクローン。git pull ではなくクローンが必要なケースがある）」。26 行に実際のコマンド `ls ~/dev/<repo> && (cd ~/dev/<repo> && git pull origin main)` があるが、これは ls と git pull だけでクローンをしない。手順の核（無ければクローンする）に対応するコマンドは存在せず、書かれているのはコメントの文だけなので、26 行のコマンドを実体に入れると手順と食い違う"
   },
   {
    "id": 83,
@@ -1154,7 +1165,7 @@
    "id": 84,
    "工程": "取得",
    "手順": "検査を回す前に `main` に居ることを確かめる",
-   "実体": "machine_scope.py が `git diff --name-only @{u}...HEAD` で担当外変更を数える",
+   "実体": "/Users/k.nishikawa/dev/aub-familywalk/SESSION_LOG.md:4335-4339",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
@@ -1162,7 +1173,8 @@
    "所要": null,
    "罠": "古いブランチに居ると、取り込んだ他マシンの変更が全部「自分の変更」に見え、**1ファイルも触っていないのに担当外 57 件で NG** が出た。main へ移して回し直したら 0 件。ログに「3台とも踏みます」と明記されている",
    "出典": "SESSION_LOG.md:4334-4339",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "訂正した。元の実体「machine_scope.py が `git diff --name-only @{u}...HEAD` で担当外変更を数える」は (a) ファイル:行でもコマンドでもない散文の言い換えで、(b) 現在のコードと食い違う。実コードを開くと aub の design/harness/tools/machine_scope.py:253 は `diff = git(\"diff\", \"--name-only\", f\"{base}...HEAD\")` で、直前 250-252 行のコメントが「**既定ブランチとの差**を見る。以前は @{u}（push した時点のリモートブランチ）と比べていたので、rebase やマージで取り込んだ**他機体のコミット**が自分の変更として数えられ、push が止まった（#49・計5回）」と、@{u} をやめたことを明記している（design-harness/tools/machine_scope.py:272-275・flash-compose 側も同一）。手順「検査を回す前に main に居ることを確かめる」は人が守る確認で、それを縛るコードは無く、書かれているのは出典のログだけ。よって文書:行に置き換えた。実読した内容は 4335=「最初に回したとき **NG（担当外 57 件を変更）** と出ましたが、**1ファイルも変えていません**。」〜 4339=「`main` へ移して回し直したら **0件・OK** でした。**3台とも踏みます。**」。出典と同じ aub-familywalk のログで、flash-compose の同行は Figma のトークン記述で無関係だと確認済み"
   },
   {
    "id": 85,
@@ -1203,7 +1215,8 @@
    "所要": null,
    "罠": "except が裸の Exception なので、PIL が無い場合と画像が壊れている場合が区別できず、どちらも size_pt=null になる",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/scripts/simulator_check.py:118-125",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持（訂正なし）。/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/scripts/simulator_check.py の 118-125 行を実読: 118=`pt = None`、119=`try:`、120=`from PIL import Image`、121=`im = Image.open(shot)`、122=`scale = 3 if \"Max\" in model or \"Pro\" in model else 2`、123=`pt = [im.size[0] // scale, im.size[1] // scale]`、124=`except Exception:`、125=`pass`。遅延 import・裸の except・失敗時 size_pt=null（127-130 行で `\"size_pt\": pt` として書き出し）が実在し、罠の記述とも一致。ファイル全体は 146 行で行番号のずれ無し"
   },
   {
    "id": 88,
@@ -1462,13 +1475,14 @@
    "所要": null,
    "罠": "**`flutter test`（261件）も `flutter analyze` も通るので release ビルドでしか見つからない**。Xcode の無い機体からは原理的に見えない。回避策で通すと Flutter 既定の MaterialIcons-Regular.otf が丸ごと同梱され +1.9MB（1,645,184 bytes → const 化後 1,420 bytes）",
    "出典": "SESSION_LOG.md:8337-8362, SESSION_LOG.md:8128-8145 ／ /Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:465",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持（そのまま）。出典を自分で開いて確認しました。/Users/k.nishikawa/dev/aub-familywalk/SESSION_LOG.md:8346-8348 に「This application cannot tree shake icons fonts.」「It has non-constant instances of IconData at:」「  - lib/theme/tokens/icons.g.dart:46:7」が実在（出典の範囲 8337-8362 の内側）。もう一方の :8129-8145 も「`7ee0536` で**解消しました**」「`flutter build ios --release` が**フラグ無しで通ります**」「`MaterialIcons-Regular.otf` が **1,645,184 → 1,420 bytes**」で案件差・罠を裏づける。/Users/k.nishikawa/dev/flash-compose/SESSION_LOG.md にこのエラー文は 0 件なので、出典のパス無し `SESSION_LOG.md` は aub 側。行 132 の実体（`non-constant instances of IconData` を -v で検索）とは別の文字列で、貼り違いではない。なお出典の SKILL.md:465 は行ずれで、現在の :463-465 は codesign ループ（`done`）です"
   },
   {
    "id": 107,
    "工程": "ビルド",
    "手順": "`Avoid non-constant invocations of IconData` はコード側の実行時 IconData 生成。恒久対応は const 化（担当マシンに依頼）、暫定は --no-tree-shake-icons",
-   "実体": "lib/theme/app_icons.dart",
+   "実体": "エラー文 `Avoid non-constant invocations of IconData`",
    "依存": "none",
    "依存の理由": "",
    "案件差": "差あり",
@@ -1476,7 +1490,8 @@
    "所要": null,
    "罠": "暫定策を常用したまま放置すると、根拠が古くなっても誰も外さない（FlashEnglish で実際にそうなっていた）",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:454",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "差し戻して入れ替えました。(1) 出典 SKILL.md:454 は**現在は空行**（:453 が fonts 宣言の突き合わせ、:455 が「## エラーメッセージの読み替え表」の見出し）。手順と同文は :476「| `Avoid non-constant invocations of IconData` | コード側の実行時 IconData 生成。恒久対応は const 化（担当マシンに依頼）。暫定は `--no-tree-shake-icons` |」。(2) 提案の `lib/theme/app_icons.dart` は**この出典のどこにも無く**、別節 :519-521（FlashEnglish の根拠）から持ってきたもの。(3) さらに **行 171（`project`／`flash`）が `lib/theme/app_icons.dart` を実体として既に持っている**ので、`none`／差ありのこの行に貼ると別の行の実体の貼り付けになる（aub 側の該当ファイルは `lib/theme/tokens/icons.g.dart` で、flash のパスを両案件の行に置くと嘘になる）。代わりに :476 に literal で在る文字列（他行の実体と重複しない）を入れました"
   },
   {
    "id": 108,
@@ -1489,20 +1504,22 @@
    "所要": null,
    "罠": "",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:106",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持（そのまま）。SKILL.md:106「**`flutter clean` は `build/` を丸ごと消す。**」（見出しは :104「### `flutter clean` を打つ前に確かめること（2026-09-02 に踏んだ）」）。出典の行番号 :106 は現在もずれていません。コマンドが出典に literal で書かれているので規約どおりコマンドを入れる形で正しい"
   },
   {
    "id": 109,
    "工程": "ビルド",
    "手順": "flutter clean を打ったあとは、案件の生成物を作り直す",
-   "実体": "",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:119",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:119",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "差し戻して入れ替えました。出典 :119 は「`flutter clean` を打ったあとは、案件の生成物を作り直す。」という**文だけ**で、コマンドは書かれていません。提案の `flutter build web -t lib/catalog/main.dart` は :121（「# aub-familywalk のカタログ」付き）にあり、**行 120（`依存=project`／`案件差=差あり`／手順「aub-familywalk のカタログ（build/web）を作り直す」）が出典 :119-121 でこのコマンドを実体として既に持っています**。この行は `依存=none`／`案件差=両方` の判断側なので、案件固有のコマンドを貼ると 110 と 5 を分けた改訂4と逆行し、行 120 の実体の貼り付けになります。指せるのは文だけなので文書:行にしました"
   },
   {
    "id": 110,
@@ -1516,7 +1533,8 @@
    "所要": null,
    "罠": "消えた生成物のせいで検査が落ちると、**main の不具合と紛らわしい**。**確かめるという判断そのものは `5`**（`none`）にある。2026-09-07 に分けた——`5` と同文だったが、**この行が持っているのは案件ごとの中身**で、同文のまま `none` で置くと**規約の根拠に引いたときにどちらが浮くか分からなくなる**（MacBook Air の指摘）",
    "出典": "/Users/k.nishikawa/dev/flash-compose/SESSION_LOG.md:1297-1302 / /Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:104-110 / /Users/k.nishikawa/dev/aub-familywalk/design/verify.sh:200-203（2026-09-07 に `5` と分けた。判断は `5`・案件の中身はこの行）",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持（そのまま）。/Users/k.nishikawa/dev/flash-compose/SESSION_LOG.md:1300-1302「`flutter clean` ではなく**部分掃除**（`.dart_tool` / `ios/Flutter/ephemeral` / `ios/Pods` / `build/ios` / `build/native_assets`）で直しました。**`build/content.db` を消さずに済みます**」。指定行 :1302 に `build/content.db` が literal で実在。もう一方の出典 SKILL.md:104-110 も行ずれ無しで、:107-108 に aub 側の「`build/web`（カタログ）が消え、`./design/verify.sh` の「カタログの鮮度」と「テスト」が**道連れで落ちた**」があります"
   },
   {
    "id": 111,
@@ -1549,14 +1567,15 @@
    "id": 113,
    "工程": "ビルド",
    "手順": "署名エラーだけを直したいなら、いきなり clean せず、まず部分掃除で足りるか試す",
-   "実体": "",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:111",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:111",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "差し戻して入れ替えました。出典 :111 は「**署名エラーだけを直したいなら、まず部分掃除で足りるか試す。**」という**判断の文だけ**（コマンドは :113-114）。提案の `rm -rf .dart_tool ios/Flutter/ephemeral ios/Pods build/ios` ／ `flutter pub get && flutter build ios --release` は :113-114 に実在しますが、**行 105（`env`、出典 :445・113-116）・行 137（出典 :113-114）・行 111・114・135 が既に同じコマンドを実体として持っています**。この行は `none` の判断側なので、6つ目の写しを作らず、出典が指す文そのものを文書:行で入れました"
   },
   {
    "id": 114,
@@ -1965,7 +1984,8 @@
    "所要": null,
    "罠": "乖離しているのは測る内容ではなく「どこに書くか」と「記録が自分を説明するか」だけ。統合の判断で、ロジックの検証をやり直す必要は無い",
    "出典": "私が python3 で両 JSON の devices から (label, model, size_pt, runtime, alive) を取り出して比較 → 2台とも完全一致（alive はどちらも True）",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持（そのまま）。出典が「私が python3 で両 JSON の devices から比較」で文書を指さないため、実ファイルを開いて再現しました。/Users/k.nishikawa/dev/aub-familywalk/build/simulator-runs.json（865B）と /Users/k.nishikawa/dev/aub-familywalk/design/simulator_runs.json（1566B）の `devices` は、小=iPhone SE (2nd generation) size_pt [375,667]、大=iPhone 17 Pro Max size_pt [440,956]、runtime はどちらも com.apple.CoreSimulator.SimRuntime.iOS-26-4、udid・screenshot・alive:true まで**完全一致**（design 側だけ先頭に `$meta` キーが増える）。手順が書く 3 つの値がすべて一致したので貼り違いではありません。ファイル名は片方がハイフン・片方がアンダースコアですが、実ファイル名どおりです（案件差=aub でスコープが決まるので相対パスのまま維持）"
   },
   {
    "id": 144,
@@ -2031,7 +2051,8 @@
    "所要": null,
    "罠": "「debug だから出ている」と決めつけると、release でも残る",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:383-385 と grep -n \"_errorTextStyle\" /opt/homebrew/share/flutter/packages/flutter/lib/src/material/app.dart（2026-09-06 にこのセッションで再実行。45 / 1082 / 1118 行に実在し、1082・1118 とも debug 判定を伴わずに渡されていることを sed -n で確認）",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持（そのまま）。grep -n \"_errorTextStyle\" を自分で再実行 → 45:「const TextStyle _errorTextStyle = TextStyle(」、1082:「        textStyle: _errorTextStyle,」、1118:「      textStyle: _errorTextStyle,」。前後（1070-1090／1110-1122）を読み、1082 は `WidgetsApp.router(` の引数列、1118 は `WidgetsApp(` の引数列で、**どちらも kDebugMode 等の判定を伴わずに渡されている**ことを確認（手順の「debug 判定なし＝release でも出る」が成立）。出典の SKILL.md:383-385 は行ずれで、該当の散文は現在 :403-405 です"
   },
   {
    "id": 149,
@@ -2121,14 +2142,15 @@
    "id": 155,
    "工程": "検品",
    "手順": "tree-shake が効いているかを「フォントが縮んだか」で判定しない。アプリ本体が使う字が残っているかを見る",
-   "実体": "同梱フォントの cmap を読み、コードポイントの有無を照合する",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:535-538",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "縮むのが正常な動作なので、縮み方を見ても合否が出ない。「23字 → 14字」だけでは判定にならない",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:486-489",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "差し戻して入れ替えました。(1) 出典 SKILL.md:486-489 は行ずれで、現在の :487-490 は「ここに書くと**値が変わっても誰も気づきません**」＝案件の値の置き場の話で無関係。該当の散文は :535-538「**確かめ方（次に疑ったときはこれを回す）**: 同梱フォントの cmap を読み、`app_icons.dart` の const 定数のうち **`lib/catalog/` `lib/preview/` `test/` 以外から参照されるもの**のコードポイントが全部あるかを見ます」。(2) この照合を回すスクリプトは**存在しません**（skills/flutter-ios-build-check/ 配下・両案件の design/ を grep したところ、`cmap` のヒットはすべて component_map／component-map.json の変数名で無関係。残る 1 件 aub design/ios.json:73 は「flash で使った cmap の照合を、この案件にも当てる必要があります」という未確定の記述）。(3) 提案の「同梱フォントの cmap を読み、コードポイントの有無を照合する」は手順の言い換えで、しかも**行 184（`project`／`flash`）がほぼ同文を実体として既に持っています**。指せるのは散文だけなので、規約どおり文書:行にしました"
   },
   {
    "id": 156,
@@ -2840,53 +2862,57 @@
    "id": 208,
    "工程": "仮想機の確認",
    "手順": "1台だけで見ない。端の寸法で崩れるかは両端を並べないと分からない（2026-09-02 西川さん確定）",
-   "実体": "",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:276-280",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:256-260",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "提案の範囲から :281 を外しました。出典 :256-260 は行ずれ（現在の :256 は「**「ビルドが通った」で終わりにしない。2台を立ち上げるところまでが1回分**です。」、:258-260 は `flutter build ios --simulator --debug` と simulator_check.py の呼び出しで、これは別行が持つ内容）。手順と同文は :280「**1台だけで見ない。** 端の寸法で崩れるかは、両端を並べないと分からない。」、確定の原文は :276-278「2026-09-02 ユーザー（原文）:」「> シミュレーターでは一番サイズの小さいデバイスと一番サイズの大きいデバイス、2つで私が目視で確認できる状態にしてほしいです。」。**:281「入っているランタイムで作れる機種の中から両端を選ぶ（機種一覧は Xcode の版で変わる）」は行 74 の手順そのもの**（行 74 は `依存=hardware`、実体は `xcrun simctl list runtimes` 等）なので、範囲に含めると別の行の実体を取り込むことになります。コマンド・スクリプトは指せません（機種の固定は行 231・244 が `WANT = [(\"小\", \"iPhone SE (2nd generation)\"), (\"大\", \"iPhone 17 Pro Max\")]` として既に持っています）"
   },
   {
    "id": 209,
    "工程": "仮想機の確認",
    "手順": "「ビルドが通った」で終わりにしない。最小と最大の2台を立ち上げるところまでが1回分（2026-09-02 / 2026-09-03 西川さん確定）",
-   "実体": "",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:248-256",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:228-236",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "現行 HEAD(87b3431・564行) を開いて実在を確認。248「### **最小と最大の2台を用意する**（2026-09-02 西川さん確定）」／250「**手で並べない。スクリプトで回す**（2026-09-03 西川さん確定）:」／256「**「ビルドが通った」で終わりにしない。2台を立ち上げるところまでが1回分**です。」。出典の :228-236 は 7d0614d(515行) の同一9行で、git show して同文を確認（+20 行ずれ）。コマンド（258-260 の flutter build ios --simulator --debug + simulator_check.py）は既に id 215 の実体になっているので、ここは規約文のまま据え置き。**直したのはパスの明示だけ**（「SKILL.md」だけだと 42 スキルのどれか分からないため）。"
   },
   {
    "id": 210,
    "工程": "仮想機の確認",
    "手順": "「念のため見ておく」をしない。測れないものは測れない",
-   "実体": "",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:222-223",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "2026-09-04、カメラ映像が無いのに四角の位置を測ろうとして、背後の盤を拾って2回やり直した",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:202-203",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "現行 222「**「念のため見ておく」をしません。** 2026-09-04、カメラ映像が無いのに四角の位置を」／223「測ろうとして、背後の盤を拾って2回やり直しました。**測れないものは測れません。**」を実際に開いて確認。出典 :202-203 は 7d0614d の同一2行（git show で同文）。コマンド・スクリプトを指していないので文書:行のまま。**直したのはパスの明示だけ。**"
   },
   {
    "id": 211,
    "工程": "仮想機の確認",
    "手順": "このスクリプトは見た目の合否を判断しない。「入って開いたか」までが仕事で、判断は西川さん",
-   "実体": "",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/scripts/simulator_check.py:11,142 / /Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:273",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:253, /Users/k.nishikawa/.claude/skills/flutter-ios-build-check/scripts/simulator_check.py:11,142",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "**パスを補って直しました。** 前の値は「scripts/simulator_check.py:11,142」と相対で、これは実際に取り違えます。simulator_check.py は2本あり（スキル側146行／aub 側155行）、diff すると 15行目以降がずれています。aub 側の :142 は「\"書く人\": \"Mac mini（scripts/simulator_check.py が書く）\"」で**別物**、目当ての print は aub では :151 でした。スキル側で確認: :11「**見た目の合否は判断しない。**「入って開いたか」までが仕事で、判断は西川さん。」（手順と一字一句同じ）、:142「print(\"**見た目の合否は判断しません。** 2台を並べて西川さんに見ていただいてください。\")」。SKILL.md 側は現行 :273「**このスクリプトは見た目の合否を判断しません。** 「入って開いたか」までが仕事です。」（出典 :253 は 7d0614d の同文）。"
   },
   {
    "id": 212,
@@ -2919,14 +2945,15 @@
    "id": 214,
    "工程": "仮想機の確認",
    "手順": "依頼に書かれた項目だけを見る（「とくに見てほしいところ」が毎回書かれている）",
-   "実体": "",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:207-208",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "（2026-09-07 分割）規約と実測が同じ行に入っていた。**実測の側は数なので時点が要る**（規約23）。 分けた先は id 383",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:187-188",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "現行 207-208「**書かれています。** 依頼には毎回「とくに見てほしいところ」があり、／直近3件で **8項目・4項目・5項目**でした。**そこに書かれたものだけを見ます。**」を確認。出典 :187-188 は 7d0614d の同一2行（git show で同文）。id 383（「8項目・4項目・5項目」の実測側）が同じ2行を出典にしているのは分割の性質上そのままで正しい。**直したのはパスの明示だけ。**"
   },
   {
    "id": 215,
@@ -2973,14 +3000,15 @@
    "id": 218,
    "工程": "仮想機の確認",
    "手順": "正しさは検査に落とし、印象は人に見てもらう",
-   "実体": "",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:400",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:380",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "**399 を削って直しました。** 前の値は 399-400 でしたが、出典は :380（7d0614d）＝現行 :400 の**1行だけ**です。現行 :400 は「**正しさは検査に落とし、印象は人に見てもらう。**」で手順と一致。足されていた 399「**滑る最中のアニメーション（タブ切り替えなど）は撮れない。** 1枚 0.3〜0.5 秒かかるので、」は**別の行（id 258「滑る最中のアニメーション…は撮れない」出典 :379-380）の持ち分**で、貼ると 2行が二重に主張を持ちます。"
   },
   {
    "id": 219,
@@ -3000,7 +3028,7 @@
    "id": 220,
    "工程": "仮想機の確認",
    "手順": "見せるのは2台だけにする。他に立ち上がっているシミュレータは先に全部落とす、という規約",
-   "実体": "simulator_check.py:89-96",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/scripts/simulator_check.py:89-96",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
@@ -3008,13 +3036,14 @@
    "所要": null,
    "罠": "コメントに「2026-09-03 実測: 落とさないと4台並んで見比べにくくなった」とあるが、この実測は私が走らせたものではない",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/scripts/simulator_check.py:89-96",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "中身は正しかったので維持し、**パスだけ補いました。** スキル側 :89-96 を開いて確認: 「# **見せるのは2台だけ。** 他に立ち上がっているものは落とす（2026-09-03 実測: 落とさないと 4 台並んで見比べにくくなった）」＋ booted を UUID で拾って `xcrun simctl shutdown` する for 文。aub 側の写しも :89-96 は同文でしたが、同じファイル名で 15行目以降がずれる2本があるため（id 211 参照）、相対名のままにしません。"
   },
   {
    "id": 221,
    "工程": "仮想機の確認",
    "手順": "見た画面は、依頼に書かれた項目と「変わった画面」だけに絞る",
-   "実体": "scripts/emulator_check.py が出す「見る画面」（前に2台で確かめた commit から HEAD までの実装差分）",
+   "実体": "/Users/k.nishikawa/dev/aub-familywalk/scripts/emulator_check.py:256-300（changed_screens）, :362-373（「見る画面」の出力）",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
@@ -3022,46 +3051,50 @@
    "所要": null,
    "罠": "画面歩きは実測 7分5秒かかっていた（ipa 76秒・simulator 31秒・verify 30秒より長い）。依頼に「ここを見て」と書かれたものは、変わっていなくても見る。画面をまたぐ部品（ボタン・帯・router.dart）が変わったときは、どの画面に出るかは道具では分からない",
    "出典": "SESSION_LOG.md:392-404, SESSION_LOG.md:263",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "**散文をやめて、開けるポインタに直しました。** (1) 前の値「scripts/emulator_check.py が出す『見る画面』（前に2台で確かめた commit から HEAD までの実装差分）」は**出典の範囲に書かれていません**。出典は SESSION_LOG.md:392-404 ですが、その文があるのは :384-386「**`scripts/emulator_check.py` が最後に「見る画面」を出すようにしました。** 基準は `design/emulator_runs.json` の `commit`（**前に2台で確かめた版**）で、そこから HEAD までに変わった実装ファイルだけを画面名に訳します。」で、**範囲の外**でした。(2) 代わりに実体そのものを開いて確認: emulator_check.py:256「def changed_screens()」、:268-269「基準は `design/emulator_runs.json` の `commit`（**前に2台で確かめた版**）。」、:281-282「git diff --name-only {base}..HEAD -- lib/ android/ assets/」、:362-373 が「**見る画面**」を print し :373「**全部の画面を歩かないこと。** 2026-09-04 西川さん指示」。(3) 出典 :392-404 自体は手順（依頼の項目＋変わった画面だけ）を :397-401 で支えており、罠の数も :382「**画面歩き** | **7 分 5 秒**」・:263「verify 30 秒 / simulator ビルド 31 秒 / ipa 76 秒」で一致。(4) 案件差の「iOS 側は未整備」も確認済み（aub の simulator_check.py に「見る画面」は 0 件）。"
   },
   {
    "id": 222,
    "工程": "仮想機の確認",
    "手順": "見るかどうかの決め方: シミュレータで原理的に見えないものは最初から見に行かず、すぐ配信して実機に渡す",
-   "実体": "",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:219",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:199",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "現行 219「| **シミュレータで原理的に見えない**（カメラ映像・ダークアイコン・実機の触感） | **最初から見に行かない。** すぐ配信して実機に渡す |」を確認。出典 :199 は 7d0614d の同一行（git show で同文）。表の中の規約でコマンドは無いので文書:行。**直したのはパスの明示だけ。**"
   },
   {
    "id": 223,
    "工程": "仮想機の確認",
    "手順": "見るかどうかの決め方: 依頼に書かれていない項目は見ない。自分で足さない",
-   "実体": "",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:217",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:197",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "現行 217「| **依頼に書かれていない** | **見ない。** 自分で足さない |」を確認。出典 :197 は 7d0614d の同一行（git show で同文）。同じ表の隣の行（218「試験が段にしている」）は id 225 が実体「flutter test」で持っており、取り違えていない。**直したのはパスの明示だけ。**"
   },
   {
    "id": 224,
    "工程": "仮想機の確認",
    "手順": "数字でしか分からないもの（はみ出し・重なり・間隔）は画素で実測する",
-   "実体": "",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:220",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "（2026-09-07 分割）「実測する」と「例外として足してよい」は**別の主張**。後者は規約4の例外なので、混ざっていると規約4を引くときに邪魔になる。 分けた先は id 382",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:200",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "現行 220「| **数字でしか分からない**（はみ出し・重なり・間隔） | 画素で実測する。**これは足してよい** |」を確認。出典 :200 は 7d0614d の同一行（git show で同文）。同じ行の「これは足してよい」側は id 382 が同じ :200 を出典に持つので、分割どおりで重複ではない。SKILL.md 内に「画素で実測する」コマンドは この行には無い（撮影ループは :367-369＝id 204 の持ち分）ので、コマンドではなく文書:行。**直したのはパスの明示だけ。**"
   },
   {
    "id": 225,
@@ -3074,7 +3107,8 @@
    "所要": null,
    "罠": "",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:198",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持（内容は確認、ただし出典の行番号は無効）。出典 SKILL.md:198 の現在の中身は「| **マージの競合ループ** | **約5〜7分** |」で `flutter test` は無い。当該の表行は現行 218 行「| **試験（`flutter test`）が段にしている** | **画面で見ない。** 試験の結果を数で報告する |」。同じ表の兄弟行（223=:197→217 / 222=:199→219 / 224・382=:200→220）が全部 +20 でそろうので、commit 87b3431 等による +20 のずれと確定。コマンド `flutter test` は 218 行に原文で書かれているので実体として成立し、変更しない。"
   },
   {
    "id": 226,
@@ -3087,7 +3121,8 @@
    "所要": null,
    "罠": "SKILL.md は3ファイルしか挙げていないが、実際には test/design/camera_geometry_test.dart もある。手順の一覧が実装に追いついていない",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:205-210 と find /Users/k.nishikawa/dev/aub-familywalk -name 'camera*_test.dart' -not -path '*/build/*'（2026-09-06 にこのセッションで再実行。test/design/ 配下に4件）",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持。ls /Users/k.nishikawa/dev/aub-familywalk/test/design/ で camera_preview_test.dart・camera_permission_test.dart・camera_layout_test.dart の3本とも実在（camera_geometry_test.dart も実在し、罠の記述どおり）。出典 SKILL.md:205-210 は現行 227-228 行「ビルド10 のカメラの直しには `camera_preview_test.dart`（14件）・」「`camera_permission_test.dart`（7件）・`camera_layout_test.dart`（2件）が付いていました。」（+22）。**先の主体が言う「現行 227-229」は誤り**で、229 行は「**幾何と関門は試験が見ています。**」でファイル名は含まない。実体そのものは正しいので文字列は変えず、根拠の行範囲だけ訂正した。"
   },
   {
    "id": 227,
@@ -3983,7 +4018,8 @@
    "所要": null,
    "罠": "（2026-09-07 分割）main 直 push の可否と `--no-verify` の禁止は**別の主張**。束ねると、片方だけ引いたときにもう片方が浮く。 分けた先は id 380",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:498-499 / /Users/k.nishikawa/.claude/memory/feedback_mac_no_main_push_hook.md（実在を確認）",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持。/Users/k.nishikawa/.claude/memory/feedback_mac_no_main_push_hook.md:16 に「**How to apply:** どのマシンからも `git push origin main` でよい。」とコマンドが原文で書かれているのを確認。SKILL.md 側は出典 :498-499 が現行 547-548 行（+49）で「- **main へ直接 push してよい**（2026-09-05 ユーザー確定。それまでの「Mac は main 直 push をしない」は廃止）。」「`--no-verify` は引き続き禁止で、pre-push の `design/verify.sh` が通ることが条件。」＝散文のみ。なお **id 380（`--no-verify` は禁止）にも同じ `git push origin main` が入っており実体が重複している**。292 の手順（main へ直 push してよい）にこそ適合するコマンドなので 292 側を維持し、380 の重複は別途要検討（下の memo）。"
   },
   {
    "id": 293,
@@ -4011,7 +4047,8 @@
    "所要": null,
    "罠": "配布と2台確認が同じコミット c11a91c に同居しているので、履歴を追うと1つの作業に見えるが、道具としては分かれている（c11a91c では IOS_DISTRIBUTION.md は新規ではなく 16 行の書き換え）",
    "出典": "私が実行: git show --stat c11a91c → scripts/simulator_check.py（+155 新規）と docs/IOS_DISTRIBUTION.md（16 行変更）が同一コミット。ls -la docs/IOS_DISTRIBUTION.md → 2834 バイト（9/4 23:06）で実在",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持。ls で実在を確認（2834 バイト・9/4 23:06）。冒頭を開くと 1 行「# iOS の配り方（作る人向け）」、5-9 行「## 配り方 / **TestFlight の公開リンク**を配ります。/ https://testflight.apple.com/join/zN9nprq3」で、配布手順を実際に持つ別文書であることを確認した。手順「配布は別の手順書が持つ」の指し先として一致する。"
   },
   {
    "id": 295,
@@ -4424,7 +4461,8 @@
    "所要": null,
    "罠": "",
    "出典": "私が python3 で両 JSON のキーを比較 → /Users/k.nishikawa/dev/aub-familywalk/design/simulator_runs.json は ['$meta','at','commit','bundle','devices']、同 build/simulator-runs.json は ['at','commit','bundle','devices']。コード行は aub 側 :137-146",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "維持。/Users/k.nishikawa/dev/aub-familywalk/scripts/simulator_check.py:137「out.write_text(json.dumps({」→ 138「\"$meta\": {」→ 139-145 に unit / なぜ要るか（140-141 の2行）/ 書く人 / 画像 / 決めた人 / size_pt の6項目 → 146「},」。行番号・項目数とも一致。対比のスキル側 /Users/k.nishikawa/.claude/skills/flutter-ios-build-check/scripts/simulator_check.py:137-140 は at/commit/bundle/devices のみで $meta が無いことも確認（案件差の中身も正しい）。**同名ファイルが2本あるため、実体が案件側であることを示す `aub-familywalk/` 接頭辞は残すべき**なのでそのまま維持。"
   },
   {
    "id": 325,
@@ -4843,14 +4881,15 @@
    "id": 355,
    "工程": "報告",
    "手順": "clean 直後に verify.sh が赤くなっても、main の不具合として報告しない",
-   "実体": "",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:108-109",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "落ち方が main の不具合と紛らわしい",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:109",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "**範囲を 106-109 → 108-109 に狭めて訂正。** 出典 :109 は現行でもずれ無しで「`main` の不具合と紛らわしいので注意する。」を指す。手順「clean 直後に verify.sh が赤くなっても main の不具合として報告しない」に対応する文は 108「`./design/verify.sh` の「カタログの鮮度」と「テスト」が**道連れで落ちた**。」と 109 の2行。**106 を含めると id 5 の出典（SKILL.md:104-106「flutter clean を打つ前に build/ を確かめる」）を食う**ので外した（別の行の実体を貼らない）。コマンド・スクリプトは存在せず書かれた注意書きだけなので文書:行が妥当。"
   },
   {
    "id": 356,
@@ -5044,7 +5083,7 @@
    "id": 370,
    "工程": "報告",
    "手順": "見た目の合否はこの道具では判断しない。「入って開いたか」までが仕事で、判断は人がする、と最後に明示して終わる",
-   "実体": "simulator_check.py:11-12（docstring）, :142（出力）",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/scripts/simulator_check.py:11, :142",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
@@ -5052,20 +5091,22 @@
    "所要": null,
    "罠": "",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/scripts/simulator_check.py:11-12, :142",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "**2点訂正。(1) `11-12` → `11`**: 11 行に「**見た目の合否は判断しない。**「入って開いたか」までが仕事で、判断は西川さん。」が全部入っており、**12 行は空行**（docstring 内の区切り）。(2) **ファイル名を絶対パスに**: 同名の /Users/k.nishikawa/dev/aub-familywalk/scripts/simulator_check.py が実在し、そちらの :142 は「\"書く人\": \"Mac mini（scripts/simulator_check.py が書く）\"」で別物。裸の `simulator_check.py:142` は取り違えを招く（id 324 が案件側の同名ファイルを指しているため現に紛らわしい）。スキル側 :142 は「print(\"**見た目の合否は判断しません。** 2台を並べて西川さんに見ていただいてください。\")」で出典どおり。"
   },
   {
    "id": 371,
    "工程": "報告",
    "手順": "見た結果は「依頼の項目 → 結果」の対応表にする",
-   "実体": "",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:554",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "（2026-09-07 分割）「表にする」と「全部答える」は**別の主張**。1回目の反証がまさにここを指摘して落としている。 分けた先は id 381",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:503-506",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "**554 の1行だけに訂正（557-561 と 555 を削除）。** 出典 :503-506 は現行 552-555（+49、552=「### 見た結果の書き方（2026-09-04 西川さん確定を受けて）」で照合）。手順「見た結果は対応表にする」に対応する文は 554「**「依頼の項目 → 結果」の対応表にします。** 項目を増やさない代わりに、」のみ。**555「**書かれた項目には全部答えます。**」は 371 から分割された id 381 の中身**、**557-561 の表の各行は id 368（旧:510→現559）・id 359（旧:512→現561）の出典**にあたるので、含めると別行の実体を貼ることになる。"
   },
   {
    "id": 372,
@@ -5220,14 +5261,15 @@
    "id": 383,
    "工程": "報告",
    "手順": "**依頼の項目数は毎回違う**（直近3件で 8項目・4項目・5項目）",
-   "実体": "",
+   "実体": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:208",
    "依存": "none",
    "依存の理由": "",
    "案件差": "両方",
    "所要": null,
    "罠": "**実測であって規約ではない。** 数なので**時点が要る**（規約23）。この数は 2026-09-06 時点。（2026-09-07 に id 214 から分けた）",
    "出典": "/Users/k.nishikawa/.claude/skills/flutter-ios-build-check/SKILL.md:187-188",
-   "検証状態": "read"
+   "検証状態": "read",
+   "$実体の根拠": "**207-208 → 208 に訂正。** 出典 :187-188 の現在の中身は所要時間の実測表（「2026-09-04、「8〜10分」と答えて実際は **29分**でした」等）で無関係。当該文は +20 ずれて現行 208 行「直近3件で **8項目・4項目・5項目**でした。**そこに書かれたものだけを見ます。**」。**207「**書かれています。** 依頼には毎回「とくに見てほしいところ」があり、」は、383 の分割元である id 214（依頼に書かれた項目だけを見る）の中身**なので外した。数を出す集計スクリプトや出力ファイルは存在せず、この散文にしか無いことを grep -n \"8項目\" SKILL.md で確認（ヒットは 208 の1件のみ）。"
   }
  ]
 }
