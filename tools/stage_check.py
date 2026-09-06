@@ -642,12 +642,14 @@ def matrix(template, projects):
               file=sys.stderr)
         return 2
 
-    cols, missing = [], []
+    # 名前は `missing` にしない。**溜めた指摘の一覧ではなく「測れなかった場所」**で、
+    # 見てから帰るわけではない（swallow_check がその名前を指摘の一覧として見る）
+    cols, unmeasurable = [], []
     for d in projects:
         d = Path(d).expanduser()
         verify = d / "design" / "verify.sh"
         if not verify.exists():
-            missing.append(str(d))
+            unmeasurable.append(str(d))
             continue
         have, _ = project_tools(verify, d / ".github" / "workflows")
         try:
@@ -656,7 +658,7 @@ def matrix(template, projects):
         except (OSError, json.JSONDecodeError):
             waived = set()
         cols.append((d.name, have, waived))
-    for m in missing:
+    for m in unmeasurable:
         print(f"注意: {m} に design/verify.sh がありません（測れないので列に出しません）")
     if not cols:
         print("測れる案件が1つもありません。**空振りです。**", file=sys.stderr)
