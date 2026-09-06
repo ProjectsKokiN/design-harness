@@ -135,7 +135,11 @@ def impl_files(map_path, base):
                 continue
             if re.search(r"\bclass\s+" + re.escape(n) + r"\b", text):
                 out[n] = f
-    return out
+    # **見つからなかった部品を黙って捨てない**（2026-09-06・#82）。
+    # 対応表のクラス名を改名すると、その部品は分母から静かに抜け、出力は件数が
+    # 減るだけで exit 0 のまま。`impl_coverage_check` には分母の宣言があるのに
+    # こちらには無く、同じ処方が片側にしか当たっていなかった
+    return out, sorted(names - set(out))
 
 
 def main(argv=None):
@@ -168,7 +172,7 @@ def main(argv=None):
         print(f"実装か対応表がありません: {lib} / {mp}", file=sys.stderr)
         return 2
 
-    comps = impl_files(mp, lib)
+    comps, lost = impl_files(mp, lib)
     if not comps:
         print(f"対応表の部品が実装に1つも見つかりません: {mp}\n"
               f"  **0件は「重複なし」ではなく「見ていない」です。**",
@@ -215,6 +219,22 @@ def main(argv=None):
         if len(pairs) > 15:
             print(f"  …ほか {len(pairs) - 15} 件", file=sys.stderr)
         return 1
+    exp_comps = conf.get("expectedComponents")
+    if isinstance(exp_comps, int) and len(comps) < exp_comps:
+        print(f"部品が {len(comps)} 件で、宣言（expectedComponents: {exp_comps}）を"
+              f"下回りました。\n"
+              f"  **分母が黙って縮んでいます**（対応表のクラス名を改名すると、その部品は"
+              f"静かに抜けます）。\n"
+              f"  意図した減少なら {args.config.name} の expectedComponents を"
+              f"下げてください（差分が git に残ります）。", file=sys.stderr)
+        return 1
+    if isinstance(exp_comps, int) and len(comps) > exp_comps:
+        print(f"注意: 部品が {len(comps)} 件に増えました。"
+              f"{args.config.name} の expectedComponents（{exp_comps}）を上げてください。")
+    if lost:
+        print(f"注意: 対応表にあるのに実装が見つからない部品が {len(lost)} 件あります"
+              f"（分母から抜けています）: " + " / ".join(lost[:8])
+              + ("…" if len(lost) > 8 else ""))
     print(f"実装の中の重複: 0 件（部品 {len(comps)} 件）")
     return 0
 
@@ -299,6 +319,36 @@ def self_test():
         print("self-test NG: 同じトークンの連続を印にした"); ok = False
     if not token_runs("AppSpacing.m AppText.body AppRadius.s AppSpacing.l", 4):
         print("self-test NG: 3種類以上の並びを印にしていない"); ok = False
+
+    # ─── #82: 分母のラチェットと、見つからない部品 ─────────────────
+    with tempfile.TemporaryDirectory() as td2:
+        r2 = Path(td2)
+        (r2 / "lib").mkdir(); (r2 / "design").mkdir()
+        (r2 / "lib" / "a.dart").write_text("class AppHeader {}\n", encoding="utf-8")
+        m2 = r2 / "design" / "component-map.json"
+        c2 = r2 / "design" / "impl-duplication.json"
+        m2.write_text(json.dumps({"components": [
+            {"figma": "Header", "impl": ["AppHeader"]},
+            {"figma": "Gone", "impl": ["ClassThatWasRenamed"]}]}), encoding="utf-8")
+
+        def run2(conf):
+            c2.write_text(json.dumps(conf, ensure_ascii=False), encoding="utf-8")
+            b2 = io.StringIO()
+            with contextlib.redirect_stdout(b2), contextlib.redirect_stderr(b2):
+                rc = main(["--config", str(c2), "--root", str(r2)])
+            return rc, b2.getvalue()
+
+        base = {"map": "design/component-map.json", "lib": "lib"}
+        rc, out = run2(base)
+        if rc != 0 or "実装が見つからない部品が 1 件" not in out:
+            print(f"self-test NG: **見つからない部品を黙って捨てた**（{rc}）\n   {out[:250]}")
+            ok = False
+        rc, out = run2(dict(base, expectedComponents=1))
+        if rc != 0:
+            print(f"self-test NG: 宣言どおりの分母で落ちた（{rc}）"); ok = False
+        rc, out = run2(dict(base, expectedComponents=2))
+        if rc != 1 or "分母が黙って縮んでいます" not in out:
+            print(f"self-test NG: **分母が宣言を下回ったのに落ちなかった**（{rc}）"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1

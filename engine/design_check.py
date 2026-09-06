@@ -575,6 +575,13 @@ def fail_config(rules_path):
     return 2
 
 
+#: ラチェットの宣言と実測のずれを、どこまで注意で許すか（2026-09-06・#82）。
+#: **増えた側を放置すると、その差ぶんは黙って減っても捕まりません**（減少検知の
+#: 有効幅が、宣言を上げ忘れた分だけ静かに削れる）。少しの増加は日常なので注意にとどめ、
+#: 離れたら落とす。**0 にすると部品を1つ足すたびに宣言の更新が要る**ので、幅を持たせた
+RATCHET_SLACK = 5
+
+
 def ratchet(config, scanned=None):
     """宣言（expected_rules / expected_targets）を下回っていないかを見る。
 
@@ -609,11 +616,26 @@ def ratchet(config, scanned=None):
                         f"  意図した減少なら rules.json の expected_rules を"
                         f"下げてください（差分が git に残ります）。")
         elif n > exp_rules:
-            warns.append(f"デザインハーネス注意: ルールが {n} 件に増えています。"
-                         f"rules.json の expected_rules（{exp_rules}）を"
-                         f"上げてください。")
+            # **増えた側も見る**（2026-09-06・#82）。宣言が実測より低いまま放置されると、
+            # その差ぶんは黙って減っても捕まらない（減少検知の有効幅が静かに削れる）
+            gap = n - exp_rules
+            msg = (f"ルールが {n} 件に増えています。"
+                   f"rules.json の expected_rules（{exp_rules}）を上げてください。")
+            if gap > RATCHET_SLACK:
+                errs.append(f"デザインハーネス: {msg}\n"
+                              f"  **宣言と実測が {gap} 件離れています**"
+                              f"（許すのは {RATCHET_SLACK} 件まで）。"
+                              f"その差ぶんは黙って減っても捕まりません。")
+            else:
+                warns.append(f"デザインハーネス注意: {msg}")
 
     expected = config.get("expected_targets")
+    if not isinstance(expected, int):
+        # **宣言が無いのは床が無いのと同じ**（2026-09-06・#82）。走査対象が静かに
+        # 減っても捕まりません。落とすと既存の案件が止まるので、まず名指しします
+        warns.append(f"デザインハーネス注意: rules.json に expected_targets がありません"
+                     f"（いま {scanned} 件）。**床が無いので、走査対象が静かに減っても"
+                     f"捕まりません。** いまの値を書いてください")
     if isinstance(expected, int) and scanned is not None:
         if scanned < expected:
             errs.append(f"デザインハーネス異常: 中身を読んだファイルが {scanned} 件で、"
@@ -623,9 +645,16 @@ def ratchet(config, scanned=None):
                         f"  意図した減少なら rules.json の expected_targets を"
                         f"下げてください（差分が git に残ります）。")
         elif scanned > expected:
-            warns.append(f"デザインハーネス注意: 対象が {scanned} 件に増えています。"
-                         f"rules.json の expected_targets（{expected}）を"
-                         f"上げてください。")
+            gap = scanned - expected
+            msg = (f"対象が {scanned} 件に増えています。"
+                   f"rules.json の expected_targets（{expected}）を上げてください。")
+            if gap > RATCHET_SLACK:
+                errs.append(f"デザインハーネス: {msg}\n"
+                              f"  **宣言と実測が {gap} 件離れています**"
+                              f"（許すのは {RATCHET_SLACK} 件まで）。"
+                              f"その差ぶんは黙って減っても捕まりません。")
+            else:
+                warns.append(f"デザインハーネス注意: {msg}")
     return errs, warns
 
 
