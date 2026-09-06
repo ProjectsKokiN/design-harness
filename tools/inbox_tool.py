@@ -66,6 +66,9 @@ TARGET_RX = re.compile(r"^対象の commit: (\w+)@([0-9a-f]{7,40})", re.M)
 #: 横断の受信箱の書式（2026-09-06・#88）。`対象: <リポジトリ名>@<sha>`
 #: 案件の受信箱は「いま居るリポジトリ」の話なので上の形。横断の受信箱は**別のリポジトリ**の話
 CROSS_RX = re.compile(r"^対象: ([A-Za-z0-9._-]+)@([0-9a-f]{7,40})", re.M)
+#: **横断の受信箱かどうかは、受信箱自身の書式の説明から導く**（2026-09-07・#89）。
+#: ファイル名やパスで決め打ちにすると、置き場が増えたときに黙って案件の書式に戻ります
+CROSS_DOC_RX = re.compile(r"^\s*対象: <リポジトリ名>@<sha>\s*$", re.M)
 #: 対象のリポジトリを探す場所
 REPO_HOME = Path.home() / "dev"        # reachability-ok: ~/.claude ではなく開発の置き場
 
@@ -81,6 +84,15 @@ def find_repo(name):
         if (d / ".git").exists():
             return d
     return None
+def is_cross(text):
+    """横断の受信箱か。**宣言（ファイル名・パス）ではなく、受信箱が自分で説明している書式から導く。**
+
+    machine-relay の `MACHINE_TASKS.md` は冒頭で `対象: <リポジトリ名>@<sha>` を要求しています。
+    案件の受信箱（flash-compose / aub-familywalk）にはこの説明がありません。
+    """
+    return CROSS_DOC_RX.search(text) is not None
+
+
 ARCHIVE_TITLE = "# マシン間の申し送り（完了ぶんの保管）"
 
 
@@ -104,26 +116,49 @@ def index_line(date, to, title):
     return f"- {date} 宛先: {to} — **{title}**（**着手できます**）\n"
 
 
-def do_add(path, root, to, title, body, date, with_target):
+def do_add(path, root, to, title, body, date, with_target, target_repo=None):
     text = path.read_text(encoding="utf-8")
     idx = INDEX_HEAD_RX.search(text)
     if not idx:
         print(f"{path.name} に「{INDEX_HEAD}」の節がありません。**索引が無いと受け取る側が探せません。**"
               f"（受信箱が削られた形。git で戻してください）", file=sys.stderr)
         return 1
+    cross = is_cross(text)
+    if cross and target_repo is None and with_target:
+        # **黙って案件の書式を書かない。** 案件の書式（`対象の commit: main@<sha>`）は
+        # --check-target が「いま居るリポジトリ」と比べるので、**横断の受信箱では
+        # 受信箱自身の sha を見て通ります**（#71 と同じ穴。2026-09-07 に実際に踏んだ）
+        print(f"{path.name} は**横断の受信箱**です（冒頭が `対象: <リポジトリ名>@<sha>` を要求）。\n"
+              f"  どのリポジトリの話か道具には分かりません。`--target-repo <リポジトリ名>` を付けてください。\n"
+              f"  例: --target-repo design-harness\n"
+              f"  対象を書かないなら --no-target です（**--check-target は対象なしを数えません**）",
+              file=sys.stderr)
+        return 2
     target = ""
     if with_target:
-        rc, sha = git(root, "rev-parse", "--short=12", "origin/main")
-        branch = "main"
-        if rc != 0:
-            rc, sha = git(root, "rev-parse", "--short=12", "HEAD")
-            branch = "HEAD"
-        if rc != 0:
-            print("対象の commit が取れません（git リポジトリではない？）。--no-target で書けます",
-                  file=sys.stderr)
-            return 2
-        target = (f"対象の commit: {branch}@{sha}（この依頼を書いたときの {branch}。"
-                  f"取り込んだ main がこれより**古ければ、先に取り込む**。新しければそのまま進む）\n\n")
+        if cross:
+            where = find_repo(target_repo)
+            if where is None:
+                print(f"対象のリポジトリ `{target_repo}` が {REPO_HOME}/ にも {Path.home()}/ にも"
+                      f"ありません。**sha を確かめられないので書きません**", file=sys.stderr)
+                return 2
+            rc, sha = git(where, "rev-parse", "--short=7", "HEAD")
+            if rc != 0:
+                print(f"`{target_repo}` の HEAD が取れません", file=sys.stderr)
+                return 2
+            target = f"対象: {target_repo}@{sha}\n\n"
+        else:
+            rc, sha = git(root, "rev-parse", "--short=12", "origin/main")
+            branch = "main"
+            if rc != 0:
+                rc, sha = git(root, "rev-parse", "--short=12", "HEAD")
+                branch = "HEAD"
+            if rc != 0:
+                print("対象の commit が取れません（git リポジトリではない？）。--no-target で書けます",
+                      file=sys.stderr)
+                return 2
+            target = (f"対象の commit: {branch}@{sha}（この依頼を書いたときの {branch}。"
+                      f"取り込んだ main がこれより**古ければ、先に取り込む**。新しければそのまま進む）\n\n")
     head = f"## {date} 宛先: {to} [未対応] — {title}\n\n"
     section = head + target + body.rstrip("\n") + "\n\n"
     secs = sections(text)
@@ -187,6 +222,7 @@ def do_check_target(path, root, require_for):
         print("未対応の依頼はありません（対象の commit を確かめるものが無い）")
         return 0
     req = re.compile(require_for) if require_for else None
+    crossing = is_cross(text)
     errs, warns, seen = [], [], 0
     for s, e, date, to, _, title in secs:
         body = text[s:e]
@@ -196,6 +232,15 @@ def do_check_target(path, root, require_for):
             if req and req.search(title):
                 errs.append(f"  {date} 宛先: {to} — {title}: **ビルドの依頼に対象の commit がありません。**"
                             f"受け取った機体は「いまの main」で作るしかなく、古い版を配ります（#71）")
+            continue
+        if crossing and m and not cross:
+            # **案件の書式は、横断の受信箱では確かめられない。** `main@<sha>` の `main` は
+            # リポジトリ名ではなく、下の else 側は「いま居るリポジトリ」と比べます。
+            # つまり **受信箱自身の sha を見て黙って通ります**（#71 と同じ穴・#89）
+            errs.append(f"  {date} 宛先: {to} — {title}: **横断の受信箱に案件の書式"
+                        f"（`対象の commit: ...`）が書かれています。** ここの決まりは "
+                        f"`対象: <リポジトリ名>@<sha>` です。このままだと"
+                        f"**受信箱自身の sha と比べて黙って通ります**")
             continue
         seen += 1
         if cross:
@@ -243,6 +288,8 @@ def main(argv=None):
     ap.add_argument("--body", type=Path, help="本文のファイル（Markdown）")
     ap.add_argument("--date", default=datetime.date.today().isoformat())
     ap.add_argument("--no-target", action="store_true", help="対象の commit を書かない")
+    ap.add_argument("--target-repo", metavar="リポジトリ名",
+                    help="横断の受信箱で `対象: <リポジトリ名>@<sha>` に書く対象（例: design-harness）")
     ap.add_argument("--complete", metavar="要件の一部", help="節を [完了] にしてアーカイブへ移す")
     ap.add_argument("--check-target", action="store_true", help="HEAD が依頼の対象より古くないか")
     ap.add_argument("--require-for", metavar="正規表現",
@@ -262,7 +309,8 @@ def main(argv=None):
             print(f"本文のファイルがありません: {args.body}", file=sys.stderr)
             return 2
         return do_add(args.file, args.root, args.to, args.title,
-                      args.body.read_text(encoding="utf-8"), args.date, not args.no_target)
+                      args.body.read_text(encoding="utf-8"), args.date, not args.no_target,
+                      args.target_repo)
     if args.complete:
         return do_complete(args.file, args.archive, args.complete)
     if args.check_target:
@@ -426,6 +474,68 @@ def self_test():
                 rc = main(X + ["--check-target"])
             check(rc == 0 and "取り込んでいない" in b5.getvalue(),
                   f"手元に無い対象を注意にしていない（{rc}）")
+        finally:
+            REPO_HOME = keep_home
+
+        # ─── 横断の受信箱を**導く**（#89）: `--add` が案件の書式を書かないこと ─────
+        # 2026-09-07 に実際に踏んだ。`--add` は横断の受信箱でも `対象の commit: main@<sha>`
+        # を書き、`--check-target` はそれを**受信箱自身の sha と比べて黙って通していた**
+        CROSS_DOC = ("# 横断の受信箱\n\n## 見出しの書式\n\n"
+                     "    ## YYYY-MM-DD 宛先: <宛先> [未対応|完了] — 要件\n"
+                     "    対象: <リポジトリ名>@<sha>\n\n")
+        xbox = root / "xbox.md"
+        Y = ["--file", str(xbox), "--root", str(root)]
+
+        def yrun(*a):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                rc = main(Y + list(a))
+            return rc, buf.getvalue()
+
+        # 書式の説明から導く。案件の受信箱（説明が無い）は False のまま
+        check(is_cross(CROSS_DOC) is True, "横断の受信箱を横断と見なせない")
+        check(is_cross(inbox.read_text(encoding="utf-8")) is False, "**案件の受信箱を横断と誤判定した**")
+
+        # 仕込み: 横断の受信箱に案件の書式を置く → 落ちる（直す前は 0 で通った）
+        xbox.write_text(CROSS_DOC + f"{INDEX_HEAD}\n\n"
+                        f"## 2026-09-06 宛先: Windows [未対応] — 案件の書式が混ざった依頼\n\n"
+                        f"対象の commit: main@{new}\n\n本文\n", encoding="utf-8")
+        rc, out = yrun("--check-target")
+        check(rc == 1 and "横断の受信箱に案件の書式" in out,
+              f"**横断の受信箱で案件の書式を通した（{rc}）**\n   {out[:250]}")
+
+        # --add: 対象のリポジトリを言わなければ書かない（黙って案件の書式にしない）
+        xbox.write_text(CROSS_DOC + f"{INDEX_HEAD}\n\n", encoding="utf-8")
+        rc, out = yrun("--add", "--to", "Windows", "--title", "x", "--body", str(body2),
+                       "--date", "2026-09-06")
+        check(rc == 2 and "--target-repo" in out,
+              f"**横断の受信箱で対象なしのまま足した（{rc}）**\n   {out[:250]}")
+        check("対象の commit:" not in xbox.read_text(encoding="utf-8"), "**案件の書式を書いてしまった**")
+
+        # --add: 手元に無いリポジトリ名は書かない（sha を確かめられない）
+        rc, out = yrun("--add", "--to", "Windows", "--title", "x", "--body", str(body2),
+                       "--date", "2026-09-06", "--target-repo", "no-such-repo-anywhere")
+        check(rc == 2 and "確かめられないので書きません" in out,
+              f"無いリポジトリの対象を書いた（{rc}）\n   {out[:200]}")
+
+        # --add: --no-target なら対象なしで足せる
+        rc, _ = yrun("--add", "--to", "Windows", "--title", "対象なし", "--body", str(body2),
+                     "--date", "2026-09-06", "--no-target")
+        check(rc == 0, f"横断の受信箱に --no-target で足せない（{rc}）")
+
+        # --add: --target-repo を渡すと横断の書式で書き、--check-target が通る
+        REPO_HOME = root.parent
+        try:
+            xbox.write_text(CROSS_DOC + f"{INDEX_HEAD}\n\n", encoding="utf-8")
+            rc, out = yrun("--add", "--to", "Windows", "--title", "対象あり", "--body", str(body2),
+                           "--date", "2026-09-06", "--target-repo", root.name)
+            tx = xbox.read_text(encoding="utf-8")
+            check(rc == 0, f"--target-repo で足せない（{rc}）\n   {out[:250]}")
+            check(CROSS_RX.search(tx) is not None, "**横断の書式（対象: <名前>@<sha>）で書いていない**")
+            check("対象の commit:" not in tx, "**案件の書式も一緒に書いた**")
+            rc, out = yrun("--check-target")
+            check(rc == 0 and "対象あり 1 件" in out,
+                  f"--add が書いた対象を --check-target が読めない（{rc}）\n   {out[:250]}")
         finally:
             REPO_HOME = keep_home
 
