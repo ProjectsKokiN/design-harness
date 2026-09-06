@@ -616,6 +616,78 @@ def check_neutered(verify, live):
     return errs
 
 
+def matrix(template, projects):
+    """段 × 案件の行列を**導出**する（2026-09-06 新設・#76）。
+
+    #76 は「作った36段のうち13段が4案件のどこでも動いていない」という**実測**から
+    生まれましたが、**その行列を出す手段がリポジトリにありませんでした**。
+    PLAN.md に測った日の値が1行残っているだけで、次に知りたくなったら人が手で組み直す
+    ことになります。**「宣言しない。導出する」に反したまま**でした。
+
+        python3 tools/stage_check.py --matrix ~/dev/aub-familywalk ~/dev/flash-compose
+
+    案件ごとに `design/verify.sh` と `.github/workflows/` を読み、雛形の段が
+    走っているか（○）・理由つきで不在か（宣言）・宣言も無く落ちているか（**×**）を出します。
+    最後に**どの案件でも走っていない段**を名指しします（0件なら0件と言う）。
+    """
+    if not template.exists():
+        print(f"元ファイルがありません: {template}", file=sys.stderr)
+        return 2
+    stages = template_stages(template)
+    if not stages:
+        print(f"元ファイルから段を読めません: {template}", file=sys.stderr)
+        return 2
+    if not projects:
+        print("案件が1つも渡されていません。**0件は「全部動いている」ではありません。**",
+              file=sys.stderr)
+        return 2
+
+    cols, missing = [], []
+    for d in projects:
+        d = Path(d).expanduser()
+        verify = d / "design" / "verify.sh"
+        if not verify.exists():
+            missing.append(str(d))
+            continue
+        have, _ = project_tools(verify, d / ".github" / "workflows")
+        try:
+            waived = set(json.loads((d / "design" / "stages.json").read_text(
+                encoding="utf-8")).get("notHere") or {})
+        except (OSError, json.JSONDecodeError):
+            waived = set()
+        cols.append((d.name, have, waived))
+    for m in missing:
+        print(f"注意: {m} に design/verify.sh がありません（測れないので列に出しません）")
+    if not cols:
+        print("測れる案件が1つもありません。**空振りです。**", file=sys.stderr)
+        return 2
+
+    width = max(len(s) for s in stages)
+    print(f"段 × 案件（雛形 {len(stages)}段 / 案件 {len(cols)}件）"
+          f"  ○=走っている  宣=理由つきで不在  **×**=宣言も無く落ちている")
+    print("  " + "段".ljust(width) + " | " + " | ".join(n for n, _, _ in cols))
+    nowhere, silent = [], []
+    for label, tools in stages.items():
+        marks, ran_any, all_waived = [], False, True
+        for _n, have, waived in cols:
+            if tools & have:
+                marks.append("○"); ran_any = True; all_waived = False
+            elif label in waived:
+                marks.append("宣")
+            else:
+                marks.append("**×**"); all_waived = False
+        if not ran_any:
+            (nowhere if all_waived else silent).append(label)
+        print("  " + label.ljust(width) + " | " + " | ".join(marks))
+    print(f"\nどの案件でも走っていない段: {len(nowhere) + len(silent)} 件"
+          f"（全案件が理由つきで宣言 {len(nowhere)} / **宣言も無い {len(silent)}**）")
+    for s in nowhere:
+        print(f"  - {s}（全案件が理由つきで不在を宣言）")
+    for s in silent:
+        print(f"  - **{s}**（宣言も無く落ちている案件がある）")
+    return 0
+
+
 def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None,
                  prepush_template=None):
     """元ファイルの段が、この案件から黙って落ちていないかを見る。"""
@@ -776,6 +848,8 @@ def main(argv=None):
                          "省くと測って表示するだけ")
     ap.add_argument("--stages", action="store_true",
                     help="元ファイルの段が、この案件から落ちていないかを見る")
+    ap.add_argument("--matrix", nargs="*", metavar="案件のディレクトリ",
+                    help="段 × 案件の行列を出す（#76。どの案件でも走っていない段を名指しする）")
     ap.add_argument("--template", type=Path,
                     default=HERE.parent / "ci" / "verify.sh.template")
     ap.add_argument("--ci", type=Path, default=Path(".github/workflows"))
@@ -789,6 +863,9 @@ def main(argv=None):
 
     if args.self_test:
         return self_test()
+
+    if args.matrix is not None:
+        return matrix(args.template, args.matrix)
 
     if args.stages:
         return check_stages(args.template, args.verify, args.ci,
@@ -978,6 +1055,49 @@ def self_test():
         print("self-test NG: 網羅の計測が外側の追跡係を壊した"); ok = False
 
     ok = self_test_stages() and ok
+
+    # ─── --matrix（#76）: 行列を導出する ──────────────────────────
+    import io as _io2, contextlib as _ctx2
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        tpl = base / "t.sh"
+        tpl.write_text('step "あ" "$PY" "$H/a_check.py"\n'
+                       'step "い" "$PY" "$H/b_check.py"\n'
+                       'step "う" "$PY" "$H/c_check.py"\n', encoding="utf-8")
+
+        def proj(name, sh, waived=None):
+            d = base / name
+            (d / "design").mkdir(parents=True, exist_ok=True)
+            (d / "design" / "verify.sh").write_text(sh, encoding="utf-8")
+            if waived is not None:
+                (d / "design" / "stages.json").write_text(
+                    json.dumps({"notHere": waived}, ensure_ascii=False), encoding="utf-8")
+            return str(d)
+
+        p1 = proj("p1", "python3 a_check.py\npython3 b_check.py\n")
+        p2 = proj("p2", "python3 a_check.py\n", {"い": {"why": "当てはまらない"}})
+
+        def run_matrix(*args):
+            b2 = _io2.StringIO()
+            with _ctx2.redirect_stdout(b2), _ctx2.redirect_stderr(b2):
+                rc = matrix(tpl, list(args))
+            return rc, b2.getvalue()
+
+        rc, out = run_matrix(p1, p2)
+        if rc != 0:
+            print(f"self-test NG: 行列が出ない（{rc}）\n   {out[:300]}"); ok = False
+        if "**宣言も無い 1**" not in out or "**う**" not in out:
+            print(f"self-test NG: **宣言も無く落ちている段を名指ししない**\n   {out[:400]}")
+            ok = False
+        if "い（全案件が理由つきで不在を宣言）" in out:
+            print("self-test NG: 片方で走っている段を「どこでも走っていない」と言った"); ok = False
+        # 案件を渡さなければ空振り（0件を「全部動いている」と読ませない）
+        if run_matrix()[0] != 2:
+            print("self-test NG: 案件0件で 2 で止まらなかった"); ok = False
+        # verify.sh の無いディレクトリは列に出さず、言う
+        rc, out = run_matrix(p1, str(base / "no-such"))
+        if rc != 0 or "design/verify.sh がありません" not in out:
+            print(f"self-test NG: 測れない案件を黙って飛ばした（{rc}）"); ok = False
 
     # verify.sh が無い＝入口が無い（2）。違反（1）と区別する（変異試験 2026-09-05）
     import io as _io, contextlib as _ctx

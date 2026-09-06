@@ -76,6 +76,7 @@
 | `tools/swallow_check.py` | **溜めた指摘を早期 `return 0` で捨てている検査**を見つける（#69: aub の受信箱が 3 回削られ、2 回は緑だった形）。案件の `design/gen/*.py` にも当てる |
 | **`attack/mutation_test.py`** | **変異試験**。各道具の「落とす」帰り道（`return 1` / `return 2`）を1本ずつ `return 0` に潰し、self-test が赤くなるかを見る。素通りは**その行の `# mutation-ok: 理由`** か `$patterns`（型）が無ければ落ちる。**要らなくなった印も落とす**（2026-09-05 の実測: 47% が素通りしていた。2026-09-06 に行番号の宣言を廃止・#79） |
 | `tools/stage_check.py --min-coverage N` | **self-test が本体の N% を通ることを求める**（持っているだけでは何も証明していない） |
+| `tools/stage_check.py --matrix <案件…>` | **段 × 案件の行列を導出する**（#76。どの案件でも走っていない段を名指しする。手で行列を組み直さない） |
 | `ci/` | 各リポジトリへ配る workflow の雛形 |
 | `build/` | **ビルドの仕組みの共有の置き場**（2026-09-06 開始・iOS と Android 共通）。`build/inventory_check.py` が棚卸しの項目表（`build/inventory-schema.json`）に沿っているかを見る。手順と進み具合は `build/README.md` |
 
