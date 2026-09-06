@@ -198,6 +198,26 @@ def self_test_stages():
              "宣言のほうが古くなっています", sh=full,
              waiver={"移植性（Windows でだけ落ちる書き方）":
                      {"why": "x", "reviewBy": "2099-01-01"}})
+        # **コメントにして外した段は「走っている」と数えない**（2026-09-06 の実測）。
+        # 段を消すと赤・コメントにすると緑では、いちばん起きやすい外し方が素通りする
+        case("コメントアウトした段は走っていないと数える", 1,
+             "黙って落ちた段と区別が付きません",
+             sh=full.replace("python3 $HARNESS/tools/portable_check.py --style\n",
+                             "# python3 $HARNESS/tools/portable_check.py --style\n"))
+        case("コメントに道具名が出てくるだけでは走っていない", 1,
+             "黙って落ちた段と区別が付きません",
+             sh=full.replace("python3 $HARNESS/tools/portable_check.py --style\n",
+                             "  # 以前は portable_check.py を回していた\n"))
+        # **verify.sh は段の証拠にならない**（どの案件も持っている）
+        case("verify.sh の名前だけでは段が走っていることにならない", 1,
+             "黙って落ちた段と区別が付きません",
+             tpl_text=TPL + 'step "段の健全性" "$PY" "$HARNESS/tools/stage_check.py" '
+                            '--verify design/verify.sh\n',
+             sh=full + 'echo "design/verify.sh を回しました"\n')
+        case("その道具を本当に呼んでいれば通る", 0,
+             tpl_text=TPL + 'step "段の健全性" "$PY" "$HARNESS/tools/stage_check.py" '
+                            '--verify design/verify.sh\n',
+             sh=full + 'python3 $HARNESS/tools/stage_check.py --verify design/verify.sh\n')
 
         # 関門の条件を持つ段は、理由だけでは足りない。**どこで測っているか**
         gone = full.replace(
@@ -420,8 +440,28 @@ def template_stages(path):
         m = STEP_RX.match(line)
         if not m:
             continue
-        out[m.group(1)] = set(FILE_RX.findall(m.group(2)))
+        out[m.group(1)] = set(FILE_RX.findall(m.group(2))) - NOT_EVIDENCE
     return out
+
+
+#: 段の識別に使わない名前。**どの案件も必ず持っている**ので、これで一致しても
+#: 「その段が走っている」証拠にならない（2026-09-06 実測: qnd は stage_check を
+#: 1度も呼んでいないのに、雛形の引数 `--verify design/verify.sh` と自分の verify.sh が
+#: 当たって「段の健全性」「段の数」の2段が走っていることになっていた）
+NOT_EVIDENCE = {"verify.sh"}
+
+
+def logical_text(text):
+    """コメント行を落とした本文。**案件側もひな形側と同じ目で見る。**
+
+    2026-09-06 の実測: ひな形側（`template_stages`）は `logical_lines` を通して
+    コメントアウトされた段を数えないのに、案件側は本文を丸ごと正規表現に掛けていた。
+    そのため **段を消すと赤・コメントにすると緑**という、いちばん起きやすい外し方だけが
+    素通りしていた（合成で再現）。走らない行に書かれた道具名は証拠にならない。
+
+    行の途中の `#` は落とさない（引用符の中の `#` と区別できないため）。
+    """
+    return "\n".join(l for l in text.splitlines() if not l.strip().startswith("#"))
 
 
 def project_tools(verify_path, ci_dir):
@@ -429,11 +469,16 @@ def project_tools(verify_path, ci_dir):
 
     `verify.sh` だけでなく **CI の YAML も見る**。段は片方にしか無いことがある
     （鮮度は担当機だけ、実装網羅は CI だけ、など）。
+
+    **コメント行は数えない**（`logical_text`）。**`verify.sh` も数えない**
+    （`NOT_EVIDENCE`。どの案件も持っているので識別力がゼロ）。
     """
     seen, where = set(), {}
 
     def eat(text, src):
-        for name in FILE_RX.findall(text):
+        for name in FILE_RX.findall(logical_text(text)):
+            if name in NOT_EVIDENCE:
+                continue
             seen.add(name)
             where.setdefault(name, src)
 

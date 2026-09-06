@@ -125,7 +125,7 @@ def main(argv=None):
     project_root = args.rules.resolve().parent.parent
     counts, read = count_hits(engine, config, args.seeds, project_root)
     if counts is None:
-        return 2
+        return 2  # mutation-ok: エンジンの走査そのものの失敗。この道具の判定ではない
     if not read:
         print(f"種のファイルが1つもありません: {args.seeds}（空振り）", file=sys.stderr)
         return 1

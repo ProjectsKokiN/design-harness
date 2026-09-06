@@ -35,6 +35,11 @@ jobs:
       # 各道具の「落とす」帰り道を1本ずつ潰して self-test が赤くなるかを見る
       # （2026-09-05 実測: 185本のうち 88本＝47% が素通りだった）。
       # 素通りは attack/mutation-allow.json に理由が無ければ落ちる
+      # 判定そのもの（印の読み方・型・化石の印）を先に見る。**判定が壊れると、
+      # 素通りを全部「許可」と読んで黙ります**（2026-09-06・#79 で判定を足したときに新設）
+      - name: 変異試験の判定（印の読み方）
+        run: python3 attack/mutation_test.py --self-test
+
       - name: 変異試験（落とす帰り道を self-test が見ているか）
         run: python3 attack/mutation_test.py
 

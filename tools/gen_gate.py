@@ -104,11 +104,53 @@ def parse(text):
     return out
 
 
-def build(source):
+#: 道具名として認める、tools/ の外にあるもの（統合入口）
+OUTSIDE_TOOLS = {"design/verify.sh"}
+
+
+def check_tools(conds, tools_dir):
+    """**抜き出した道具名が使えるか**を見る（2026-09-06）。
+
+    正本の「何で測るか」欄は散文で、道具名は正規表現で掻き出しています。
+    **文章を書き換えたり道具を改名したりすると、監視対象が黙って入れ替わります。**
+
+    実害（2026-09-06 実測）: 条件4（鮮度）の欄に段を結ぶ `machine_scope.py` しか書かれて
+    おらず、実際に測る `figma_freshness.py` の名前がありませんでした。そのため
+    `stage_check` の `check_neutered`（#77 で作った「終了コードを消している段」の検査）が
+    **条件4 を一度も見ていませんでした**。案件が鮮度の段を `|| true` で無力化しても
+    誰も気づきません。
+
+    見るのは2つ。**道具名が1つも取れない条件が無いか**と、**取れた名前が実在するか**。
+    """
+    bad = []
+    for num, c in sorted(conds.items()):
+        tools = c.get("測る道具") or []
+        if not tools:
+            bad.append(f"  条件{num}（{c['見出し']}）: 「何で測るか」から道具名が1つも"
+                       f"取れません。**この条件は誰も測っていないのと同じです。**")
+            continue
+        for name in tools:
+            if name in OUTSIDE_TOOLS:
+                continue
+            if not (tools_dir / name).exists():
+                bad.append(f"  条件{num}（{c['見出し']}）: `{name}` が {tools_dir.name}/ に"
+                           f"ありません（改名したか、正本の綴りが違います）")
+    return bad
+
+
+def build(source, tools_dir=None):
     text = source.read_text(encoding="utf-8")
     conds = parse(text)
     if not conds:
         return None, "正本から条件の表を読めませんでした（表の形が変わった？）"
+    if tools_dir is None:
+        tools_dir = Path(__file__).resolve().parent
+    bad = check_tools(conds, tools_dir)
+    if bad:
+        return None, ("正本の「何で測るか」から、使える道具名が取れません:\n"
+                      + "\n".join(bad)
+                      + "\n  **道具名が取れない条件は、無力化されても誰も気づきません**"
+                        "（2026-09-06・条件4 で実際に起きていました）。")
     return {
         # **機体に依らない書き方で出す**（2026-09-06。gen_notcaptured と同じ直し）。
         # `str(source).replace(str(Path.home()), "~")` は、HOME が違う機体
@@ -270,6 +312,19 @@ def self_test():
         src.write_text("# 表の無い正本\n\nただの文章です。\n", encoding="utf-8")
         if main(argv) != 2:
             print("self-test NG: 表の無い正本で 2 で止まらなかった"); ok = False
+
+        # **道具名が取れない条件**は落とす（2026-09-06。条件4 が実際にこれだった）
+        src.write_text(src_text.replace(
+            "| `tools/check_render_gaps.py` | 描画で別物 |",
+            "| 担当機だけ必須（散文のみで道具名なし） | 描画で別物 |"), encoding="utf-8")
+        if main(argv) != 2:
+            print("self-test NG: 道具名の取れない条件を通した"); ok = False
+        # **実在しない道具名**も落とす（改名・綴り違い）
+        src.write_text(src_text.replace("tools/check_render_gaps.py",
+                                        "tools/no_such_tool.py"), encoding="utf-8")
+        if main(argv) != 2:
+            print("self-test NG: 実在しない道具名を通した"); ok = False
+        src.write_text(src_text, encoding="utf-8")
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1

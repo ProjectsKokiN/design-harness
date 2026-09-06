@@ -74,9 +74,25 @@
 | `attack/engine_attack_test.py` | エンジンの妨害テスト（全機能に「落ちるケース」を持つ） |
 | `tools/inbox_tool.py` | 受信箱（MACHINE_TASKS.md）の節を**道具で**足す・完了にする・対象の commit を確かめる（#69: regex を手で書いて 3 台が同じ形で受信箱を削った / #71: 依頼に対象の commit が無く古い版が 2 回配られた） |
 | `tools/swallow_check.py` | **溜めた指摘を早期 `return 0` で捨てている検査**を見つける（#69: aub の受信箱が 3 回削られ、2 回は緑だった形）。案件の `design/gen/*.py` にも当てる |
-| **`attack/mutation_test.py`** | **変異試験**。各道具の「落とす」帰り道（`return 1` / `return 2`）を1本ずつ `return 0` に潰し、self-test が赤くなるかを見る。素通りは `attack/mutation-allow.json` に理由が無ければ落ちる（2026-09-05 の実測: 47% が素通りしていた） |
+| **`attack/mutation_test.py`** | **変異試験**。各道具の「落とす」帰り道（`return 1` / `return 2`）を1本ずつ `return 0` に潰し、self-test が赤くなるかを見る。素通りは**その行の `# mutation-ok: 理由`** か `$patterns`（型）が無ければ落ちる。**要らなくなった印も落とす**（2026-09-05 の実測: 47% が素通りしていた。2026-09-06 に行番号の宣言を廃止・#79） |
 | `tools/stage_check.py --min-coverage N` | **self-test が本体の N% を通ることを求める**（持っているだけでは何も証明していない） |
 | `ci/` | 各リポジトリへ配る workflow の雛形 |
+
+### 例外は「その行の印」で宣言する
+
+一覧で例外を宣言すると、コードが動いたとき**赤くならずに死にます**（2026-09-06 の実測:
+変異試験の除外11件のうち、効いていたのは3件だけで、2件は行が `return` ですらありませんでした・#79）。
+だから例外は**その行に印を書きます**。書式は3本ともそろえています。
+
+| 道具 | 印 | 何を許すか |
+|---|---|---|
+| `tools/swallow_check.py` | `# swallow-ok: 理由` | 溜めた指摘を見ないで帰る `return 0` |
+| `tools/reachability_check.py` | `# reachability-ok: 理由` | 共有層が `~/.claude` を実行時に読む所 |
+| `attack/mutation_test.py` | `# mutation-ok: 理由` | self-test で見られない「落とす」帰り道 |
+
+**理由の無い印は落とします。** 印はコードと一緒に動くのでずれません。
+`attack/mutation_test.py` は**要らなくなった印**（その行が落とす経路でないか、
+self-test がすでに見ている）も落とします——一覧の宣言が黙って死ぬのと同じ形だからです。
 
 ## 憲法の分担（2026-08-29）
 

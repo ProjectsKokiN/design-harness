@@ -1,6 +1,6 @@
 {
   "$生成元": "gate/production-gate.md",
-  "$生成元の指紋": "6a87cf8b20a4a252",
+  "$生成元の指紋": "f6aae5f9a5b2e111",
   "$手で書き換えない": "tools/gen_gate.py が生成します",
   "生きている条件": {
     "1": {
@@ -12,6 +12,7 @@
     "4": {
       "見出し": "鮮度",
       "測る道具": [
+        "figma_freshness.py",
         "machine_scope.py"
       ]
     },

@@ -163,7 +163,7 @@ def main(argv=None):
     behind = run(["git", "rev-list", "--count", f"HEAD..{ref}"], cwd=sub)
     if behind.returncode != 0:
         print(f"比較に失敗: {behind.stderr.strip()[:200]}", file=sys.stderr)
-        return 2
+        return 2  # mutation-ok: git rev-list の失敗。環境の経路
     n = int(behind.stdout.strip() or 0)
     note = "（**未確認**: 上流を取りに行っていないので、手元の参照で見ています）" \
         if stale else ""

@@ -502,7 +502,7 @@ def do_handoff(machine, conf, root, apply=False):
         if r.returncode != 0:
             print(f"作業ツリーから外せませんでした: {' / '.join(paths)}\n"
                   f"  {r.stderr.strip()[:200]}", file=sys.stderr)
-            return 1
+            return 1  # mutation-ok: git checkout の失敗。環境の経路（合成リポジトリで作れない）
     print(f"作業ツリーから外しました（{sum(len(p) for _, _, p in made)} ファイル）。"
           f"**変更はパッチに残っています。**")
     return 0
