@@ -27,6 +27,7 @@
 | 根拠の id の `依存` が `none` **でない** | 共有できない行を根拠にしている（統合の前提が崩れている） |
 | 根拠が**片側だけ** | 「両方で成り立つ」と言えない。片側の規約は各プラットフォームのスキルへ |
 | 根拠の行の**中身が変わった** | id は生きているのに主張が別物になった。**上の実害がまさにこれ** |
+| **スキル本文と食い違った** | 共有の規約はスキルからも消さない（消すと手順から「なぜそうするか」が落ちる）。重複を許す代わりに、引いた文が今もスキルにあるかを見る |
 | 同じ id が**別々の規約で重複** | 1行から2つの規約が出ているので、意図か事故かを人が確かめる（警告） |
 
 **id の実在だけを見ても、上の実害は捕まりません。** 104 は消えていないし `none` のままで、
@@ -50,7 +51,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
+import unicodedata
 from collections import Counter
 from pathlib import Path
 
@@ -69,6 +72,33 @@ AND = ROOT / "analysis" / "build-android-2026-09-06.json"
 
 def index(doc: dict) -> dict:
     return {r["id"]: r for r in doc.get("工程一覧", [])}
+
+
+def squash(text: str) -> str:
+    """空白と全角半角の違いを落とす。**行番号では引かない**（#79 の教訓）。"""
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", text))
+
+
+def check_skill(merge: dict, skill_text: str) -> list[str]:
+    """共有の規約が**スキル本文と食い違っていないか**を見る。
+
+    共有の規約はスキルからも消さない（消すと手順から「なぜそうするか」が落ちる）。
+    重複を許す代わりに、**引いた文が今もスキルにあるか**を確かめる。
+    """
+    body = squash(skill_text)
+    out = []
+    for r in merge.get("確定した共有の規約", []):
+        for sn in r.get("スキルの根拠", []):
+            if not sn.get("文"):
+                # **見つからないと記録されているもの**。ここで落とすと、記録した
+                # 「見つからない」がそのまま赤になり続ける。人が見る対象なので注意に回す
+                continue
+            if squash(sn["文"]) not in body:
+                out.append(
+                    f"規約 {r.get('id')}: スキルの根拠が見つかりません（iOS {sn['iOS']}）\n"
+                    f"      探した文: {sn['文'][:70]}\n"
+                    f"      規約の文: {str(r.get('規約'))[:70]}")
+    return out
 
 
 def fingerprint(row: dict) -> str:
@@ -112,6 +142,12 @@ def check(merge: dict, ios: dict, android: dict) -> tuple[list[str], list[str]]:
                         f"（指紋 {stamped} → {now}）\n"
                         f"      いまの行: {str(row.get('手順'))[:70]}\n"
                         f"      規約の文: {str(r.get('規約'))[:70]}")
+
+    for r in merge.get("確定した共有の規約", []):
+        for sn in r.get("スキルの根拠", []):
+            if not sn.get("文"):
+                warns.append(f"規約 {r.get('id')}: iOS {sn['iOS']} の文がスキルに見つかりません"
+                             f"（{sn.get('$見つからない','')}）。**規約がスキルに書かれていない可能性**")
 
     for (side, i), n in seen.items():
         if n > 1:
@@ -180,6 +216,14 @@ def self_test() -> int:
     if len(dup) != 1:
         print(f"self-test NG: 重複の警告が {len(dup)} 件（期待 1）"); ok = False
 
+    # スキル本文との食い違い
+    sk = merge({"id": 1, "ios_ids": [1], "android_ids": [2],
+                "スキルの根拠": [{"iOS": 1, "文": "**verify.sh は1回でよい**"}]})
+    if check_skill(sk, "## 手順\n\n**verify.sh は 1 回でよい**\n"):
+        print("self-test NG: 空白と全角半角を落とせば一致するのに落ちた"); ok = False
+    if len(check_skill(sk, "## 手順\n\n毎回 verify.sh を回す\n")) != 1:
+        print("self-test NG: スキルから文が消えたのに落ちない"); ok = False
+
     import contextlib, io, tempfile
     with tempfile.TemporaryDirectory() as td:
         d = Path(td)
@@ -220,6 +264,9 @@ def main(argv=None) -> int:
     ap.add_argument("--android", type=Path, default=AND)
     ap.add_argument("--stamp", action="store_true",
                     help="いまの中身で指紋を押し直す（**人が確かめたあとに打つ**）")
+    ap.add_argument("--skill", type=Path,
+                    default=Path.home() / ".claude/skills/flutter-ios-build-check/SKILL.md",
+                    help="共有の規約と食い違っていないかを見るスキル本文")  # reachability-ok: 引数の既定値。実行時に読むのは --skill で差し替えられる
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
@@ -249,6 +296,10 @@ def main(argv=None) -> int:
         return 0
 
     problems, warns = check(merge, ios, android)
+    if args.skill.exists():
+        problems += check_skill(merge, args.skill.read_text(encoding="utf-8"))
+    else:
+        warns.append(f"スキル本文がありません（{args.skill}）。**食い違いは見ていません**")
     for w in warns:
         print(f"  注意: {w}")
     if problems:
