@@ -110,14 +110,34 @@ def captured(exporter_paths):
     return got
 
 
-def build(list_path, exporters):
+def _portable(p, base=None):
+    """**機体に依らない書き方で出す。**
+
+    2026-09-06 実測（aub-familywalk）: `$読んだ器` に `str(p)` をそのまま書いていたため、
+    ホームが違う機体で生成し直すと**中身と関係なく必ず食い違った**
+    （MacBook Air は `/Users/nishikawakoki/...`、Mac mini は `/Users/k.nishikawa/...`）。
+    `--check` は文字列で比べるので、**どちらの機体で作り直しても、もう片方が落ちる**。
+
+    リポジトリ相対にし、区切りは `as_posix()` で揃える（`str()` は OS の区切りを返すので
+    Windows で円記号になる。FlashEnglish の build_manifest.py が同じ形で落ちている）。
+    """
+    p = Path(p)
+    if base is not None:
+        try:
+            return p.resolve().relative_to(Path(base).resolve()).as_posix()
+        except ValueError:
+            pass  # リポジトリの外にある器はホームを ~ に畳んで出す
+    return p.as_posix().replace(Path.home().as_posix(), "~")
+
+
+def build(list_path, exporters, base=None):
     want = wanted(list_path)
     got = captured(exporters)
     missing = {k: v for k, v in sorted(want.items()) if k not in got}
     return {
         "$手で書き換えない": "tools/gen_notcaptured.py が生成します",
-        "$生成元": str(list_path).replace(str(Path.home()), "~"),
-        "$読んだ器": sorted(str(p) for p in exporters),
+        "$生成元": _portable(list_path, base),
+        "$読んだ器": sorted(_portable(p, base) for p in exporters),
         "declared": {"一覧のプロパティ": len(want),
                      "読めているプロパティ": len(want) - len(missing),
                      "読めていないプロパティ": len(missing)},
@@ -175,7 +195,7 @@ def main(argv=None):
         return 2
 
     out = base / conf.get("out", "design/figma/notcaptured.json")
-    data = build(lp, exporters)
+    data = build(lp, exporters, base)
     text = dump(data)
 
     if args.check:
@@ -243,6 +263,15 @@ def self_test():
         nc = d["notCaptured"]
         if sorted(nc) != ["itemReverseZIndex", "strokeBottomWeight", "strokeTopWeight"]:
             print(f"self-test NG: 読めていないキーが違う: {sorted(nc)}"); ok = False
+
+        # **機体に依らないか**（2026-09-06・aub で実際に落ちた形）。
+        # 生成物にホームや置き場を含む絶対パスが入ると、**別の機体で作り直しただけで
+        # 中身と関係なく --check が落ちる**（MacBook Air と Mac mini はホームが違う）。
+        # 置き場を変えて生成し、**同じ中身になること**を見る。
+        for bad in (str(root), str(Path.home()), "\\"):
+            if bad and bad in out.read_text(encoding="utf-8"):
+                print(f"self-test NG: 生成物に機体固有の文字列が入っている: {bad!r}")
+                ok = False
         if "重なり順を判断しないこと" not in nc.get("itemReverseZIndex", ""):
             print("self-test NG: 注意が宣言に入っていない"); ok = False
         # 束ねた行（strokeTopWeight/strokeBottomWeight）は2件に割れる
