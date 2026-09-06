@@ -35,6 +35,8 @@
 | **`tools/hollow_check.py`** | **空振りの検査**: 例外を捨てる・期待値の自己参照・緩い finder・誰も見ていない文字。**検査は回っているのに中身が空**の形を見る |
 | **`tools/portable_check.py`** | **Windows でだけ落ちる書き方**（`encoding=` 抜け・素のコマンド名）と、cp932 で全道具を回して死なないか |
 | **`tools/reachability_check.py`** | **共有層が `~/.claude` を実行時に読んでいないか**（CI と他人のクローンには無い）。落ちるか、黙って緑になる。理由つきの `# reachability-ok:` で除外 |
+| **`tools/generated.py`** | **そのファイルは生成物か**を1か所で決める（生成器の書いた印から導出。一覧は宣言しない）。`machine_scope` と `generated_check` が共有 |
+| **`tools/generated_check.py`** | **生成物に機体固有の文字列が入っていないか**（ホームの下の絶対パス・円記号の区切り）。生成物を `shared` にする前提の安全装置 |
 | `tools/_utf8.py` | 出力の文字コードで死なないようにする（各道具が import するだけ。単体では回さない） |
 | `tools/issue_scan.py` | 前回まとめた日時以降のやりとりを取り出す（`/harness-issues` が使う） |
 | **`seeds/<stack>/`** | 種のひな形（わざと違反させたコード）。案件の `design/seeds/` へコピーする |

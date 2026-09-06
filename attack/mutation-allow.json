@@ -20,5 +20,5 @@
  "ci_path_check.py:208": "git リポジトリの外で回した。環境の経路",
  "shared_check.py:231": "git リポジトリではない場所で回した。環境の経路",
  "seed_check.py:128": "エンジンの走査そのものが失敗した（count_hits が None）。エンジン側の失敗で、この道具の判定ではない",
- "machine_scope.py:487": "git rm --cached の失敗。環境の経路"
+ "machine_scope.py:505": "git rm --cached の失敗。環境の経路（2026-09-06 に 487 → 505 へ。**行番号で宣言しているので、上に行を足すたびに古くなる**。issue #79）"
 }

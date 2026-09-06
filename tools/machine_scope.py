@@ -172,12 +172,30 @@ def _under(target, own):
     return target == own or target.startswith(own + "/")
 
 
-def owner_of(path, conf):
+def owner_of(path, conf, root=None):
     """path の担当を1つ返す。**最長一致。** shared に当たれば SHARED。
 
     **判定はここ1か所だけ。** 以前は `owns` が緩い前方一致（どちら向きでも）で
     別に持っており、同じパスに違う答えを返していた（#29）。
+
+    **決定論的な生成物は、宣言より先に SHARED**（2026-09-06 ユーザー確定・issue #78）。
+    `design/` を1つの機体の担当にすると、その下の生成物も自動的にその機体のものになり、
+    **生成器を直した機体が、その直しを適用できない**という倒錯が起きる。
+    実害（aub 2026-09-06）: 生成し直すと「担当外を変えた」、生成し直さないと
+    「生成し直していない」で、**どちらを選んでも1段落ちる行き止まり**に入った。
+
+    生成物かどうかは `generated.py` が**生成器の書いた印から導く**（一覧は宣言しない）。
+    印が読めないファイル（消えた・壊れている）は生成物と見なさないので、
+    **分からないものが勝手に共有にならない。**
     """
+    if root is not None:
+        try:
+            from generated import is_generated
+            f = Path(root) / norm(path)
+            if f.is_file() and is_generated(f)[0]:
+                return SHARED
+        except Exception:  # noqa: BLE001  判定できないときは宣言に従う（安全側）
+            pass
     target, best, best_len = norm(path), None, -1
     for m, paths in conf.get("machines", {}).items():
         for own in paths:
@@ -191,13 +209,13 @@ def owner_of(path, conf):
     return best
 
 
-def owns(machine, path, conf):
+def owns(machine, path, conf, root=None):
     """machine が path に責任を持つか。**owner_of と必ず同じ答えになる。**
 
     shared は**全機体が担当**とする。以前は shared を見ていなかったので、
     shared に結んだ段が全機体で飛んでいた（#40）。
     """
-    holder = owner_of(path, conf)
+    holder = owner_of(path, conf, root)
     return holder == machine or holder == SHARED
 
 
@@ -432,7 +450,7 @@ def do_handoff(machine, conf, root, apply=False):
     files = changed_files(root)
     others = []
     for f in files:
-        holder = owner_of(f, conf)
+        holder = owner_of(f, conf, root)
         if holder and holder != machine and holder != SHARED:
             others.append((f, holder))
     if not others:
@@ -501,7 +519,7 @@ def do_check(machine, conf, root, conf_path=''):
     for f in sorted(files):
         if is_shared(f, conf):
             continue
-        holder = owner_of(f, conf)
+        holder = owner_of(f, conf, root)
         if holder is None:
             unowned.append(f)
         elif holder == machine:
@@ -537,6 +555,11 @@ def do_check(machine, conf, root, conf_path=''):
         return 1
     print("  OK: 担当外のパスは変更していません。")
     return 0
+
+
+def shutil_rmtree(p):
+    import shutil as _sh
+    _sh.rmtree(p, ignore_errors=True)
 
 
 def self_test():
@@ -638,6 +661,35 @@ def self_test():
         check(owns(m, "SESSION_LOG.md", c2),
               f"**shared に結んだ段が {m} で飛ぶ**")
         check(owns(m, "docs/a/b.md", c2), f"shared の下が {m} で飛ぶ")
+
+    # ── #78: 決定論的な生成物は、宣言より先に共有（2026-09-06 ユーザー確定）──
+    import tempfile as _tf
+    _td = _tf.mkdtemp()
+    try:
+        _r = Path(_td)
+        (_r / "design" / "figma").mkdir(parents=True)
+        gen = _r / "design" / "figma" / "notcaptured.json"
+        gen.write_text('{"$手で書き換えない": "gen が生成します"}', encoding="utf-8")
+        hand = _r / "design" / "rules.json"
+        hand.write_text('{"rules": []}', encoding="utf-8")
+
+        # root を渡すと生成物は SHARED。渡さなければ宣言どおり（後方互換）
+        check(owner_of("design/figma/notcaptured.json", c2, _r) == SHARED,
+              "**生成物が共有になっていない**（生成器を直した機体が適用できなくなる）")
+        check(owner_of("design/figma/notcaptured.json", c2) == "MacBook Air",
+              "root を渡さないのに判定が変わった（後方互換が壊れている）")
+        # 手で書くものは担当のまま
+        check(owner_of("design/rules.json", c2, _r) == "MacBook Air",
+              "**手で書くものまで共有にしている**")
+        # 全機体が生成物を担当と見る（段が飛ばない）
+        for m in c2["machines"]:
+            check(owns(m, "design/figma/notcaptured.json", c2, _r),
+                  f"生成物が {m} で担当外になる")
+        # 存在しないファイルは宣言に従う（分からないものを共有にしない）
+        check(owner_of("design/figma/no-such.json", c2, _r) == "MacBook Air",
+              "**存在しないファイルを共有にした**")
+    finally:
+        shutil_rmtree(_td)
 
     # ── 境界を見る（design/ が designs/ に当たらない）──────────────────
     check(owner_of("designs/x.json", c2) is None,

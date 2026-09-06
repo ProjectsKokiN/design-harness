@@ -66,6 +66,11 @@ jobs:
       - name: 到達性（共有層が ~/.claude を実行時に読んでいないか）
         run: python3 tools/reachability_check.py
 
+      # 決定論的な生成物は担当で縛らない（#78）。共有して安全なのは
+      # 「どの機体でも同じバイトになる」ときだけなので、機体固有の文字列を落とす
+      - name: 生成物の可搬性（機体固有の文字列が入っていないか）
+        run: python3 tools/generated_check.py --root .
+
       # cp932 の端末を作って全道具を回す。**絵文字を print した瞬間に死ぬ**のを
       # Windows を用意せずに捕まえる（MacBook Air で再現を実測済み）。
       - name: 出力の文字コード（cp932 の端末で全道具）

@@ -127,6 +127,14 @@ step "決定の取り消し（取り消し済みを実装が引用していな�
   "$PY" "$HARNESS/tools/decisions_check.py" --decisions DECISIONS.md --impl lib
 step "散らばった値（表示名など）" \
   "$PY" "$HARNESS/tools/platform_values_check.py" --config design/platform-values.json
+# **決定論的な生成物は担当で縛らない**（2026-09-06 ユーザー確定・issue #78）。
+# 共有して安全なのは「どの機体でも同じバイトになる」ときだけなので、
+# 機体固有の文字列（ホームの下の絶対パス・円記号の区切り）が入っていたら落とす。
+# 実害: aub の notcaptured.json に MacBook Air のホームが 28 箇所入っており、
+# Mac mini では中身が同じでも --check が必ず落ち、push できない行き止まりになった。
+step "生成物の可搬性（機体固有の文字列が入っていないか）" \
+  "$PY" "$HARNESS/tools/generated_check.py" --root .
+
 step "機体の担当（担当外のパスを変えていないか）" \
   "$PY" "$HARNESS/tools/machine_scope.py" --config design/machine-scope.json --check
 
