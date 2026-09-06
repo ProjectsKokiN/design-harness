@@ -68,6 +68,19 @@ TARGET_RX = re.compile(r"^対象の commit: (\w+)@([0-9a-f]{7,40})", re.M)
 CROSS_RX = re.compile(r"^対象: ([A-Za-z0-9._-]+)@([0-9a-f]{7,40})", re.M)
 #: 対象のリポジトリを探す場所
 REPO_HOME = Path.home() / "dev"        # reachability-ok: ~/.claude ではなく開発の置き場
+
+
+def find_repo(name):
+    """対象のリポジトリの置き場を探す。
+
+    ほとんどは `~/dev/<名前>` ですが、**スキルの置き場（`.claude`）はホーム直下**です
+    （2026-09-06 に実際の依頼で当たった。`対象: .claude@8563a6a`）。
+    見つからなければ None を返し、呼び出し側が落とします（黙って通さない）。
+    """
+    for d in (REPO_HOME / name, Path.home() / name):
+        if (d / ".git").exists():
+            return d
+    return None
 ARCHIVE_TITLE = "# マシン間の申し送り（完了ぶんの保管）"
 
 
@@ -189,10 +202,11 @@ def do_check_target(path, root, require_for):
             # **横断の受信箱**（#88）。対象は別のリポジトリなので、そちらの HEAD と比べる。
             # ここを「いま居るリポジトリ」で比べると、**受信箱自身の sha を見て黙って通る**
             name, sha = cross.group(1), cross.group(2)
-            where = REPO_HOME / name
-            if not (where / ".git").exists():
+            where = find_repo(name)
+            if where is None:
                 errs.append(f"  {date} 宛先: {to} — {title}: 対象のリポジトリ `{name}` が "
-                            f"{where} にありません。**確かめられないので通しません**"
+                            f"{REPO_HOME}/ にも {Path.home()}/ にもありません。"
+                            f"**確かめられないので通しません**"
                             f"（黙って通すと #71 と同じ穴が開きます）")
                 continue
             target_root, label = where, f"{name}@{sha}"
@@ -385,6 +399,8 @@ def self_test():
             rc = main(X + ["--check-target"])
         check(rc == 1 and "確かめられないので通しません" in b3.getvalue(),
               f"**対象のリポジトリが無いのに通した（{rc}）**\n   {b3.getvalue()[:200]}")
+        # ホーム直下のリポジトリ（`.claude`）も探す（2026-09-06 に実際の依頼で当たった）
+        check(find_repo("no-such-repo-anywhere") is None, "無いリポジトリを見つけたと言った")
         # 対象のリポジトリが手元にあれば、そちらの HEAD と比べる
         import machine_scope as _ms  # noqa: F401  （tools/ が sys.path に居ることの確認）
         global REPO_HOME
