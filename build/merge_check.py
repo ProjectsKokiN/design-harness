@@ -31,6 +31,7 @@
 | 同じ id が**別々の規約で重複**していて、**理由が書かれていない** | 1行から2つの規約が出るのは**あり得る**ので落とさない——**ただし理由を書かせる**（`$重複ok`）。2026-09-07、注意のままだった重複が丸1日読まれず、当たっていない根拠が残った |
 | `スキルの根拠` の **`文` が空**で、理由も無い | 照合の正本が無いので、スキルと食い違っても気づけない。`$見つからない: "一致 0.35"` は**失敗の記録**であって通してよい理由ではない（同日・同じ形で残った） |
 | 上の理由が書いてあるのに、**その注意がもう出ない** | 当たらなくなった宣言（化石）。他の道具と同じ扱い |
+| **README の散文の件数**がデータと合っていない | 2026-09-07、規約15 を取り下げたとき `shared-rules.md` と JSON は直したのに **README だけ 22 のまま**残った。同じ日に「散文の数字が腐る」が3件（差分行数・数え方・件数）。**見つからなければ exit 2**（書き方が変わって照合が止まったことを緑にしない） |
 
 **id の実在だけを見ても、上の実害は捕まりません。** 104 は消えていないし `none` のままで、
 **中身だけが変わった**からです。そこで各規約に `根拠の指紋`（引いた行の `手順` の短い
@@ -134,6 +135,39 @@ def reason_of(obj: dict, key: str):
     if key not in obj:
         return False, ""
     return True, str(obj.get(key) or "").strip()
+
+
+#: README の散文に書かれた件数の書き方。**この形以外は見つけられません**（下の 0件 → exit 2）。
+#: 生きている件数は**太字**、取り下げた件数は`バッククォート`。
+#: 歴史の記述（「12件しか取れませんでした」「2件増えました」）を巻き込まないための区別です
+COUNT_LIVE_RX = re.compile(r"\*\*(\d+)\s*件\*\*")
+COUNT_DROP_RX = re.compile(r"`(\d+)`\s*件")
+
+
+def check_readme(merge: dict, readme: str) -> tuple[list[str], int]:
+    """README の**散文の件数**が、データと合っているか。`(落とすもの, 見た数)` を返す。
+
+    **なぜ要るか**（2026-09-07・Mac mini の申し出）: 規約15 を取り下げたとき、
+    `shared-rules.md` と JSON は直したのに、**README の数字だけ 22 のまま**残った。
+    同じ日に「散文の数字が腐る」が3件出ている（差分行数 35 / 数え方 426 対 472 / 件数 22）。
+    **どれも検査が見ていない数字だった。**
+
+    **見つからなければ 0 を返す。** 呼ぶ側は 0 のとき exit 2（見ていないのに緑にしない）。
+    """
+    live = len(merge.get("確定した共有の規約", []))
+    drop = len(merge.get("取り下げた規約", []))
+    out, seen = [], 0
+    for rx, want, label in ((COUNT_LIVE_RX, live, "確定した共有の規約"),
+                            (COUNT_DROP_RX, drop, "取り下げた規約")):
+        for m in rx.finditer(readme):
+            seen += 1
+            got = int(m.group(1))
+            if got != want:
+                line = readme.count("\n", 0, m.start()) + 1
+                out.append(f"README:{line} の件数が古いです（書いてある {got} 件 / "
+                           f"`{label}` は {want} 件）\n"
+                           f"      その辺り: {readme.splitlines()[line - 1][:80]}")
+    return out, seen
 
 
 def fingerprint(row: dict) -> str:
@@ -327,6 +361,31 @@ def self_test() -> int:
     if check_skill(empty_sentence("iOS 側はスキルではなく道具に書かれているため"), "本文"):
         print("self-test NG: 理由を書いたのに空の `文` で落ちた"); ok = False
 
+    # ─── README の散文の件数（2026-09-07・Mac mini の申し出） ────────────
+    # 規約15 を取り下げたとき、README の数字だけ 22 のまま残った。同じ日に
+    # 「散文の数字が腐る」が3件（差分行数・数え方・件数）。**どれも検査が見ていなかった**
+    mg = merge({"id": 1, "ios_ids": [1], "android_ids": [2]},
+               {"id": 2, "ios_ids": [3], "android_ids": [4]})
+    mg["取り下げた規約"] = [{"id": 9}]
+    OKDOC = "規約は **2件** です。取り下げた分は `1` 件で、末尾に残しています。\n"
+    pr, seen = check_readme(mg, OKDOC)
+    if pr or seen != 2:
+        print(f"self-test NG: 合っている README で落ちた（{pr} / 見た数 {seen}）"); ok = False
+    pr, _ = check_readme(mg, OKDOC.replace("**2件**", "**3件**"))
+    if len([x for x in pr if "確定した共有の規約" in x]) != 1:
+        print(f"self-test NG: **生きている件数のずれが落ちない**（{pr}）"); ok = False
+    pr, _ = check_readme(mg, OKDOC.replace("`1` 件", "`5` 件"))
+    if len([x for x in pr if "取り下げた規約" in x]) != 1:
+        print(f"self-test NG: 取り下げの件数のずれが落ちない（{pr}）"); ok = False
+    # **書き方を変えて見つからなくなったら 0 を返す**（呼ぶ側が exit 2 にする）
+    _, seen = check_readme(mg, "規約は 2件 です。取り下げた分は 1 件です。\n")
+    if seen != 0:
+        print(f"self-test NG: **見つからないのに「見た」と言った**（{seen}）"); ok = False
+    # 歴史の記述（太字でもバッククォートでもない）を巻き込まない
+    _, seen = check_readme(mg, OKDOC + "1回目は 12件 しか取れず、6件を直して 2件 増えました。\n")
+    if seen != 2:
+        print(f"self-test NG: 歴史の記述まで数えた（{seen}）"); ok = False
+
     import contextlib, io, tempfile
     with tempfile.TemporaryDirectory() as td:
         d = Path(td)
@@ -334,7 +393,10 @@ def self_test() -> int:
         good[0].write_text(json.dumps(merge({"id": 1, "ios_ids": [1], "android_ids": [2]})), encoding="utf-8")
         good[1].write_text(json.dumps({"工程一覧": [row(1)]}), encoding="utf-8")
         good[2].write_text(json.dumps({"工程一覧": [row(2)]}), encoding="utf-8")
-        argv = ["--merge", str(good[0]), "--ios", str(good[1]), "--android", str(good[2])]
+        rmd = d / "README.md"
+        rmd.write_text("規約は **1件** です。取り下げた分は `0` 件です。\n", encoding="utf-8")
+        argv = ["--merge", str(good[0]), "--ios", str(good[1]), "--android", str(good[2]),
+                "--readme", str(rmd)]
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             rc = main(argv)
@@ -354,6 +416,15 @@ def self_test() -> int:
         if rc != 2:
             print(f"self-test NG: 読めない入力で exit {rc}（期待 2）"); ok = False
 
+        # **README の書き方が変わって件数が見つからなくなったら exit 2**（緑にしない）
+        good[0].write_text(json.dumps(merge({"id": 1, "ios_ids": [1], "android_ids": [2]})), encoding="utf-8")
+        rmd.write_text("規約は 1件 です。取り下げた分は 0 件です。\n", encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = main(argv)
+        if rc != 2:
+            print(f"self-test NG: **README の件数が見つからないのに exit {rc}**（期待 2）"); ok = False
+
     if ok:
         print("self-test: OK")
     return 0 if ok else 1
@@ -370,6 +441,8 @@ def main(argv=None) -> int:
     ap.add_argument("--skill", type=Path,
                     default=Path.home() / ".claude/skills/flutter-ios-build-check/SKILL.md",
                     help="共有の規約と食い違っていないかを見るスキル本文")  # reachability-ok: 引数の既定値。実行時に読むのは --skill で差し替えられる
+    ap.add_argument("--readme", type=Path, default=Path(__file__).resolve().parent / "README.md",
+                    help="散文の件数を照合する README")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
@@ -399,6 +472,12 @@ def main(argv=None) -> int:
         return 0
 
     problems, warns = check(merge, ios, android)
+    readme_seen = None
+    if args.readme.exists():
+        rp, readme_seen = check_readme(merge, args.readme.read_text(encoding="utf-8"))
+        problems += rp
+    else:
+        warns.append(f"README がありません（{args.readme}）。**散文の件数は見ていません**")
     if args.skill.exists():
         problems += check_skill(merge, args.skill.read_text(encoding="utf-8"))
     else:
@@ -413,8 +492,18 @@ def main(argv=None) -> int:
             print(f"  {p}", file=sys.stderr)
         print("\n  根拠の id を付け替えるか、規約を取り下げてください。", file=sys.stderr)
         return 1
+    if readme_seen == 0:
+        # **0件は「綺麗」ではなく「見ていない」。** README の書き方が変わると、
+        # 件数の照合が黙って止まります（それを緑で返さない）
+        print(f"{args.readme} に件数の記述が1つも見つかりません。**件数を確かめていません。**\n"
+              f"  生きている件数は `**21件**` のように**太字**、取り下げた件数は "
+              f"`` `1` 件 `` のようにバッククォートで書いてください。\n"
+              f"  （歴史の記述と区別するための決まりです。書き方を変えるなら "
+              f"`COUNT_LIVE_RX` / `COUNT_DROP_RX` も直してください）", file=sys.stderr)
+        return 2
     n = len(merge.get("確定した共有の規約", []))
-    print(f"共有の規約 {n} 件。根拠はすべて実在し、両側とも `none` です。")
+    print(f"共有の規約 {n} 件。根拠はすべて実在し、両側とも `none` です"
+          f"（README の件数 {readme_seen} 箇所も一致）。")
     return 0
 
 
