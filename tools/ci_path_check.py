@@ -122,6 +122,21 @@ def _git_root(start):
     return Path(out.stdout.strip()) if out.returncode == 0 else None
 
 
+def _inside(path, root):
+    """path が root の下にあるか。
+
+    **`str(path).startswith(str(root) + "/")` と書かないこと。**
+    Windows の `str(Path)` は `\\` を返すので、この形は**必ず False** になる。
+    2026-09-07 に実際にそうなっていて、Windows でだけ self-test が 4 件落ちていた
+    （鎖の2段目・submodule の2件・中にある同じファイルの表示）。Mac では気づけない。
+    """
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def _submodule_paths(root):
     """.gitmodules に並んだ submodule の相対パス。"""
     gm = root / ".gitmodules"
@@ -166,7 +181,7 @@ def _twin_in_repo(root, target):
             continue
         try:
             if cand.read_bytes() == want:
-                return cand.relative_to(root)
+                return cand.relative_to(root).as_posix()
         except OSError:
             continue
     return None
@@ -196,7 +211,7 @@ def _chain(rules_path, root, seen=None):
     for rel in conf.get("extends", []):
         target = (rules_path.parent / rel).resolve()
         out.append((rules_path, rel, target, conf.get(OUTSIDE_DECL) or {}))
-        if str(target).startswith(str(root) + "/"):
+        if _inside(target, root):
             out.extend(_chain(target, root, seen))
     return out
 
@@ -224,10 +239,10 @@ def check_rules(rules_path, root=None, workflows=None):
     used_subs = set()
     for owner, rel, target, decl in links:
         owner = owner.resolve()
-        who = (owner.relative_to(root)
-               if str(owner).startswith(str(root) + "/") else owner)
+        who = (owner.relative_to(root).as_posix()
+               if _inside(owner, root) else owner)
         try:
-            r = target.relative_to(root)
+            r = target.relative_to(root).as_posix()
         except ValueError:
             reason = decl.get(rel)
             if isinstance(reason, str) and reason.strip():
@@ -255,7 +270,7 @@ def check_rules(rules_path, root=None, workflows=None):
             continue
         inside += 1
         for s in subs:
-            if str(r) == s or str(r).startswith(s + "/"):
+            if r == s or r.startswith(s.rstrip("/") + "/"):
                 used_subs.add(s)
         if not target.exists():
             errs.append(f"  {who} の extends `{rel}` の先がありません\n"
@@ -361,7 +376,7 @@ def check_sources(root, globs, ignore=None):
                     continue
                 checked += 1
                 if not (root / p).exists():
-                    missing.append(f"  {f.relative_to(root)}: {p}")
+                    missing.append(f"  {f.relative_to(root).as_posix()}: {p}")
     if files == 0:
         print("注意: 走査したファイルが0件です（--sources の指定を確認）")
         return 0  # swallow-ok: files が 0 なら missing も必ず空（ファイルを読んでからしか足さない）
