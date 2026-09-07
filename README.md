@@ -247,7 +247,9 @@ git -C design/harness pull origin main
 
 | 道具 | 理由 |
 |---|---|
-| `contact_sheet` / `token_query` / `harness_stats` | **合否を出さない**（人が見る道具） |
+| `contact_sheet` / `token_query` / `harness_stats` / `generated` | **合否を出さない**（人が見る道具・一覧を出すだけ）。`generated` の判定の側は `generated_check` が持ち、そちらは測っています |
+
+**2026-09-07 に、部品はこの表から要らなくなりました。** `_utf8` / `figma_names` / `gen_io` は **`main()` を持たない共有の部品**で、単体で合否を出しません。`attack/mutation_test.py` が **`main()` の有無から導いて**分けるようにしたので、**一覧を宣言しなくてよくなりました**（宣言は古くなりますが、導出は古くなりません）。
 
 **2026-09-06 に `pin_check` と `figma_freshness` をこの表から外しました。**
 どちらも `--self-test` を持っています（ネットワークに触らない範囲を測る形になった）。

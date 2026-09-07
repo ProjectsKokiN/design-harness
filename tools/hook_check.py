@@ -173,6 +173,28 @@ def self_test():
             rc, _ = check(Path(td2))
             ck(rc == 2, f"リポジトリの外なのに 2 を返さない: {rc}")
 
+            # 8) **入口（main）まで通す。** `check` だけを見ていると、
+            # 入口の落とす帰り道が**一度も走らない**（2026-09-07・
+            # attack/mutation_test.py が「理由なしの素通り 2 件」として出した）
+            import contextlib, io
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                rc = main(["--root", td2])
+            ck(rc == 2, f"**入口がリポジトリの外で 2 を返さない**: {rc}")
+
+        subprocess.run([exe, "config", "--unset", "core.hooksPath"],
+                       cwd=str(root), check=False)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = main(["--root", str(root)])
+        ck(rc == 1, f"**入口が未設定で 1 を返さない**: {rc}")
+        subprocess.run([exe, "config", "core.hooksPath", ".githooks"],
+                       cwd=str(root), check=True)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = main(["--root", str(root)])
+        ck(rc == 0, f"**入口が効いているのに 0 を返さない**: {rc}")
+
     print("self-test: OK" if ok else "self-test: NG")
     return 0 if ok else 1
 
@@ -190,7 +212,15 @@ def main(argv=None):
     rc, lines = check(a.root, a.hooks_path, a.hook)
     for x in lines:
         print(x, file=sys.stderr if rc else sys.stdout)
-    return rc
+    # **落とす帰り道を式で書きます**（`return rc` にしない）。
+    # 変異試験は「落ちる経路がソースに在るか」を見て測る対象を決めるので、
+    # 変数で返すと**測れない道具**に分類され、素通りの分母から外れます
+    # （2026-09-07・attack/mutation_test.py が実際にこの道具を弾きました）。
+    if rc == 2:
+        return 2
+    if rc != 0:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

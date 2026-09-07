@@ -117,6 +117,16 @@ def fossil_marks(lines, survived):
             if MARK in line and i not in survived]
 
 
+def _is_tool(src) -> bool:
+    """**単体で合否を出す道具か**（`main()` を持つか）。部品なら False。"""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return True          # 読めないものは道具として扱い、別の段に落とさせる
+    return any(isinstance(n, ast.FunctionDef) and n.name == "main"
+               for n in tree.body)
+
+
 def failure_returns(src):
     """self_test の外にある `return 1` / `return 2`（bool は除く）の行番号。"""
     tree = ast.parse(src)
@@ -208,8 +218,17 @@ def main(argv=None):
         survivors, measured, paths_total, fossils, skipped = [], 0, 0, [], []
         # **階層を作ったら網も広げる**——広げないと、新しい道具は測られないまま緑になる
         # （2026-09-06 に build/ が増えて広げた。2026-09-07 に machine-relay へ移して戻した）
+        parts = []
         for f in scanned_files(work):
             src = f.read_text(encoding="utf-8")
+            # **部品は測る対象ではありません。** `main()` を持たないものは
+            # 単体で合否を出さない共有の部品で、**self-test が無いのは正しい状態**です。
+            # ここを分けないと「まだ測れていない穴」と混ざり、
+            # **数を見ても何をすればよいか分からなくなります**（2026-09-07）。
+            # **一覧を宣言していません。`main()` の有無から導いています。**
+            if not _is_tool(src):
+                parts.append(f.name)
+                continue
             if '"--self-test"' not in src and "--selftest" not in src:
                 skipped.append((f.name, "`--self-test` の旗が無い"))
                 continue
@@ -254,6 +273,9 @@ def main(argv=None):
           f"**理由なし {len(unlisted)}**）")
     for key, code, _, _ in dup:
         print(f"注意: {key} の印は要りません（型で許されています）: {code}")
+    if parts:
+        print(f"部品（`main()` を持たない共有の部品。**測る対象ではありません**）: "
+              f"{len(parts)} 本 — {', '.join(sorted(parts))}")
     if skipped:
         print(f"測れなかった道具: {len(skipped)} 本"
               f"（**「素通り 0」は、この {len(skipped)} 本については「見ていない」という意味です**）")
