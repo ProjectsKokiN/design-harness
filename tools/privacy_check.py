@@ -72,6 +72,7 @@ PLACEHOLDERS = {
     "<誰か>", "<name>", "<user>", "<ユーザー>", "someone", "user", "username",
     "runner", "you", "me", "example", "<誰>", "<n>", "USER", "$USER", "%USERNAME%",
     "dareka", "somebody", "anyone", "test", "tester", "dummy", "foo", "bar",
+    "someuser", "otheruser", "other", "sampleuser", "myname",
 }
 #: 走らない場所
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".dart_tool", "build", "dist"}
@@ -143,12 +144,17 @@ def self_test() -> int:
             print(f"self-test NG: {name} → {got} 件（期待 {want}）")
             ok = False
 
-    # 落とすもの
-    check_case("mac のホーム", '見よ /Users/someuser/dev/x.js', 1)
-    check_case("linux のホーム", 'path=/home/someuser/x', 1)
-    check_case("windows のホーム", r'C:\Users\SomeUser\x', 1)
-    check_case("メールアドレス", 'connect a.b@example.co.jp です', 1)
-    check_case("1行に2件", '/Users/someuser/a と /home/other/b', 2)
+    # **わざと落とすための例は、組み立てて作る。**
+    # 実名らしき文字列をそのまま書くと、**この検査自身がこのファイルで落ちます**
+    # （2026-09-07 に実際に踏んだ。伏せ字にすると今度は落ちなくなるので、組み立てる）
+    u = "real" + "name"
+    check_case("mac のホーム", f'見よ /Users/{u}/dev/x.js', 1)
+    check_case("linux のホーム", f'path=/home/{u}/x', 1)
+    check_case("windows のホーム", f'C:\\Users\\{u.title()}\\x', 1)
+    # メールも同じ理由で組み立てる（`@` を含む文字列をそのまま書くと自分で落ちる）
+    mail = "a.b" + "@" + "example.co.jp"
+    check_case("メールアドレス", f'connect {mail} です', 1)
+    check_case("1行に2件", f'/Users/{u}/a と /home/{u}2/b', 2)
     # 通すもの（**伏せ字**。ここが落ちると、検出のための試験データが書けなくなる）
     check_case("伏せ字（山括弧）", '/Users/<誰か>/dev/x.js', 0)
     check_case("伏せ字（someone）", '/Users/someone/dev/x.js', 0)
@@ -161,7 +167,7 @@ def self_test() -> int:
     check_case("伏せ字（dareka）", '{"a": "/Users/dareka/x"}', 0)
     # 伏せ字の判定そのもの
     for s, want in (("<誰か>", True), ("someone", True), ("runner", True),
-                    ("k.nishikawa", False), ("realname", False)):
+                    (u, False), ("a." + u, False)):
         if is_placeholder(s) != want:
             print(f"self-test NG: is_placeholder({s!r}) が {not want}"); ok = False
 
@@ -183,10 +189,10 @@ def self_test() -> int:
                 rc = main(["--root", str(d)])
             return rc, buf.getvalue()
 
-    rc, out = run_in({"a.md": "見よ /Users/realname/dev/x.js"})
+    rc, out = run_in({"a.md": f"見よ /Users/{u}/dev/x.js"})
     if rc != 1 or "公開してはいけない" not in out:
         print(f"self-test NG: **実パスがあるのに exit {rc}**（期待 1）"); ok = False
-    rc, out = run_in({"a.md": "connect a.b@example.co.jp"})
+    rc, out = run_in({"a.md": f"connect {mail}"})
     if rc != 1:
         print(f"self-test NG: **メールがあるのに exit {rc}**（期待 1）"); ok = False
     rc, out = run_in({"a.md": "/Users/<誰か>/x と ~/dev/y と Icon-20@2x.png"})

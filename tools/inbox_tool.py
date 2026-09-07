@@ -69,6 +69,14 @@ CROSS_RX = re.compile(r"^対象: ([A-Za-z0-9._-]+)@([0-9a-f]{7,40})", re.M)
 #: **横断の受信箱かどうかは、受信箱自身の書式の説明から導く**（2026-09-07・#89）。
 #: ファイル名やパスで決め打ちにすると、置き場が増えたときに黙って案件の書式に戻ります
 CROSS_DOC_RX = re.compile(r"^\s*対象: <リポジトリ名>@<sha>\s*$", re.M)
+#: **文書そのものの見出し**（依頼の本文ではない）。節の終わりはここか、次の依頼か、索引。
+#: 2026-09-07 まで「次の `## ` まで」で切っていたため、**本文が `## 小見出し` を使うと
+#: そこで切れ、残りが受信箱に取り残されていた**（実測: 依頼2件なのに 5,097 行・
+#: `## ` の見出し 309 個）。**移した行数を出す**ようにしたのも同じ日（下記）
+STRUCT_RX = re.compile(
+    r"^## (?:ビルドを頼むときの決まり|セッションログの書き方|完了した依頼の扱い|"
+    r"見出しの書式|使い方|宛先|ここだけの決まり|なぜ案件と分けたか)", re.M)
+
 #: 対象のリポジトリを探す場所
 REPO_HOME = Path.home() / "dev"        # reachability-ok: ~/.claude ではなく開発の置き場
 
@@ -101,14 +109,26 @@ def git(root, *args):
     return r.returncode, r.stdout.strip()
 
 
+def section_end(text, after: int) -> int:
+    """節の終わり。**次の依頼の見出し・索引・文書の構造の見出し**のいちばん手前。
+
+    **「次の `## `」で切ってはいけない。** 本文は `## 小見出し` を使うので、
+    そこで切ると**残りが取り残される**（2026-09-07 に実際に起きた）。
+    """
+    ends = [len(text)]
+    for rx in (HEAD_RX, INDEX_HEAD_RX, STRUCT_RX):
+        m = rx.search(text, after)
+        if m:
+            ends.append(m.start())
+    return min(ends)
+
+
 def sections(text):
-    """[(start, end, date, to, state, title)] — 見出しから次の `## ` まで。"""
-    heads = list(HEAD_RX.finditer(text))
+    """[(start, end, date, to, state, title)] — 見出しから節の終わりまで。"""
     out = []
-    for m in heads:
-        nxt = re.compile(r"^## ", re.M).search(text, m.end())
-        end = nxt.start() if nxt else len(text)
-        out.append((m.start(), end, m.group(1), m.group(2), m.group(3), m.group(4)))
+    for m in HEAD_RX.finditer(text):
+        out.append((m.start(), section_end(text, m.end()), m.group(1), m.group(2),
+                    m.group(3), m.group(4)))
     return out
 
 
@@ -165,7 +185,7 @@ def do_add(path, root, to, title, body, date, with_target, target_repo=None):
     if secs:
         pos = secs[0][0]                      # いちばん上の依頼の前（新しいものが上）
     else:
-        m = re.search(r"^## (?:ビルドを頼むときの決まり|セッションログの書き方|完了した依頼の扱い)", text, re.M)
+        m = STRUCT_RX.search(text)
         pos = m.start() if m else idx.start()
     text = text[:pos] + section + text[pos:]
     i = INDEX_HEAD_RX.search(text).end()
@@ -211,7 +231,13 @@ def do_complete(path, archive, query):
     else:
         a = ARCHIVE_TITLE + "\n\n" + block
     archive.write_text(a, encoding="utf-8")
-    print(f"完了にして {archive.name} へ移しました: {date} 宛先: {to} — {title}")
+    moved = block.count("\n")
+    print(f"完了にして {archive.name} へ移しました（**{moved} 行**）: {date} 宛先: {to} — {title}")
+    if moved < 5:
+        # **短すぎる移動は、切り方をまちがえた形。** 2026-09-07 に 200 行の節が
+        # 8 行として移り、残りが受信箱に取り残された（誰も気づかなかった）
+        print(f"注意: {moved} 行しか移っていません。**節の切り方を確かめてください**"
+              f"（本文が `## 小見出し` を使っていると、そこで切れる形が過去にありました）")
     return 0
 
 
@@ -403,6 +429,24 @@ def self_test():
         check(rc == 1 and "対象の commit がありません" in out, f"対象の無いビルド依頼を通した（{rc}）")
         rc, out = run("--check-target")
         check(rc == 0, "--require-for 無しで対象の無い依頼を落とした")
+
+        # ─── **本文が `## 小見出し` を使う節を、まるごと移せるか**（2026-09-07）───
+        # ここが抜けていたので、**依頼2件なのに受信箱が 5,097 行**まで膨らんだ。
+        # 見出しだけ移って本文が取り残され、**司令塔がその先を読んでいなかった**
+        body3 = root / "b3.md"
+        body3.write_text("前置き\n\n## 実測しました\n\n表\n\n## 結論\n\n終わり\n",
+                         encoding="utf-8")
+        run("--add", "--to", "Windows", "--title", "小見出しのある依頼", "--body", str(body3),
+            "--date", "2026-09-07", "--no-target")
+        rc, out = run("--complete", "小見出しのある依頼")
+        t = inbox.read_text(encoding="utf-8")
+        a = archive.read_text(encoding="utf-8")
+        check(rc == 0, f"小見出しのある節を完了にできなかった（{rc}）")
+        for s in ("## 実測しました", "## 結論", "終わり"):
+            check(s not in t, f"**本文が受信箱に取り残された**: {s!r}")
+            check(s in a, f"**本文がアーカイブに入っていない**: {s!r}")
+        check("## セッションログの書き方" in t and "## ビルドを頼むときの決まり" in t,
+              "**文書の構造の見出しまで移した**（切りすぎ）")
 
         # 曖昧な指定は止まる（3 件に当たる）
         rc, _ = run("--complete", "宛先:")
