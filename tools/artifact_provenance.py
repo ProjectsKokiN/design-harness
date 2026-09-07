@@ -3,9 +3,14 @@
 
 ## 実害（2026-09-07）
 
-**iOS の配布物には何も残っていません。** `flutter build ipa` が出すのは
-`Runner.ipa` で、**どのコミットから作ったかは名前のどこにもありません。**
+**iOS の配布物には何も残っていません。** `flutter build ipa` が `build/ios/ipa/` に
+出す `.ipa` の名前に、**どのコミットから作ったかがどこにもありません。**
 配った TestFlight のビルドが手元のどの版なのか、**成果物の側からは辿れません。**
+
+**その名前は案件ごとに違います。** `.xcarchive` は `Runner.xcarchive` ですが、
+**`.ipa` は製品名（`PRODUCT_NAME`）で出ます** — aub-familywalk は `aub_familywalk.ipa`
+でした（2026-09-07・Mac mini が実物で確認。**それまで `Runner.ipa` と書いていたのは
+誤りでした**）。**だからこの道具も、名前を決め打ちしません。**
 
 Android は両案件とも残しています。
 
@@ -176,14 +181,15 @@ def self_test():
         ck(rc == 2, f"配布物が無いのに 2 を返さない: {rc}")
         ck(any("見ていない" in x for x in lines), "0件を綺麗と読ませない文言が無い")
 
-        # 2) **iOS がいま出す名前 → 落ちる**（ここが本体）
-        (out / "Runner.ipa").write_bytes(b"x")
+        # 2) **iOS がいま出す名前 → 落ちる**（ここが本体）。
+        # 名前は 2026-09-07 に Mac mini が実物で見たもの（製品名で出る）
+        (out / "aub_familywalk.ipa").write_bytes(b"x")
         rc, lines = check([out], root)
-        ck(rc == 1, f"**素性の無い Runner.ipa を通した**: {rc}")
-        ck(any("Runner.ipa" in x for x in lines), "どれが駄目かを出していない")
+        ck(rc == 1, f"**素性の無い .ipa を通した**: {rc}")
+        ck(any("aub_familywalk.ipa" in x for x in lines), "どれが駄目かを出していない")
 
         # 3) aub の形 → 通る
-        (out / "Runner.ipa").unlink()
+        (out / "aub_familywalk.ipa").unlink()
         (out / f"iichoshi-walk-1.0.0-2026-09-07-{sha}.apk").write_bytes(b"x")
         rc, _ = check([out], root)
         ck(rc == 0, f"aub の形を落とした: {rc}")
@@ -236,12 +242,12 @@ def self_test():
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             rc = main(["--root", str(root), str(out)])
         ck(rc == 2, f"入口が配布物なしで 2 を返さない: {rc}")
-        (out / "Runner.ipa").write_bytes(b"x")
+        (out / "aub_familywalk.ipa").write_bytes(b"x")
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             rc = main(["--root", str(root), str(out)])
         ck(rc == 1, f"入口が素性なしで 1 を返さない: {rc}")
-        (out / "Runner.ipa").unlink()
+        (out / "aub_familywalk.ipa").unlink()
         (out / f"MyApp-{sha}.ipa").write_bytes(b"x")
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
