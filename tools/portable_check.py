@@ -86,6 +86,26 @@ def check_encoding(root, verbose=False):
     return ng
 
 
+def _is_str_call(node) -> bool:
+    """`str(なにか)` の呼び出しか。"""
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "str" and len(node.args) == 1)
+
+
+def _has_sep(node) -> bool:
+    """比べる相手が**パスの区切りを含む**か。
+
+    **ここを絞らないと誤検出します。** `str(x).startswith("FILL")` のように
+    区切りを含まない比較は Windows でも壊れません（2026-09-07 に実測: 絞る前は
+    `export_sanity_check.py:154` と `gap_report.py:109` の2件が誤検出でした）。
+    **壊れるのは `/` を決め打ちしたときだけ。**
+    """
+    for n in ast.walk(node):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and "/" in n.value:
+            return True
+    return False
+
+
 def check_style(root):
     """書き方を静的に見る。"""
     ng = []
@@ -102,6 +122,35 @@ def check_style(root):
                                   "絵文字を出した瞬間に cp932 で死ぬ"))
 
         for node in ast.walk(tree):
+            # **`str(Path)` の比較。** 説明の表には昔から載っているのに、
+            # **当てていなかった**（2026-09-07 発見）。Windows は `str(Path)` が `\` を返すので、
+            # `/` を決め打ちした比較は**必ず False** になる。実害: `ci_path_check` の
+            # self-test が Windows でだけ4件落ちていた（Mac では誰も気づけない）
+            if isinstance(node, ast.Compare) and _is_str_call(node.left) \
+                    and any(_has_sep(c) for c in node.comparators):
+                for op in node.ops:
+                    if isinstance(op, (ast.Eq, ast.NotEq, ast.In, ast.NotIn)):
+                        ng.append((f.name, node.lineno,
+                                   "**`str(Path)` を `==` / `in` で比べている。**"
+                                   "Windows は区切りが `\\` なので食い違う。"
+                                   "`Path` どうしで比べるか `.as_posix()` を通す"))
+                        break
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                    and node.func.attr in ("startswith", "endswith") \
+                    and _is_str_call(node.func.value) \
+                    and any(_has_sep(a) for a in node.args):
+                ng.append((f.name, node.lineno,
+                           f"**`str(Path).{node.func.attr}(` を使っている。**"
+                           "Windows は区切りが `\\` なので `/` 決め打ちと食い違う。"
+                           "`Path.relative_to()` を try/except で使う"))
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add) \
+                    and _is_str_call(node.left) \
+                    and isinstance(node.right, ast.Constant) \
+                    and isinstance(node.right.value, str) \
+                    and node.right.value.startswith("/"):
+                ng.append((f.name, node.lineno,
+                           "**`str(Path) + \"/\"` と繋いでいる。**"
+                           "Windows では区切りが混ざる。`Path` の `/` 演算子を使う"))
             # encoding= の無い読み書き
             if isinstance(node, ast.Call):
                 name = ""
@@ -215,6 +264,33 @@ def self_test():
             "    subprocess.run([sys.executable, '-c', 'pass'])\n"
             "    subprocess.run(['git', 'status'])\n", encoding="utf-8")
         check(check_style(td) == [], f"綺麗な道具を咎めた: {check_style(td)}")
+
+        # ─── **`str(Path)` の比較**（2026-09-07 に足した）─────────────────
+        # 説明の表には昔から載っていたのに**当てていなかった**。実害:
+        # `ci_path_check` の self-test が Windows でだけ4件落ちていた
+        sep = td / "bad_sep.py"
+        sep.write_text("import _utf8\nfrom pathlib import Path\n"
+                       "def f(target, root):\n"
+                       "    return str(target).startswith(str(root) + '/')\n",
+                       encoding="utf-8")
+        found = [n for n in check_style(td) if n[0] == "bad_sep.py"]
+        check(any("startswith" in m for *_, m in found),
+              "**`str(Path).startswith(` を咎めない**")
+        check(any('+ "/"' in m or "+ '/'" in m or "繋いで" in m for *_, m in found),
+              '**`str(Path) + "/"` を咎めない**')
+        sep.unlink()
+
+        # **区切りを含まない比較は通す**（絞らないと誤検出する。実測2件あった）
+        okc = td / "ok_cmp.py"
+        okc.write_text("import _utf8\nfrom pathlib import Path\n"
+                       "def f(k, o):\n"
+                       "    if str(k.get('sz', '')).startswith('FILL'):\n"
+                       "        return True\n"
+                       "    return str(o.get('kind', '')).startswith('ignored')\n",
+                       encoding="utf-8")
+        found = [n for n in check_style(td) if n[0] == "ok_cmp.py"]
+        check(found == [], f"**区切りの無い比較を咎めた**（誤検出）: {found}")
+        okc.unlink()
 
         # **encoding= が無いと落ちる**
         bad = td / "bad_enc.py"
