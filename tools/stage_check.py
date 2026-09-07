@@ -60,6 +60,7 @@
 """
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -114,6 +115,72 @@ def documented_exceptions(readme):
             for name in re.findall(r"`([a-z_]+)`", line):
                 out.add(name)
     return out
+
+
+def self_test_template_sync():
+    """**元ファイルの版**の妨害テスト（#95）。
+
+    本体は「**元ファイルを1文字変えたら落ちること**」。落ちなければ、この道具は
+    **段が腐ったことに気づけない**（`--stages` は段が在るかしか見ていない）。
+    """
+    import contextlib, io, json as _json, tempfile
+    ok = True
+
+    def check(c, m):
+        nonlocal ok
+        if not c:
+            ok = False
+            print(f"  NG: {m}")
+
+    def run(tpl: Path, wv: Path):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = check_template_sync(tpl, wv)
+        return rc, buf.getvalue()
+
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        tpl = base / "verify.sh.template"
+        tpl.write_text('step "あ" "$PY" a.py\n', encoding="utf-8")
+        wv = base / "stages.json"
+
+        # 宣言のファイルが無い → **2（確かめられなかった）**
+        rc, _ = run(tpl, wv)
+        check(rc == 2, f"宣言が無いのに 2 を返さない: {rc}")
+
+        # 宣言はあるが版の記録が無い → 1
+        wv.write_text(_json.dumps({"notHere": {}}, ensure_ascii=False), encoding="utf-8")
+        rc, out = run(tpl, wv)
+        check(rc == 1, f"版の記録が無いのに落ちない: {rc}")
+        check(TEMPLATE_KEY in out, "何を足せばよいか出していない")
+
+        # 記録して一致 → 0
+        dig = template_digest(tpl)
+        wv.write_text(_json.dumps(
+            {"notHere": {}, TEMPLATE_KEY: {"指紋": dig, "確かめた版": "abc1234",
+                                           "確かめた日": "2026-09-07"}},
+            ensure_ascii=False), encoding="utf-8")
+        rc, _ = run(tpl, wv)
+        check(rc == 0, f"一致しているのに落ちる: {rc}")
+
+        # **元ファイルを1文字変える → 落ちる**（ここが本体）
+        tpl.write_text('step "あ" "$PY" a.py --strict\n', encoding="utf-8")
+        rc, out = run(tpl, wv)
+        check(rc == 1, f"**元ファイルが変わったのに落ちない**: {rc}")
+        check("git -C design/harness log -p" in out,
+              "差分の見方を出していない（落とすだけでは直せない）")
+        check("abc1234" in out, "どの版から見ればよいかを出していない")
+
+        # 版を書き換えたら通る（「見た」の記録）
+        wv.write_text(_json.dumps(
+            {"notHere": {}, TEMPLATE_KEY: {"指紋": template_digest(tpl),
+                                           "確かめた版": "abc1234",
+                                           "確かめた日": "2026-09-07"}},
+            ensure_ascii=False), encoding="utf-8")
+        rc, _ = run(tpl, wv)
+        check(rc == 0, f"版を書き換えたのに落ちる: {rc}")
+
+    return ok
 
 
 def self_test_stages():
@@ -767,6 +834,83 @@ def matrix(template, projects):
     return 0
 
 
+TEMPLATE_KEY = "$元ファイルの版"
+
+
+def template_digest(template: Path) -> str:
+    """元ファイルの指紋。**中身そのものから導く**（手で書かない）。"""
+    return hashlib.sha256(template.read_bytes()).hexdigest()[:16]
+
+
+def check_template_sync(template: Path, waivers_path: Path):
+    """**元ファイルが変わったのに、この案件が見ていない**状態を落とす（#95）。
+
+    ## 実害（2026-09-07・これが立った理由そのもの）
+
+    `ci/verify.sh.template` の鮮度の段を `exit 1` → `exit 2` に直した（`851f586`）。
+    **案件は2つとも `1` のままだった。** 気づいたのは、たまたま `FIGMA_TOKEN` を
+    渡さずに走らせたからで、**検査は1つも鳴らなかった。**
+
+    ## なぜ段の一覧では捕まらないか
+
+    `--stages` は**段が在るか**を見ている。**段の中身は見ていない。**
+    **段が消えるのは捕まえられるが、段が腐るのは捕まえられない。**
+    案件は古い版を走らせ続け、CI は緑のまま。
+
+    ## 全文一致では落とせない
+
+    案件ごとの差（`--owns` の対象・案件固有の段・パスの読み替え）は**正当**。
+    だから**中身を比べるのではなく、「元ファイルが変わったことに気づいたか」を見る。**
+    指紋が変われば落とし、**人（か AI）が差分を読んでから版を書き換える**。
+    書き換えることが「見た」の記録になる。
+
+    **これは「同じであること」を求める検査ではない。**「見たこと」を求める検査。
+    """
+    if not template.exists():
+        print(f"元ファイルがありません: {template}", file=sys.stderr)
+        return 2
+    now = template_digest(template)
+
+    rec = {}
+    if waivers_path and waivers_path.exists():
+        try:
+            rec = json.loads(waivers_path.read_text(
+                encoding="utf-8")).get(TEMPLATE_KEY) or {}
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"宣言が読めません: {waivers_path}: {e}", file=sys.stderr)
+            return 2
+    else:
+        print(f"宣言がありません: {waivers_path}\n"
+              f"  **確かめられないので落とします。**0件ではありません", file=sys.stderr)
+        return 2
+
+    was = rec.get("指紋")
+    if not was:
+        print(f"**元ファイルの版を、この案件が記録していません。**\n"
+              f"  `{waivers_path}` に次を足してください:\n"
+              f'    "{TEMPLATE_KEY}": {{"指紋": "{now}", '
+              f'"確かめた版": "<design/harness の sha>", "確かめた日": "<YYYY-MM-DD>"}}\n'
+              f"  **足す前に元ファイルを一度読んでください。**"
+              f"記録は「同じにした」ではなく「見た」の意味です", file=sys.stderr)
+        return 1
+    if was == now:
+        print(f"元ファイルの版: 見たときから変わっていません（指紋 {now}）")
+        return 0
+
+    seen = rec.get("確かめた版") or "<記録なし>"
+    print(f"**元ファイルが変わっています。この案件はまだ見ていません。**\n"
+          f"  この案件が見た指紋: {was}（{rec.get('確かめた日', '日付なし')}・"
+          f"harness {seen}）\n"
+          f"  いまの指紋:        {now}\n"
+          f"  差分を読んでください:\n"
+          f"    git -C design/harness log -p {seen}..HEAD -- ci/verify.sh.template\n"
+          f"  **この案件に要るものを入れてから**、`{TEMPLATE_KEY}` の指紋を"
+          f"`{now}` に書き換えてください。\n"
+          f"  **要らないなら要らないと分かった上で書き換えてください。**"
+          f"書き換えが「見た」の記録です", file=sys.stderr)
+    return 1
+
+
 def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None,
                  prepush_template=None):
     """元ファイルの段が、この案件から黙って落ちていないかを見る。"""
@@ -986,9 +1130,16 @@ def main(argv=None):
         return matrix(args.template, args.matrix)
 
     if args.stages:
-        return check_stages(args.template, args.verify, args.ci,
-                            args.waivers, args.gate, args.prepush,
-                            args.prepush_template)
+        rc = check_stages(args.template, args.verify, args.ci,
+                          args.waivers, args.gate, args.prepush,
+                          args.prepush_template)
+        # **同じ段の中で元ファイルの版も見る**（#95）。
+        # **新しい段にしない**のが肝です——新しい段を足す方法しかないなら、
+        # **その足し方こそが案件に届かない**（#95 が言っている問題そのもの）。
+        # 既にある段の中に入れれば、**版を上げた瞬間に効きます。**
+        print()
+        rc2 = check_template_sync(args.template, args.waivers)
+        return rc or rc2
 
     if not args.verify.exists():
         print(f"verify.sh がありません: {args.verify}\n"
@@ -1173,6 +1324,7 @@ def self_test():
         print("self-test NG: 網羅の計測が外側の追跡係を壊した"); ok = False
 
     ok = self_test_stages() and ok
+    ok = self_test_template_sync() and ok
 
     # ─── --matrix（#76）: 行列を導出する ──────────────────────────
     import io as _io2, contextlib as _ctx2
