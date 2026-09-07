@@ -123,6 +123,26 @@ def self_test():
         print("git がありません。**確かめられないので 2 を返します**", file=sys.stderr)
         return 2
 
+    # **CI の環境変数を外してから測ります。**
+    # `check()` は CI では何も見ずに 0 を返すので、**外さないと8件すべてが 0 になり、
+    # self-test が「全部通った」ように見えます。**
+    # 2026-09-07、GitHub Actions で実際にそうなりました（`CI=true` が立っている）。
+    # **「0 件は見ていない」の典型を、この道具自身が踏みました。**
+    # 手元では中身が走り、CI でだけ空になる——**手元で緑にしても気づけない形**です。
+    _saved = {k: os.environ.pop(k, None) for k in ("CI", "HARNESS_MACHINE")}
+    try:
+        _body(exe, ck)
+    finally:
+        for _k, _v in _saved.items():
+            if _v is not None:
+                os.environ[_k] = _v
+    print("self-test: OK" if ok else "self-test: NG")
+    return 0 if ok else 1
+
+
+def _body(exe, ck):
+    """self-test の中身。**CI の環境変数を外した状態で呼ばれます。**"""
+    import tempfile
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         subprocess.run([exe, "init", "-q"], cwd=str(root), check=True)
@@ -131,6 +151,16 @@ def self_test():
         rc, lines = check(root)
         ck(rc == 1, f"未設定なのに落ちない: {rc}")
         ck(any("core.hooksPath" in x for x in lines), "直し方を出していない")
+
+        # 1.5) **別の置き場を指している → 落ちる。**
+        # これが無いと「置き場が違う」判定を潰しても self-test が気づきません
+        # （2026-09-07 に仕込みで実測: 潰しても NG 0 件で素通りしました）
+        subprocess.run([exe, "config", "core.hooksPath", ".otherhooks"],
+                       cwd=str(root), check=True)
+        rc, lines = check(root)
+        ck(rc == 1, f"**別の置き場を指しているのに落ちない**: {rc}")
+        ck(any(".otherhooks" in x for x in lines),
+           f"どこを指しているかを出していない: {lines}")
 
         # 2) 設定したが呼ぶ先が無い → 落ちる
         subprocess.run([exe, "config", "core.hooksPath", ".githooks"],
@@ -194,9 +224,6 @@ def self_test():
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             rc = main(["--root", str(root)])
         ck(rc == 0, f"**入口が効いているのに 0 を返さない**: {rc}")
-
-    print("self-test: OK" if ok else "self-test: NG")
-    return 0 if ok else 1
 
 
 def main(argv=None):
