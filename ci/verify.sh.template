@@ -157,6 +157,13 @@ step "機体の担当（担当外のパスを変えていないか）" \
 step "担当の宣言（実体を指しているか）" \
   "$PY" "$HARNESS/tools/machine_scope.py" --config design/machine-scope.json --check-paths
 
+# **関門そのものが検査されていなかった**（2026-09-07）。`.githooks/pre-push` は
+# リポジトリに入っているが、`core.hooksPath` は**クローンごとのローカル設定**なので
+# 配っても付いてこない。未設定のクローンから `verify.sh` が赤いまま push が通った。
+# **在るだけでは通さない**——中身が verify.sh を呼んでいるかまで見る。CI では飛ばす
+step "押す前の関門（この機体で効いているか）" \
+  "$PY" "$HARNESS/tools/hook_check.py" --root .
+
 # **Windows でだけ落ちる書き方**を Mac / Linux から見つける。検査そのものが
 # macOS でしか回っていなかったため、aub では3日で5件出た（うち2件は検査自身）。
 # --style は読むだけで速い。--encoding は cp932 で全道具を回すので遅い。
