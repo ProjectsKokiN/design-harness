@@ -194,7 +194,7 @@ def main(argv=None):
             shared = runs & token_runs(text, size)
             if not shared:
                 continue
-            rel = str(f.relative_to(base))
+            rel = f.relative_to(base).as_posix()
             why = allow.get(f"{name}:{rel}") or allow.get(rel)
             if isinstance(why, str) and why.strip():
                 continue

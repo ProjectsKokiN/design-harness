@@ -106,6 +106,24 @@ def _has_sep(node) -> bool:
     return False
 
 
+def _is_relative_to_call(node) -> bool:
+    """`なにか.relative_to(...)` の呼び出しか。"""
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "relative_to")
+
+
+def _reason_ok(src_lines, lineno) -> bool:
+    """その行に `# portable-ok:` の理由が書いてあるか。
+
+    **理由の無い宣言は落とします。** `# portable-ok:` だけでは通しません
+    （後ろに中身が要る）。
+    """
+    if not (1 <= lineno <= len(src_lines)):
+        return False
+    _, _, after = src_lines[lineno - 1].partition("# portable-ok:")
+    return bool(after.strip())
+
+
 def check_style(root):
     """書き方を静的に見る。"""
     ng = []
@@ -113,6 +131,7 @@ def check_style(root):
         try:
             src = f.read_text(encoding="utf-8")
             tree = ast.parse(src)
+            src_lines = src.split("\n")
         except (OSError, SyntaxError) as e:
             ng.append((f.name, 0, f"読めません: {e}")); continue
 
@@ -151,6 +170,21 @@ def check_style(root):
                 ng.append((f.name, node.lineno,
                            "**`str(Path) + \"/\"` と繋いでいる。**"
                            "Windows では区切りが混ざる。`Path` の `/` 演算子を使う"))
+            # **`str(x.relative_to(y))`。** 相対パスを文字列にする目的は、ほぼ
+            # 「`/` で書かれたデータ（JSON の鍵・除外の一覧）と突き合わせる」こと。
+            # Windows は `\` を返すので**照合が必ず外れ、黙って全部すり抜けます。**
+            # 実害（2026-09-07・#96）: `impl_value_check` は宣言済みの数を
+            # **1件も引けなくなり**、宣言してあるものを全部 NG にしていた。
+            # `impl_duplication_check` は許可の一覧、`duplication_check` は除外の一覧が
+            # 同じ形で死んでいた。**4本すべて Mac では通るので、誰も気づけない。**
+            # **表示だけに使うなら `# portable-ok: 表示のみ` と理由を書く。**
+            if _is_str_call(node) and _is_relative_to_call(node.args[0]) \
+                    and not _reason_ok(src_lines, node.lineno):
+                ng.append((f.name, node.lineno,
+                           "**`str(Path.relative_to(...))` を使っている。**"
+                           "Windows は `\\` 区切りになるので、`/` で書かれた"
+                           "JSON の鍵や除外の一覧と**照合が外れます**。"
+                           "`.as_posix()` を通すこと"))
             # encoding= の無い読み書き
             if isinstance(node, ast.Call):
                 name = ""
@@ -268,6 +302,39 @@ def self_test():
         # ─── **`str(Path)` の比較**（2026-09-07 に足した）─────────────────
         # 説明の表には昔から載っていたのに**当てていなかった**。実害:
         # `ci_path_check` の self-test が Windows でだけ4件落ちていた
+        # ─── **`str(x.relative_to(y))`**（2026-09-07・#96 で足した）─────────
+        # 実害: Windows で `\` が返るため、`/` で書かれた JSON の鍵と
+        # **照合が必ず外れ**、`impl_value_check` は宣言済みの数を1件も引けず
+        # 全部 NG にしていた。**同じ形が4本にあった。Mac では全部通る。**
+        rel = td / "bad_rel.py"
+        rel.write_text("import _utf8\nfrom pathlib import Path\n"
+                       "def f(base, declared):\n"
+                       "    rel = str(base.relative_to(base))\n"
+                       "    return declared.get(rel)\n", encoding="utf-8")
+        found = [n for n in check_style(td) if n[0] == "bad_rel.py"]
+        check(any("as_posix" in m for _, _, m in found),
+              f"**str(x.relative_to(y)) を咎めていない**: {found}")
+        rel.write_text("import _utf8\nfrom pathlib import Path\n"
+                       "def f(base, declared):\n"
+                       "    rel = base.relative_to(base).as_posix()\n"
+                       "    return declared.get(rel)\n", encoding="utf-8")
+        check([n for n in check_style(td) if n[0] == "bad_rel.py"] == [],
+              "**.as_posix() を咎めた**（直した形を落としてはいけない）")
+        # **理由を書けば通る。ただし理由の中身が要る**
+        rel.write_text("import _utf8\nfrom pathlib import Path\n"
+                       "def f(base):\n"
+                       "    print(str(base.relative_to(base)))"
+                       "  # portable-ok: 表示のみ\n", encoding="utf-8")
+        check([n for n in check_style(td) if n[0] == "bad_rel.py"] == [],
+              "**理由つきを咎めた**")
+        rel.write_text("import _utf8\nfrom pathlib import Path\n"
+                       "def f(base):\n"
+                       "    print(str(base.relative_to(base)))"
+                       "  # portable-ok:\n", encoding="utf-8")
+        check([n for n in check_style(td) if n[0] == "bad_rel.py"] != [],
+              "**中身の無い `# portable-ok:` を通した**（理由の無い宣言は落とす）")
+        rel.unlink()
+
         sep = td / "bad_sep.py"
         sep.write_text("import _utf8\nfrom pathlib import Path\n"
                        "def f(target, root):\n"

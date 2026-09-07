@@ -72,7 +72,7 @@ def scan(roots, scope, suffixes, exclude):
             for f in sorted(base.rglob("*")):
                 if not f.is_file() or f.suffix not in suffixes:
                     continue
-                rel = str(f.relative_to(root))
+                rel = f.relative_to(root).as_posix()
                 if any(x in rel for x in exclude):
                     continue
                 seen.setdefault(f.name, []).append(

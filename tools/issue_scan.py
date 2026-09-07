@@ -26,7 +26,10 @@ def encoded_dirs(root: Path):
     """その案件の会話記録がある置き場をすべて返す（サブディレクトリで作業した分も拾う）。"""
     if not PROJECTS.is_dir():
         return []
-    want = str(root.resolve()).replace("/", "-")
+    # **区切りは `/` とは限りません。** Windows は `\\` なので、`/` だけを置き換えると
+    # 名前がまるごと変わらず、置き場が1つも見つかりません（design-harness #96 と同じ形）。
+    # **Windows でのドライブ文字（`C:`）の扱いは未検証**です（この機体では出せません）。
+    want = str(root.resolve()).replace("\\", "/").replace("/", "-")
     return [d for d in PROJECTS.iterdir()
             if d.is_dir() and (d.name == want or d.name.startswith(want + "-"))]
 
@@ -69,7 +72,9 @@ def sessions_by_cwd(root: Path, limit_days=30):
                         except json.JSONDecodeError:
                             continue
                         cwd = rec.get("cwd") or ""
-                        if cwd == want or cwd.startswith(want + "/"):
+                        # **`/` を足さない。** 記録の `cwd` も `want` も
+                        # その機体の書き方なので、`os.sep` で揃える（#96）
+                        if cwd == want or cwd.startswith(want + os.sep):
                             out.append(f)
                             break
             except OSError:

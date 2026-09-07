@@ -231,7 +231,7 @@ def main(argv=None):
 
     errs, waived = [], 0
     for f, (nums, toks) in sorted(found.items()):
-        rel = str(f.relative_to(base))
+        rel = f.relative_to(base).as_posix()
         d = declared.get(rel, {})
         for n in nums:
             why = d.get(n) or d.get(norm(n))
@@ -245,7 +245,7 @@ def main(argv=None):
             errs.append(f"  {rel}: トークン `{x}` が生成物にありません。")
 
     for f, ln, what, why in comp_hits:
-        rel = str(f.relative_to(base))
+        rel = f.relative_to(base).as_posix()
         d = declared.get(rel, {})
         val = re.search(r"(\d+(?:\.\d+)?)", what)
         why_ok = d.get(val.group(1)) if val else None
