@@ -131,6 +131,13 @@ jobs:
 
       # **課題は Issue に集める。** 宣言があるのに Issue が無いものを知らせる
       #（作るのは人が --apply を回したときだけ）
+      # **このリポジトリは公開。** 2026-09-06 に手で書いた文書へ個人の情報が入り、
+      # 気づいたのは翌日だった（ホーム下の絶対パス 407 箇所・メール2種）。
+      # `generated_check` は印を持つ生成物だけ、`portable_check` は文字コードとパス区切りが
+      # 対象で、**手で書く文書に当たる入り口が無かった**
+      - name: 公開してよいものだけか（個人の情報）
+        run: python3 tools/privacy_check.py
+
       - name: 課題の台帳（Issue の無い課題）
         run: python3 tools/issue_sync.py --check --root .
 
