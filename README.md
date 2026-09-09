@@ -39,6 +39,7 @@
 | **`tools/generated.py`** | **そのファイルは生成物か**を1か所で決める（生成器の書いた印から導出。一覧は宣言しない）。`machine_scope` と `generated_check` が共有 |
 | **`tools/generated_check.py`** | **生成物に機体固有の文字列が入っていないか**（ホームの下の絶対パス・円記号の区切り）。生成物を `shared` にする前提の安全装置 |
 | `tools/_utf8.py` | 出力の文字コードで死なないようにする（各道具が import するだけ。単体では回さない） |
+| `tools/_submodules.py` | **submodule の置き場を `.gitmodules` から導く**（各道具が import するだけ。単体では回さない）。名前で `harness` を外していたため、ハーネス一式を `site/design/harness/` に置く案件では**案件のファイルまで全部外れて0 件**になっていた（#97 / #105） |
 | `tools/issue_scan.py` | 前回まとめた日時以降のやりとりを取り出す（`/harness-issues` が使う） |
 | **`seeds/<stack>/`** | 種のひな形（わざと違反させたコード）。案件の `design/seeds/` へコピーする |
 | **`tools/gen_io.py`** | **生成器の入出力の基盤**（書き出しを読む・件数を照合・生成物を LF で書く・色の変換） |
@@ -278,7 +279,7 @@ CI は最後の砦ですが、**気づくのが push のあと**になります�
 |---|---|
 | `contact_sheet` / `token_query` / `harness_stats` / `generated` | **合否を出さない**（人が見る道具・一覧を出すだけ）。`generated` の判定の側は `generated_check` が持ち、そちらは測っています |
 
-**2026-09-07 に、部品はこの表から要らなくなりました。** `_utf8` / `figma_names` / `gen_io` は **`main()` を持たない共有の部品**で、単体で合否を出しません。`attack/mutation_test.py` が **`main()` の有無から導いて**分けるようにしたので、**一覧を宣言しなくてよくなりました**（宣言は古くなりますが、導出は古くなりません）。
+**2026-09-07 に、部品はこの表から要らなくなりました。** `_utf8` / `_submodules` / `figma_names` / `gen_io` は **`main()` を持たない共有の部品**で、単体で合否を出しません。`attack/mutation_test.py` が **`main()` の有無から導いて**分けるようにしたので、**一覧を宣言しなくてよくなりました**（宣言は古くなりますが、導出は古くなりません）。
 
 **2026-09-06 に `pin_check` と `figma_freshness` をこの表から外しました。**
 どちらも `--self-test` を持っています（ネットワークに触らない範囲を測る形になった）。
