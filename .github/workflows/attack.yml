@@ -25,6 +25,12 @@ jobs:
       - name: push 前のフック（削除を飛ばすか・握り潰していないか）
         run: python3 attack/prepush_test.py
 
+      # ハーネスの中身を守る段は**素の shell**（道具にすると、その道具を
+      # 書き換えれば無効化できるため）。`--self-test` を持てないので、
+      # 元ファイルから段を取り出して作り物のリポジトリに当てる（#98）
+      - name: ハーネスの中身を守る段（書き換え・追加・別コミットで落ちるか）
+        run: python3 attack/engine_clean_test.py
+
       - name: 書き出し器のひな形（figma.mixed で落ちないか）
         run: node attack/preamble_test.mjs
 
