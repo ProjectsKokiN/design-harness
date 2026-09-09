@@ -47,6 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない
+from _submodules import is_inside, submodule_paths
 
 #: コード生成物の見出し（`gen_io.write` が書く形）
 CODE_MARK = "自動生成。手で編集しない"
@@ -119,6 +120,7 @@ def list_generated(root, subdirs=None) -> list[tuple[Path, str]]:
     `design/harness`（submodule）と `__pycache__` と `.git` は見ない。
     """
     root = Path(root)
+    _subs, _how = submodule_paths(root)
     out, seen = [], set()
     for sub in (subdirs or ["design"]):
         base = root if sub == "." else root / sub
@@ -127,8 +129,16 @@ def list_generated(root, subdirs=None) -> list[tuple[Path, str]]:
         for p in sorted(base.rglob("*")):
             if not p.is_file():
                 continue
-            parts = set(p.relative_to(root).parts)
-            if "harness" in parts or "__pycache__" in parts or ".git" in parts:
+            rel_ = p.relative_to(root)
+            parts = set(rel_.parts)
+            if "__pycache__" in parts or ".git" in parts:
+                continue
+            # **submodule は git から導いて外します**（#97）。
+            # `"harness" in parts` で外していたため、ハーネス一式を
+            # `site/design/harness/` に置いている案件では**案件の生成物まで
+            # 全部外れて 0 件**になっていた（2026-09-09・qnd-database で実測）。
+            # **分からないときは外しません**（外しすぎた 0 件は「綺麗」と読み違える）。
+            if _subs and is_inside(rel_, _subs):
                 continue
             rel = p.relative_to(root)
             if rel in seen:
@@ -201,15 +211,42 @@ def self_test() -> int:
             print("self-test NG: 存在しないファイルを生成物と判定した"); ok = False
 
         # 導出が submodule と __pycache__ を避けるか
+        #
+        # **submodule は名前ではなく `.gitmodules` から導きます**（#97）。
+        # `"harness" in parts` で外していたため、ハーネス一式を
+        # `site/design/harness/` に置いている案件では**案件の生成物まで
+        # 全部外れて 0 件**になっていました（2026-09-09・qnd-database で実測）。
         (d / "design" / "harness" / "tools").mkdir(parents=True)
         (d / "design" / "harness" / "tools" / "x.json").write_text(
             '{"$手で書き換えない": "y"}', encoding="utf-8")
         (d / "design" / "figma").mkdir(parents=True)
         (d / "design" / "figma" / "y.json").write_text(
             '{"$手で書き換えない": "y"}', encoding="utf-8")
-        found = [str(p) for p, _ in list_generated(d)]
+
+        # (1) 宣言が無ければ**外しません**。**多く見えるほうに倒します**——
+        #     外しすぎた `0 件` は「綺麗」と読み違えるからです
+        found = sorted(str(p) for p, _ in list_generated(d))
+        if found != ["design/figma/y.json", "design/harness/tools/x.json"]:
+            print(f"self-test NG: **宣言が無いのに外した**: {found}"); ok = False
+
+        # (2) `.gitmodules` に書いてあれば外す
+        (d / ".gitmodules").write_text(
+            '[submodule "design/harness"]\n\tpath = design/harness\n'
+            '\turl = https://example.invalid/h.git\n', encoding="utf-8")
+        found = sorted(str(p) for p, _ in list_generated(d))
         if found != ["design/figma/y.json"]:
-            print(f"self-test NG: 導出の結果が違う: {found}"); ok = False
+            print(f"self-test NG: submodule を外していない: {found}"); ok = False
+
+        # (3) **名前が似ているだけの置き場は外さない**（`harness2`）。
+        #     名前で外していたときは、ここも巻き添えになっていました
+        (d / "design" / "harness2").mkdir(parents=True)
+        (d / "design" / "harness2" / "z.json").write_text(
+            '{"$手で書き換えない": "y"}', encoding="utf-8")
+        found = sorted(str(p) for p, _ in list_generated(d))
+        if found != ["design/figma/y.json", "design/harness2/z.json"]:
+            print(f"self-test NG: **名前が似ているだけの置き場を外した**: {found}"); ok = False
+        (d / "design" / "harness2" / "z.json").unlink()
+        (d / ".gitmodules").unlink()
 
     if ok:
         print("self-test: OK")

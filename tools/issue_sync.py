@@ -67,11 +67,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+from _submodules import is_inside, submodule_paths
 
 MARK = "harness-finding"
 MARK_RX = re.compile(rf"<!--\s*{MARK}:\s*(.+?)\s*-->")
-SKIP_DIRS = ("node_modules", "__pycache__", "/build/", ".dart_tool", "/.git/",
-             "/harness/")
+#: 名前で外してよいもの。**どの案件でも意味が同じ**ものだけをここに置く。
+#: **submodule はここに入れません**——置き場は案件ごとに違うので、
+#: `.gitmodules` から導きます（#105。`"/harness/"` が入っていたため、
+#: ハーネス一式を `site/design/harness/` に置く案件では**案件の宣言を1件も
+#: 見つけられませんでした**。2026-09-09・qnd-database で実測）
+SKIP_DIRS = ("node_modules", "__pycache__", "/build/", ".dart_tool", "/.git/")
 
 #: 宣言の書式。語彙が割れているので、ここで1つに正規化する。
 #: `what` / `why` / `how` / `blockedBy` / `issue` は aub-familywalk の
@@ -97,9 +102,16 @@ def findings(root: Path, extra_globs=()):
     （手で保守する一覧は古くなる、をこのリポジトリは何度も踏んでいる）。
     """
     out = []
+    # **共有層（submodule）の宣言は、案件の宣言ではありません。**
+    # 名前ではなく `.gitmodules` から導きます（#105）。
+    # **導けなければ外しません**——外しすぎた `0 件` は「宣言が無い」と
+    # 読み違えるからです
+    subs, _how = submodule_paths(root)
     for f in sorted(root.rglob("*.json")):
         s = str(f)
         if any(x in s for x in SKIP_DIRS):
+            continue
+        if subs and is_inside(f.relative_to(root), subs):
             continue
         try:
             doc = json.loads(f.read_text(encoding="utf-8"))
