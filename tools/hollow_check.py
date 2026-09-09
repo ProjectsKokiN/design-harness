@@ -190,6 +190,36 @@ def dart_files(root):
             if ".dart_tool" not in f.parts and "build" not in f.parts]
 
 
+WEB_TEST_RX = re.compile(r"\.(?:test|spec)\.(?:mjs|js|cjs|ts)$")
+
+
+def web_test_files(root):
+    """Web の検査（`*.test.mjs` / `*.spec.js` …）。`node_modules` と `dist` は歩かない。"""
+    if not root or not root.exists():
+        return []
+    return [f for f in sorted(root.rglob("*"))
+            if f.is_file() and WEB_TEST_RX.search(f.name)
+            and "node_modules" not in f.parts and "dist" not in f.parts]
+
+
+def detect_stack(conf, tests_dir):
+    """どのスタックの検査かを**導く**（#106）。
+
+    `hollow.json` に `"stack": "web"` と書けば従う。書いていなければ、
+    **Dart の検査が1本も無く Web の検査があるときだけ** Web とみなす。
+    **宣言せず導く**——QnD は `hollow.json` を置いていたのに
+    `*.dart` しか歩かれず「検査が1つもありません」で 2 を返していた。
+    """
+    st = str(conf.get("stack") or "").lower()
+    if st in ("web", "dart"):
+        return st
+    if dart_files(tests_dir):
+        return "dart"
+    if web_test_files(tests_dir):
+        return "web"
+    return "dart"
+
+
 def check_swallowed(tests, base):
     """形1: 例外を捨てている。**この1行があるかぎり、その画面の例外は永久に見えない。**"""
     out = []
@@ -382,6 +412,99 @@ def check_loose_finder(tests, base):
                 if not re.search(r"\bis\s+[A-Z]\w+", body) and not ignored(lines, at):
                     out.append((f.relative_to(base), at,
                                 "型で絞らない predicate から1つ選んでいます"))
+    return out
+
+
+# ─── 形4 の Web 版（#106・2026-09-10）────────────────────────────────
+#
+# QnD（Web の参照実装）で、条件9 を CSS の文字列で照合する検査に**空振りが2件**あった。
+# どちらも 2026-09-09 の破壊テストで見つかり、**機械が見ていれば先に分かった**もの。
+# 本人の記録（`hollow.json` の `$なぜ QnD に要るか`）:
+#
+#   1. 正規表現の選択を括らず、クラス名の有無だけで通る判定
+#      `/\.lists|\.list-row|\.slot-left:hover/` ── `|` は式全体に掛かるので
+#      **`:hover` は最後の枝にしか付かない**。「クラスがどこかに在る」だけで通る
+#   2. 子孫の規則で通るので、行自身の hover を消しても落ちない判定
+#      `.list-row:hover .case-row-l .body` は**子孫**の規則。セレクタ全体で
+#      `includes(".list-row") && includes(":hover")` を見ると、この規則で通る。
+#      **`a.list-row:hover` を丸ごと消しても緑のままだった**（実測）
+#
+# どちらも「finder が、狙った物より広い物を拾う」= 形4。
+# 直った形（QnD 現行）は、規則の**主語**（一番右の複合セレクタ）を取ってから見る。
+
+#: JS の正規表現リテラル（`/…/flags`）。`//` のコメントと `a / b` の割り算は
+#: 前の文字で切り分ける（`(` `,` `=` `:` `[` `!` `&` `|` `?` `{` `}` `;` の直後だけ）
+JS_REGEX_LIT_RX = re.compile(r"(?<=[(,=:\[!&|?{};\s])/((?:\\.|\[(?:\\.|[^\]])*\]|[^/\\\n\[])+)/[a-z]*")
+#: CSS のクラス・疑似クラス・属性を含むか（= セレクタを探している正規表現か）
+CSS_TOKEN_RX = re.compile(r"\\\.[a-zA-Z_-]|(?<!\\):[a-z-]+|\\?\[[a-z-]+")
+#: CSS の規則の見出しを集める書き方
+CSS_RULES_RX = re.compile(r"matchAll\(\s*/\(\[\^\{\}\]\+\)\\\{|split\(\s*['\"]\{['\"]|/\(\[\^\{\}\]\+\)\\\{")
+#: 主語で見ている印（複合セレクタの区切りで割って最後を取る）
+SUBJECT_RX = re.compile(r"split\(\s*/\[\\s>\+~\]|\.pop\(\)|\bsubjects?\s*\(")
+#: セレクタの文字列に部分一致を当てている
+MEMBERSHIP_RX = re.compile(r"\.(?:includes|indexOf|test|match|search)\(")
+
+
+def top_level_alternation(pattern):
+    """正規表現の**括られていない** `|` があるか（`(...)` と `[...]` の中は数えない）。"""
+    depth = 0
+    in_class = False
+    i = 0
+    while i < len(pattern):
+        c = pattern[i]
+        if c == "\\":
+            i += 2
+            continue
+        if in_class:
+            if c == "]":
+                in_class = False
+        elif c == "[":
+            in_class = True
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth = max(0, depth - 1)
+        elif c == "|" and depth == 0:
+            return True
+        i += 1
+    return False
+
+
+def check_loose_css_finder(tests, base):
+    """形4（Web）: CSS の規則を、狙った物より広く拾う finder。"""
+    out = []
+    for f in tests:
+        text = f.read_text(encoding="utf-8", errors="ignore")
+        lines = text.splitlines()
+
+        # 1. 括られていない選択（`|` が式全体に掛かる）
+        for m in JS_REGEX_LIT_RX.finditer(text):
+            pat = m.group(1)
+            if not CSS_TOKEN_RX.search(pat) or not top_level_alternation(pat):
+                continue
+            at = text[:m.start()].count("\n") + 1
+            if ignored(lines, at):
+                continue
+            out.append((f.relative_to(base), at,
+                        f"正規表現 `/{pat[:48]}{'…' if len(pat) > 48 else ''}/` の"
+                        f"**選択（`|`）が括られていません。** 状態の指定は最後の枝にしか"
+                        f"掛からず、**クラスがどこかに在るだけで通ります。**"
+                        f"`(a|b|c):hover` のように括ってください"))
+
+        # 2. 主語で見ていない（子孫の規則で通る）
+        #    **ファイル単位で見る。** finder はたいてい1つの補助関数で、その中で
+        #    見出しを集める文と当てる文が離れているため、文単位では結べない。
+        #    見出しを集めていて、部分一致を当てていて、**主語を取る印が1つも無い**なら空振り
+        if CSS_RULES_RX.search(text) and MEMBERSHIP_RX.search(text) \
+                and not SUBJECT_RX.search(text):
+            m = CSS_RULES_RX.search(text)
+            at = text[:m.start()].count("\n") + 1
+            if not ignored(lines, at):
+                out.append((f.relative_to(base), at,
+                            "CSS の規則の見出しを**セレクタ全体で**部分一致させています。"
+                            "`.list-row:hover .case-row-l .body` のような**子孫の規則で通る**ので、"
+                            "**行自身の hover を丸ごと消しても落ちません**（QnD で実測）。"
+                            "主語（一番右の複合セレクタ）を `split(/[\\s>+~]+/).pop()` で取ってから当ててください"))
     return out
 
 
@@ -594,12 +717,30 @@ def main(argv=None):
     lib_dir = base / conf.get("lib", "lib")
     exports = [base / p for p in conf.get("exports", ["design"])]
 
-    tests = dart_files(tests_dir)
+    stack = detect_stack(conf, tests_dir)
+    tests = dart_files(tests_dir) if stack == "dart" else web_test_files(tests_dir)
     if not tests:
-        print(f"検査が1つもありません: {tests_dir}\n"
+        print(f"検査が1つもありません: {tests_dir}（{stack}）\n"
               f"  **この道具の「0件」は『見ていない』であって『綺麗』ではありません。**",
               file=sys.stderr)
         return 2
+
+    if stack == "web":
+        # **Web は形4（緩い finder）だけを見ます**（#106）。形1（takeException）・
+        # 形3（`lib/` の識別子）・形7（TextPainter）は Dart の書き方で、Web には
+        # 対応する形をまだ決めていない。**見ていないものは見ていないと出す**
+        findings = []
+        for path, ln, why in check_loose_css_finder(tests, base):
+            findings.append(f"  [緩い finder] {path}:{ln} {why}")
+        print("注意: Web では形4（緩い finder）だけを見ています。"
+              "形1・3・5・7 の Web 版はまだありません（#106）。")
+        if findings:
+            print(f"検査が回っているのに何も見ていない書き方があります"
+                  f"（検査 {len(tests)} ファイル・web）:", file=sys.stderr)
+            print("\n".join(findings), file=sys.stderr)
+            return 1
+        print(f"空振りの書き方 0件（検査 {len(tests)} ファイル・web / 見た形: 4）。")
+        return 0
 
     findings = []
     generated = tuple(conf.get("generated", [".g.dart"]))
@@ -899,6 +1040,78 @@ def self_test():
                 contextlib.redirect_stderr(io.StringIO()):
             if main(argv) != 2:
                 print("self-test NG: 検査0件なのに落ちなかった"); ok = False
+    def _ck(cond, msg):
+        if not cond:
+            print(f"  NG: {msg}")
+        return bool(cond)
+
+    # ─── Web（#106・2026-09-10）──────────────────────────────────────
+    # QnD の唯一の Web の検査で、2026-09-09 に**自分で作った空振り2件**を、
+    # 本人の記録（hollow.json の `$なぜ QnD に要るか`）どおりに作る。
+    # git に「直す前」は残っていない（直してから初コミット）ので、記録が正本。
+    with tempfile.TemporaryDirectory() as td:
+        wroot = Path(td)
+        (wroot / "site" / "test").mkdir(parents=True)
+        (wroot / "site" / "styles").mkdir()
+        (wroot / "site" / "design" / "harness").mkdir(parents=True)
+        (wroot / "site" / "styles" / "shared.css").write_text(
+            ".lists{}\n.list-row:hover .case-row-l .body{}\na.list-row:hover{}\n",
+            encoding="utf-8")
+        wconf = wroot / "site" / "design" / "harness" / "hollow.json"
+        wconf.write_text(json.dumps({"lib": "site", "tests": "site/test"}), encoding="utf-8")
+        wt = wroot / "site" / "test" / "a.test.mjs"
+        wargv = ["--config", str(wconf), "--root", str(wroot)]
+
+        def run_web(src):
+            wt.write_text(src, encoding="utf-8")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                rc = main(wargv)
+            return rc, buf.getvalue()
+
+        HEAD = ('import { readFileSync } from "node:fs";\n'
+                'const css = readFileSync("site/styles/shared.css", "utf8");\n')
+
+        # 1) 括られていない選択 → 落ちる
+        rc, out = run_web(HEAD + "const ok = /\\.lists|\\.list-row|\\.slot-left:hover/.test(css);\n")
+        ok &= _ck(rc == 1 and "括られていません" in out,
+                  f"**Web: 括られていない選択を通した** rc={rc}")
+
+        # 2) 主語で見ていない（子孫の規則で通る） → 落ちる
+        rc, out = run_web(HEAD +
+            "const RULES = [...css.matchAll(/([^{}]+)\\{[^{}]*\\}/g)].map((m) => m[1]);\n"
+            "const ok = RULES.some((h) => h.includes('.list-row') && h.includes(':hover'));\n")
+        ok &= _ck(rc == 1 and "セレクタ全体" in out,
+                  f"**Web: 子孫の規則で通る判定を通した** rc={rc}")
+
+        # 3) 直った形（QnD 現行と同じ: 主語を取ってから当てる） → 通る
+        rc, out = run_web(HEAD +
+            "const RULES = [...css.matchAll(/([^{}]+)\\{[^{}]*\\}/g)].map((m) => m[1]);\n"
+            "const subjects = (s) => s.split(',').map((x) => x.trim().split(/[\\s>+~]+/).pop());\n"
+            "const ok = RULES.some((h) => subjects(h).some((s) => s.includes('.list-row') && s.includes(':hover')));\n"
+            "const st = /state/i.test('State');  // セレクタでない正規表現は数えない\n"
+            "const cf = (v.axisOrder || []).some((a) => /selected/i.test(a));\n")
+        ok &= _ck(rc == 0, f"**Web: 直った形を落とした**（誤検出） rc={rc}\n{out}")
+
+        # 4) 理由つきの印で黙らせられる
+        rc, out = run_web(HEAD +
+            "// harness-ignore: 状態の枝は別の検査が見る\n"
+            "const ok = /\\.lists|\\.list-row|\\.slot-left:hover/.test(css);\n")
+        ok &= _ck(rc == 0, f"Web: harness-ignore が効かない rc={rc}")
+
+        # 5) 検査が1本も無ければ 2（0 を綺麗と読ませない）
+        wt.unlink()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = main(wargv)
+        ok &= _ck(rc == 2, f"Web: 検査が無いのに 2 を返さない rc={rc}")
+
+        # 6) 選択の括りを判定する関数そのもの
+        ok &= _ck(top_level_alternation(r"\.a|\.b") is True, "括られていない | を見逃した")
+        ok &= _ck(top_level_alternation(r"(\.a|\.b):hover") is False, "括られた | を咎めた")
+        ok &= _ck(top_level_alternation(r"[|]") is False, "文字クラスの中の | を咎めた")
+        ok &= _ck(top_level_alternation(r"\|") is False, "エスケープされた | を咎めた")
+
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
 
