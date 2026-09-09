@@ -117,6 +117,64 @@ def documented_exceptions(readme):
     return out
 
 
+def self_test_prepush_resolve():
+    """**案件がリポジトリの直下に無いとき**、フックを見つけられるか（#103）。
+
+    QnD は `site/design/harness/verify.sh` にあり、`root` は
+    `verify.resolve().parent.parent` = `site/design` になる。
+    `core.hooksPath` の相対を **`root` からの相対**として繋いでいたため、
+    `site/design/.githooks/pre-push` という**存在しない場所**を見て
+    「押す前のフックがありません」と出ていた（2026-09-09 実測）。
+    **相対はリポジトリの根から**が正しい。
+    """
+    import subprocess as _sp
+    import tempfile
+    ok = True
+
+    def ck(c, m):
+        nonlocal ok
+        if not c:
+            ok = False
+            print(f"  NG: {m}")
+
+    exe = shutil.which("git") if "shutil" in dir() else None
+    import shutil as _sh
+    exe = _sh.which("git")
+    if not exe:
+        print("git がありません。**確かめられないので飛ばします**", file=sys.stderr)
+        return True
+
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        _sp.run([exe, "init", "-q"], cwd=str(d), check=True)
+        (d / ".githooks").mkdir()
+        hk = d / ".githooks" / "pre-push"
+        hk.write_text("#!/bin/sh\nsh site/design/harness/verify.sh\n", encoding="utf-8")
+        (d / "site" / "design" / "harness").mkdir(parents=True)
+        (d / "site" / "design" / "harness" / "verify.sh").write_text(
+            "#!/bin/sh\n", encoding="utf-8")
+        _sp.run([exe, "-C", str(d), "config", "core.hooksPath", ".githooks"], check=True)
+
+        root = (d / "site/design/harness/verify.sh").resolve().parent.parent
+        got, shipped = resolve_prepush(root, None)
+        ck(got.exists(), f"**根の直下に無い案件でフックを見つけられない**（#103）: {got}")
+        ck(shipped, "配られる扱いになっていない")
+
+        # **明示で渡したものが最優先**（#103）
+        other = d / "site" / "design" / "harness" / "my-pre-push"
+        other.write_text("#!/bin/sh\n", encoding="utf-8")
+        got2, _ = resolve_prepush(root, other)
+        ck(got2 == other, f"**--prepush の明示が hooksPath に負けている**: {got2}")
+
+        # 絶対パスで設定していても見つかる
+        _sp.run([exe, "-C", str(d), "config", "core.hooksPath",
+                 str((d / ".githooks").resolve())], check=True)
+        got3, _ = resolve_prepush(root, None)
+        ck(got3.exists(), f"絶対パスで設定したら見つけられない: {got3}")
+
+    return ok
+
+
 def self_test_template_sync():
     """**元ファイルの版**の妨害テスト（#95）。
 
@@ -652,15 +710,31 @@ def resolve_prepush(root, given):
     設定しておらず、フックが `.git/hooks/pre-push` にだけあった。
     **他の機体には1行も配られていない。**
     """
+    # **明示で渡されたものを最優先します**（#103）。
+    # `--prepush` で場所を教えても `core.hooksPath` に負けていたため、
+    # 案件がリポジトリの直下に無いと**教える手段が無い**状態でした。
+    if given and Path(given).exists():
+        return Path(given), True
+
+    # **`core.hooksPath` の相対は、リポジトリの根からです**（#103）。
+    # `root` からの相対として繋いでいたため、案件がリポジトリの直下に無いと
+    # （QnD は `site/design/harness/verify.sh`）`site/design/.githooks/pre-push`
+    # という**存在しない場所**を見て「フックがありません」と出ていました。
+    top = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True)
+    base = Path(top.stdout.strip()) if top.returncode == 0 and top.stdout.strip() \
+        else Path(root)
+
     r = subprocess.run(["git", "-C", str(root), "config", "core.hooksPath"],
                        capture_output=True, text=True)
     hp = r.stdout.strip() if r.returncode == 0 else ""
     if hp:
-        return (root / hp / "pre-push"), True
-    local = root / ".git" / "hooks" / "pre-push"
+        d = Path(hp)
+        return ((d if d.is_absolute() else base / d) / "pre-push"), True
+    local = base / ".git" / "hooks" / "pre-push"
     if local.exists():
         return local, False
-    return (given if given else root / ".githooks" / "pre-push"), True
+    return (base / ".githooks" / "pre-push"), True
 
 
 def check_prepush(template, project, waivers, shared=True):
@@ -1325,6 +1399,7 @@ def self_test():
 
     ok = self_test_stages() and ok
     ok = self_test_template_sync() and ok
+    ok = self_test_prepush_resolve() and ok
 
     # ─── --matrix（#76）: 行列を導出する ──────────────────────────
     import io as _io2, contextlib as _ctx2

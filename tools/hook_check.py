@@ -76,14 +76,39 @@ def check(root: Path, want=".githooks", hook="pre-push"):
             "  実害（2026-09-07）: これが未設定のクローンから、"
             "`verify.sh` が赤いまま push が通りました",
         ]
-    if path.rstrip("/") != want:
-        return 1, [f"**関門の置き場が違います**: `core.hooksPath` = `{path}`"
-                   f"（`{want}` のはず）",
+    # **文字列ではなく、解決したパスで比べます**（#103）。
+    #
+    # `core.hooksPath` は**相対でも絶対でも書けます。** 案件がリポジトリの
+    # 直下に無いとき（QnD は `site/design/harness/verify.sh`）、絶対パスで
+    # 設定しないと `stage_check --stages` がフックを見つけられません。
+    # ところが**文字列で `.githooks` と比べていた**ため、絶対パスにすると
+    # 今度はこちらが「置き場が違います」で落ちていました。
+    # **どちらか一方しか緑にできない**状態でした（2026-09-09・QnD で実測）。
+    #
+    # **名前は問いません。** 問うのは実体です——
+    # **リポジトリの中にあること**（外だと版管理されません）と、
+    # **中身が `verify.sh` を呼んでいること**。
+    try:
+        hooks_dir = Path(path)
+        hooks_dir = (root / hooks_dir) if not hooks_dir.is_absolute() else hooks_dir
+        hooks_dir = hooks_dir.resolve()
+        root_r = Path(root).resolve()
+    except OSError as e:
+        return 2, [f"**`core.hooksPath` を解決できません**: {path}: {e}"]
+
+    if not hooks_dir.is_dir():
+        return 1, [f"**関門の置き場がありません**: `core.hooksPath` = `{path}`",
+                   f"  解決した先: `{hooks_dir}`",
+                   f"  直し方: `git config core.hooksPath {want}`"]
+    if root_r not in hooks_dir.parents and hooks_dir != root_r:
+        return 1, [f"**関門の置き場がリポジトリの外にあります**: `{hooks_dir}`",
+                   "  外に置くと**版管理されず、配っても付いてきません。**",
                    f"  直し方: `git config core.hooksPath {want}`"]
 
-    f = root / want / hook
+    f = hooks_dir / hook
+    _rel = f.relative_to(root_r) if root_r in f.parents else f
     if not f.is_file():
-        return 1, [f"**`{want}/{hook}` がありません。**"
+        return 1, [f"**`{_rel}` がありません。**"
                    f"`core.hooksPath` は設定されているのに、呼ぶ先が空です",
                    f"  元ファイル: `design/harness/ci/app-pre-push` を写してください"]
 
@@ -91,19 +116,19 @@ def check(root: Path, want=".githooks", hook="pre-push"):
     try:
         body = f.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
-        return 2, [f"**`{want}/{hook}` が読めません**: {e}"]
+        return 2, [f"**`{_rel}` が読めません**: {e}"]
     if "verify.sh" not in body:
-        return 1, [f"**`{want}/{hook}` が `verify.sh` を呼んでいません。**",
+        return 1, [f"**`{_rel}` が `verify.sh` を呼んでいません。**",
                    "  フックは在るのに何も検査していない状態です"]
 
     # 実行ビット。**Windows では意味が無いので落としません**（報せるだけ）
     note = ""
     if os.name != "nt" and not os.access(f, os.X_OK):
         note = "（**実行ビットがありません**。`chmod +x` が要ります）"
-        return 1, [f"**`{want}/{hook}` に実行ビットがありません。**"
-                   f"git は呼びません", f"  直し方: `chmod +x {want}/{hook}`"]
+        return 1, [f"**`{_rel}` に実行ビットがありません。**"
+                   f"git は呼びません", f"  直し方: `chmod +x {_rel}`"]
 
-    out.append(f"押す前の関門: 効いています（`{path}/{hook}` が `verify.sh` を呼びます）{note}")
+    out.append(f"押す前の関門: 効いています（`{_rel}` が `verify.sh` を呼びます）{note}")
     return 0, out
 
 
@@ -182,6 +207,34 @@ def _body(exe, ck):
         hk.chmod(0o755)
         rc, _ = check(root)
         ck(rc == 0, f"効いているのに落ちる: {rc}")
+
+        # 4.5) **絶対パスで設定していても通る**（#103）。
+        # 案件がリポジトリの直下に無いと、`stage_check --stages` が
+        # フックを見つけられず、絶対パスにするしかない場面があります。
+        # **文字列で `.githooks` と比べていたときは、ここで落ちていました**
+        # ——どちらか一方しか緑にできない状態でした（2026-09-09・QnD で実測）。
+        subprocess.run([exe, "config", "core.hooksPath", str(hd.resolve())],
+                       cwd=str(root), check=True)
+        rc, lines = check(root)
+        ck(rc == 0, f"**絶対パスで設定したら落ちた**（#103）: {rc} / {lines}")
+        ck(any("pre-push" in x for x in lines), f"どこを見たかを出していない: {lines}")
+
+        # 4.6) **リポジトリの外を指していたら落ちる**（絶対パスを許した代わりに要る）。
+        # 外に置くと版管理されず、配っても付いてきません
+        import tempfile as _tf
+        with _tf.TemporaryDirectory() as _out:
+            _od = Path(_out) / "hooks"; _od.mkdir()
+            _oh = _od / "pre-push"
+            _oh.write_text("#!/bin/sh\nsh design/verify.sh || exit 1\n", encoding="utf-8")
+            _oh.chmod(0o755)
+            subprocess.run([exe, "config", "core.hooksPath", str(_od.resolve())],
+                           cwd=str(root), check=True)
+            rc, lines = check(root)
+            ck(rc == 1, f"**リポジトリの外を指しているのに通した**: {rc}")
+            ck(any("リポジトリの外" in x for x in lines),
+               f"外だと言っていない: {lines}")
+        subprocess.run([exe, "config", "core.hooksPath", ".githooks"],
+                       cwd=str(root), check=True)
 
         # 5) 実行ビットを外す → 落ちる（POSIX のみ）
         if os.name != "nt":
