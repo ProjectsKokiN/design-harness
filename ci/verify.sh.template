@@ -35,6 +35,54 @@ step() {  # step <名前> <コマンド...>
   echo
 }
 
+# --- ハーネスの中身が、記録されたピンと一致しているか -------------------------
+#
+# **この段だけは、ハーネスの道具を使いません。** `git` だけで見ます。
+# 道具を使うと、**その道具を書き換えれば無効化できる**からです。
+# 実測（2026-09-09）: `design/harness/tools/machine_scope.py` の `main` を
+# `return 0` に書き換えても、**検査の結果は1文字も変わりませんでした**
+# （攻撃あり rc=1・NG2 / 攻撃なし rc=1・**同じ NG2**）。
+#
+# 親リポジトリは submodule の **SHA しか記録しません**。中身を書き換えても
+# コミットには残らないので、**書き換えたまま検査を通して push できます。**
+# `git status` には ` m design/harness` と出ますが、**誰も見ていませんでした。**
+#
+# CI は毎回ピンから取り直すので**改ざんは届きません**。だから CI は最後の砦ですが、
+# **気づくのが push のあと**になります。ここで手元で止めます。
+if [ -e design/harness/.git ]; then
+  _hs="$(git -C design/harness status --porcelain 2>/dev/null)"
+  _have="$(git -C design/harness rev-parse HEAD 2>/dev/null)"
+  _want="$(git ls-files -s design/harness 2>/dev/null | awk '{print $2}')"
+  echo "=== ハーネスの中身（記録されたピンと同じか） ==="
+  if [ -n "$_hs" ]; then
+    echo "**ハーネスの中身が書き換えられています。**" >&2
+    echo "$_hs" | sed 's/^/  /' >&2
+    echo "  **検査の道具そのものが変わっています。この結果は信用できません。**" >&2
+    echo "  戻し方: git -C design/harness checkout -- . && git -C design/harness clean -fd" >&2
+    echo "NG"; FAILED=1
+  elif [ -z "$_have" ] || [ -z "$_want" ]; then
+    echo "**ハーネスのピンを読めませんでした。**確かめられないので通しません。" >&2
+    echo "  git submodule update --init design/harness を先に打ってください" >&2
+    echo "NG（確かめられなかった）"; FAILED=1
+  elif [ "$_have" != "$_want" ]; then
+    echo "**ハーネスが、記録されたピンと違うコミットです。**" >&2
+    echo "  いま:   $_have" >&2
+    echo "  記録:   $_want" >&2
+    echo "  ピンを上げている途中なら、git add design/harness を先にしてください" >&2
+    echo "NG"; FAILED=1
+  else
+    echo "ハーネスの中身: 記録されたピンと同じです（${_have}）"
+    echo "OK"
+  fi
+  echo
+else
+  echo "=== ハーネスの中身（記録されたピンと同じか） ==="
+  echo "**design/harness が submodule として取り込まれていません。**" >&2
+  echo "  git submodule update --init design/harness" >&2
+  echo "NG（確かめられなかった）"; FAILED=1
+  echo
+fi
+
 # 報せ。**走らせるが落とさない**（#65）。廃止した条件の検査や、直すかどうかが
 # ユーザーの判断のものはここ。「参考」と見出しに書きながら step で呼ぶと関門になる
 note() {  # note <名前> <コマンド...>
