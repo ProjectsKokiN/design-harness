@@ -128,6 +128,62 @@ def seeded_rules(seeds_dir):
     return {k for k, v in d.items() if not k.startswith("$") and k != "*" and v}
 
 
+def _walk(node, seg):
+    """`node` を `seg` で1段たどる。
+
+    **`*` の意味は、リストと辞書で違います**（2026-09-10・QnD の実物で判明）。
+
+    | node | `*` | 名前つき |
+    |---|---|---|
+    | リスト | **各要素**（要素の中身ではない） | 各要素の中をたどる |
+    | 辞書 | `$` で始まらない**値** | その鍵の値 |
+
+    最初はリストを平らにしてから辞書として扱っていたため、
+    `sections/*` が**節の値**（`name` / `意味` / `frames`）を返し、
+    その次の `frames` が1つも当たりませんでした（**0 枠**）。
+    """
+    if isinstance(node, list):
+        if seg == "*":
+            return list(node)
+        out = []
+        for c in node:
+            out += _walk(c, seg)
+        return out
+    if isinstance(node, dict):
+        if seg == "*":
+            return [v for k, v in node.items() if not str(k).startswith("$")]
+        if seg in node:
+            return [node[seg]]
+    return []
+
+
+def _leaf_names(node):
+    """たどり着いた先から、画面の名前を取り出す。"""
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, list):
+        out = []
+        for x in node:
+            out += _leaf_names(x)
+        return out
+    if isinstance(node, dict):
+        # **`name` があればそれが名前**（リストの要素はこの形が普通）。
+        # 無ければ、鍵そのものが名前（平らな表の形）
+        if isinstance(node.get("name"), str):
+            return [node["name"]]
+        return [k for k in node if not str(k).startswith("$")]
+    return []
+
+
+def _is_nested(v):
+    """その値の下に、まだ階層があるか。**リストも階層です**。"""
+    if isinstance(v, list):
+        return any(isinstance(x, dict) for x in v)
+    if isinstance(v, dict):
+        return any(isinstance(x, (dict, list)) for x in v.values())
+    return False
+
+
 def frame_names(doc, at=None):
     """画面の名前を取り出す。`(名前の一覧, 断れなかった理由)` を返す。
 
@@ -137,48 +193,51 @@ def frame_names(doc, at=None):
     （実体は 6節 11枠 179ノード。2026-09-09 実測）。
     **報告書の冒頭に貼る数なので、間違った数を出すくらいなら出しません。**
 
-    `at` は入れ子の言い方（`"sections/*"` のように `/` で区切り、`*` は全部）。
+    **節がリストのこともあります**（2026-09-10・QnD の実物で判明。
+    最初の直しは辞書だと決めつけていて、**実物では効いていませんでした**）。
+    `at` は `/` で区切り、`*` はその階層を全部たどります。リストは平らにします。
+    たどり着いた先が `name` を持つ辞書なら、それが画面の名前です。
     """
     if not isinstance(doc, dict):
         return [], "画面の書き出しが辞書ではありません"
-    if isinstance(doc.get("frames"), (dict, list)):
-        doc = doc["frames"]
-        if isinstance(doc, list):
-            return [x for x in doc if isinstance(x, str)], None
+    if isinstance(doc.get("frames"), (dict, list)) and not at:
+        inner = doc["frames"]
+        if isinstance(inner, list) and all(isinstance(x, str) for x in inner):
+            return list(inner), None
+        doc = inner if isinstance(inner, dict) else doc
 
     if at:
         cur = [doc]
         for seg in [s for s in str(at).split("/") if s]:
             nxt = []
             for c in cur:
-                if not isinstance(c, dict):
-                    continue
-                if seg == "*":
-                    nxt += [v for k, v in c.items() if not k.startswith("$")]
-                elif seg in c:
-                    nxt.append(c[seg])
+                nxt += _walk(c, seg)
             cur = nxt
-        names = []
+        names, seen = [], set()
         for c in cur:
-            if isinstance(c, dict):
-                names += [k for k in c if not k.startswith("$")]
+            for n in _leaf_names(c):
+                # **同じ名前が複数あるのは正しいことがあります**（QnD の `Top` は
+                # 「通常」と「ホバーで展開」の2状態）。**照合は名前で行う**ので、
+                # ここで畳まないと同じ指摘が2回出ます
+                if n not in seen:
+                    seen.add(n)
+                    names.append(n)
         if not names:
             return [], f"`at` が指す先に画面がありません: {at}"
         return names, None
 
     # **`$` で始まる鍵は覚え書きです**（この repo の決まり）。数えません
-    body = {k: v for k, v in doc.items() if not k.startswith("$")}
+    body = {k: v for k, v in doc.items() if not str(k).startswith("$")}
     if not body:
         return [], "画面の書き出しが空です"
-    # 入れ子かどうかを**導きます**。値の値がまた辞書なら、この階層は画面ではありません
-    nested = [k for k, v in body.items()
-              if isinstance(v, dict) and any(isinstance(x, dict) for x in v.values())]
+    # 入れ子かどうかを**導きます**。下にまだ階層があるなら、ここは画面ではありません
+    nested = [k for k, v in body.items() if _is_nested(v)]
     if nested and len(body) <= 3:
         return [], ("**画面の書き出しが入れ子です。どの階層が画面かを宣言してください。**"
                     f"いまの直下の鍵: {', '.join(sorted(body))}。"
                     "`gaps.json` の `frames` を "
-                    '`{"path": "...", "at": "sections/*"}` の形にしてください'
-                    "（`*` はその階層を全部たどります）")
+                    '`{"path": "...", "at": "sections/*/frames"}` の形にしてください'
+                    "（`*` はその階層を全部たどります。**リストも辿れます**）")
     return list(body), None
 
 
@@ -385,9 +444,17 @@ def _self_test_frames():
             ok = False
             print(f"  NG: {m}")
 
+    # **実物と同じ形**（2026-09-10・qnd-database で実測）。
+    # 最初の直しは**節を辞書だと決めつけていて、実物では効いていませんでした**
+    # （`sections` はリストで、枠は各節の `frames` の中。名前は `name`）。
+    # **作り物が実物と違うと、直したつもりで直っていません。**
     qnd = {"$meta": {"x": 1},
-           "sections": {"節A": {"枠1": {"n": 1}, "枠2": {"n": 2}},
-                        "節B": {"枠3": {"n": 3}}}}
+           "sections": [
+               {"name": "Top", "意味": "…",
+                "frames": [{"name": "Top", "type": "FRAME"},
+                           {"name": "Top", "type": "FRAME"}]},
+               {"name": "About", "意味": "…",
+                "frames": [{"name": "About", "type": "FRAME"}]}]}
     ck(frame_names({"画面A": {"w": 1}, "画面B": {"w": 2}})[0] == ["画面A", "画面B"],
        "平らな表を読めない")
     ck(frame_names({"frames": ["画面X", "画面Y"]})[0] == ["画面X", "画面Y"],
@@ -400,8 +467,14 @@ def _self_test_frames():
     ck(not names or "$meta" not in names, "**`$meta` を画面として数えた**")
 
     names, why = frame_names(qnd, "sections/*")
-    ck(sorted(names) == ["枠1", "枠2", "枠3"], f"宣言しても枠を取り出せない: {names}")
+    ck(names == ["Top", "About"], f"節を取り出せない: {names}")
     ck(why is None, f"宣言したのに断った: {why}")
+
+    # **枠まで降りる**（`*` はリストでは「各要素」・辞書では「値」）
+    names, why = frame_names(qnd, "sections/*/frames")
+    ck(names == ["Top", "About"],
+       f"**枠を取り出せない**（リストの `*` の意味違い）: {names}")
+    ck(len(names) == len(set(names)), f"**同じ名前を畳んでいない**: {names}")
 
     # **`$` で始まる鍵は、平らな表でも数えない**
     ck(frame_names({"$meta": {"x": 1}, "画面A": {"w": 1}})[0] == ["画面A"],
