@@ -1224,7 +1224,10 @@ def main(argv=None):
     exceptions = documented_exceptions(args.readme)
     problems, foreign, checked = [], [], []
 
-    lines = logical_lines(args.verify.read_text(encoding="utf-8"))
+    _src = args.verify.read_text(encoding="utf-8")
+
+
+    lines = logical_lines(_src)
     seen_step = False
     for line in lines:
         m = STEP_RX.match(line)
@@ -1281,6 +1284,34 @@ def main(argv=None):
               file=sys.stderr)
         return 2
 
+    # **この道具が `--stages` で呼ばれているかを、この道具が見ます**（#99）。
+    #
+    # `--stages` は「元ファイルの段が案件から落ちていないか」「関門の条件が
+    # 全部測られているか」を見る唯一の場所です。ところが**その段が案件から
+    # 落ちていても、落ちていることを検知するのはその段自身**なので、
+    # 無音のままになります（自己参照の穴）。
+    #
+    # 実害（2026-09-09・QnD で実測）: `--stages` 無しで呼んでいたため、
+    # **関門の条件5と条件9を1つも測っていない**ことを誰も問わないまま、
+    # 値の照合だけが緑で並んでいた。あとから当てると1行ずつ名指しで出た。
+    #
+    # **既定モードは案件の `verify.sh` を読んでいます。** その中に
+    # `--stages` の呼び出しが在るかを見るだけで、この穴は塞がります。
+    if "--stages" not in _src:
+        print(f"**段の数を見る段が、この案件にありません**: {args.verify}\n"
+              f"  `stage_check.py --stages` を呼んでいる行が1つもありません。\n"
+              f"  **元ファイルの段が落ちていても、関門の条件が測られていなくても、"
+              f"誰も問いません。**\n"
+              f"  **落ちていることを検知するのはその段自身なので、無音になります。**\n"
+              f"  足し方: `verify.sh` に次の段を入れてください\n"
+              f'    step "段の数（元ファイルの段が落ちていないか・関門の条件が'
+              f'全部測られているか）" \\\n'
+              f'      "$PY" "$HARNESS/tools/stage_check.py" --stages'
+              f' --verify {args.verify}\n'
+              f"  実害（2026-09-09・QnD）: 関門の条件5と条件9を1つも測っていないまま"
+              f"緑が並んでいました", file=sys.stderr)
+        return 1
+
     print(f"段の健全性: 道具の段 {len(checked)}件が self-test 済み / "
           f"外部・例外の段 {len(foreign)}件")
     for f in foreign:
@@ -1332,6 +1363,12 @@ def self_test():
             "import sys\ndef self_test():\n    print('self-test: OK')\n    return 0\n"
             "if __name__ == '__main__':\n    sys.exit(self_test())\n", encoding="utf-8")
         (tools / "bad.py").write_text("print('検査したふり')\n", encoding="utf-8")
+        # **`--stages` の段を作り物にも足すため**（#99）、この道具の身代わりを置く。
+        # 置かないと「self-test を持たない道具」として毎回1件増え、
+        # 本来見たい試験が全部その1点で落ちる
+        (tools / "stage_check.py").write_text(
+            "import sys\ndef self_test():\n    print('self-test: OK')\n    return 0\n"
+            "if __name__ == '__main__':\n    sys.exit(self_test())\n", encoding="utf-8")
         (tools / "failing.py").write_text(
             "import sys\ndef self_test():\n    return 1\n"
             "if __name__ == '__main__':\n    sys.exit(self_test())\n", encoding="utf-8")
@@ -1341,10 +1378,27 @@ def self_test():
                           encoding="utf-8")
         v = base / "verify.sh"
 
-        def run(body):
-            v.write_text(body, encoding="utf-8")
+        # **既定モードは `--stages` の段が在ることを求めます**（#99）。
+        # 作り物の `verify.sh` にも足しておかないと、以降の試験が
+        # 全部その1点で落ちて、本来見たいものが見えなくなります
+        _STAGES_LINE = ('step "段の数" "$PY" "$HARNESS/tools/stage_check.py"'
+                        ' --stages --verify design/verify.sh\n')
+
+        def run(body, with_stages=True):
+            v.write_text((body + _STAGES_LINE) if with_stages else body,
+                         encoding="utf-8")
             return main(["--verify", str(v), "--tools", str(tools),
                          "--readme", str(readme)])
+
+        # ─── **段の数を見る段が無ければ落ちる**（#99・自己参照の穴）─────
+        # `--stages` は「元ファイルの段が落ちていないか」「関門の条件が全部
+        # 測られているか」を見る唯一の場所。**その段が案件から落ちていても、
+        # 落ちていることを検知するのはその段自身**なので無音になる。
+        # 実害（2026-09-09・QnD）: 関門の条件5と条件9を1つも測っていないまま
+        # 値の照合だけが緑で並んでいた
+        if run('step "よい段" "$PY" "$HARNESS/tools/good.py"\n',
+               with_stages=False) != 1:
+            print("self-test NG: **段の数を見る段が無いのに通した**（#99）"); ok = False
 
         if run('step "よい段" "$PY" "$HARNESS/tools/good.py"\n') != 0:
             print("self-test NG: self-test のある道具で落ちた"); ok = False
@@ -1366,9 +1420,12 @@ def self_test():
                'echo "おわり"\n') != 1:
             print("self-test NG: step 形式でない呼び出しを見逃した"); ok = False
 
-        # 中身があるのに1つも拾えないなら落ちる（偽の緑を出さない）
+        # 中身があるのに1つも拾えないなら落ちる（偽の緑を出さない）。
+        # **ここは `--stages` の段も足しません**——足すと道具が1つ拾えてしまい、
+        # 「1つも拾えない」という前提が崩れます
         if run("#!/bin/sh\nset -e\n" + "".join(
-                f'echo "何かする {i}"\n' for i in range(8))) != 2:
+                f'echo "何かする {i}"\n' for i in range(8)),
+               with_stages=False) != 2:
             print("self-test NG: 何も拾えないのに『問題なし』を出した"); ok = False
         if run('step "存在しない段" "$PY" "$HARNESS/tools/nope.py"\n') != 1:
             print("self-test NG: 存在しない道具を通した"); ok = False
