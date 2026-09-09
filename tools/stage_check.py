@@ -467,6 +467,70 @@ def self_test_stages():
                 r = check_stages(tpl, verify, None, waivers, gate, pp, pt)
             return r, b.getvalue()
 
+        # ─── **条件の適用外**（#102・2026-09-09）───────────────────────
+        # 条件5 を測る道具は Web では回せないが、**「当てはまらない」と宣言する
+        # 置き場が無かった**ため、案件は落ちたままか黙って外すかの二択だった。
+        #
+        # QnD の形を作る: **段は理由つきで不在（`notHere`）にしてあるのに、
+        # その条件を誰も測っていない**状態。
+        _STAGE5 = "再現性の判定（条件5: 描画で別物）"
+        _NOT_HERE = {_STAGE5: {"why": "この案件は Web で、測る道具が回せない",
+                               "reviewBy": "2099-01-01"}}
+
+        def with_na(na):
+            waivers.write_text(json.dumps(
+                {"notHere": _NOT_HERE, "条件の適用外": na}, ensure_ascii=False),
+                encoding="utf-8")
+            # 条件5 を測る段（check_render_gaps）を案件から外す
+            verify.write_text("".join(
+                l + "\n" for l in full.split("\n")
+                if l.strip() and "check_render_gaps" not in l), encoding="utf-8")
+            tpl.write_text(TPL, encoding="utf-8")
+            gate.write_text(json.dumps(GATE, ensure_ascii=False), encoding="utf-8")
+            b = io.StringIO()
+            with contextlib.redirect_stdout(b), contextlib.redirect_stderr(b):
+                r = check_stages(tpl, verify, None, waivers, gate, pp, pt)
+            return r, b.getvalue()
+
+        NA = {"why": "この案件は Web で、測る道具が Flutter の判定を分母にしている",
+              "かわりに": "無い", "reviewBy": "2099-01-01"}
+        r, o = with_na({})
+        if r != 1 or "誰も測っていません" not in o:
+            print(f"self-test NG: 条件を測らずに通した（{r}）\n   {o[:300]}"); ok = False
+        elif "条件の適用外" not in o:
+            print("self-test NG: **何を宣言すればよいかを出していない**（#102）"); ok = False
+        r, o = with_na({"5": NA})
+        if r != 0:
+            print(f"self-test NG: **理由つきで宣言したのに落ちた**（#102）（{r}）\n   {o[:800]}")
+            ok = False
+        elif "当てはまらないと宣言されています" not in o:
+            print("self-test NG: **宣言を黙って飲み込んだ**（件数を出していない）"); ok = False
+        elif "すべて測っています" in o:
+            # **測らないと決めたものを「測った」と言わない**（#102）
+            print("self-test NG: **適用外があるのに『すべて測っています』と言った**")
+            ok = False
+        elif "当てはまらないと宣言 1 件" not in o:
+            print(f"self-test NG: 要約に適用外の件数が出ていない\n   {o[:300]}"); ok = False
+        # **人が実際に当たる文言に、宣言の道が書いてあるか**
+        # **2つの文言のどちらに当たっても、宣言の道が分かること。**
+        # 人が最初に当たるのは measuredBy の側で、そこに書いていないと
+        # 「どこで測っているか」を書けと言われたまま行き止まりになる（#102）
+        r, o = with_na({})
+        if o.count('"条件の適用外"') < 2:
+            print(f"self-test NG: **宣言の道が両方の文言に書いていない**（#102）"
+                  f": {o.count(chr(34) + '条件の適用外' + chr(34))} 箇所\n   {o[:400]}")
+            ok = False
+        r, o = with_na({"5": {**NA, "why": "  "}})
+        if r != 1 or "why" not in o:
+            print(f"self-test NG: **理由の無い宣言を受け付けた**（#102）（{r}）"); ok = False
+        r, o = with_na({"5": {**NA, "reviewBy": "2000-01-01"}})
+        if r != 1 or "期限" not in o:
+            print(f"self-test NG: **期限切れの宣言を受け付けた**（#102）（{r}）"); ok = False
+        r, o = with_na({"999": NA})
+        if r != 1 or "正本にその条件はありません" not in o:
+            print(f"self-test NG: **無い条件を適用外にできた**（#102）（{r}）"); ok = False
+        waivers.unlink(missing_ok=True)
+
         r, o = with_mitig([MIT])
         if r != 0 or "緩和の上に立っています" not in o:
             print(f"self-test NG: 緩和の宣言を表示していない（{r}）\n   {o[:300]}")
@@ -985,6 +1049,18 @@ def check_template_sync(template: Path, waivers_path: Path):
     return 1
 
 
+def _na_keys(waivers_path):
+    """`条件の適用外` に宣言されている条件番号（#102）。"""
+    if not waivers_path or not Path(waivers_path).exists():
+        return set()
+    try:
+        d = json.loads(Path(waivers_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    na = d.get("条件の適用外")
+    return set(na) if isinstance(na, dict) else set()
+
+
 def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None,
                  prepush_template=None):
     """元ファイルの段が、この案件から黙って落ちていないかを見る。"""
@@ -1077,14 +1153,27 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
         if conds:
             # 関門の条件を持つ段は、理由だけでは足りない。
             # **どこで測っているか**を書かせる（条件は全部満たす、が正本の決まり）
-            if not str(w.get("measuredBy", "")).strip():
-                errs.append(f"  「{label}」は関門の"
-                            f"{' / '.join('条件' + c for c in sorted(conds))}"
-                            f"を測る段です。\n"
-                            f"    不在にするなら measuredBy に**どこで測っているか**"
-                            f"を書いてください\n"
-                            f"    （例: 「design-systems の CI が走らせている」）。"
-                            f"理由だけでは足りません。")
+            #
+            # **ただし「この条件はこのスタックでは当てはまらない」ときは別**（#102）。
+            # そのときは**どこでも測りません**——それがまさに言いたいことなので、
+            # `measuredBy` を求めると**言えるようにする道が塞がります。**
+            # 実害（2026-09-09・QnD）: 条件5 を測る道具は Web では回せないのに、
+            # 「どこで測っているか」を書けと求められ、**落ちたままか黙って外すかの
+            # 二択**になっていた。`条件の適用外` に宣言があるものは、ここを飛ばす。
+            _na_all = all(c in _na_keys(waivers_path) for c in conds)
+            if not _na_all and not str(w.get("measuredBy", "")).strip():
+                _c = "／".join(sorted(conds))
+                errs.append(
+                    f"  「{label}」は関門の"
+                    f"{' / '.join('条件' + c for c in sorted(conds))}を測る段です。\n"
+                    f"    不在にするなら measuredBy に**どこで測っているか**"
+                    f"を書いてください\n"
+                    f"    （例: 「design-systems の CI が走らせている」）。"
+                    f"理由だけでは足りません。\n"
+                    f"    **このスタックでは当てはまらない**なら、"
+                    f"`stages.json` の `条件の適用外` に理由と期限を書いてください:\n"
+                    f'      "条件の適用外": {{"{_c}": {{"why": "…", '
+                    f'"かわりに": "…", "reviewBy": "YYYY-MM-DD"}}}}')
                 continue
             covered |= conds
         waived.append(label)
@@ -1129,23 +1218,78 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
                     f"ありません（廃止済み）。\n"
                     f"    札を「参考」に付け替えてください。")
 
+    # **この条件は、このスタックでは当てはまらない**を宣言できるようにする（#102）。
+    #
+    # 実害（2026-09-09・QnD で実測）: 条件5（描画再現性）を測る道具
+    # `check_render_gaps.py` は `components.json` の flutter 判定を分母にしていて
+    # **Web では回せません**。ところが**「当てはまらない」と宣言する置き場が
+    # 無かった**ため、案件は**落ちたままか、黙って外すかの二択**になっていました。
+    # **黙って外すのは規律に反します。**
+    #
+    # **宣言は緩和と同じ重さで扱います**——`why` と `reviewBy` が要り、
+    # 期限を過ぎたら落とし、**通ったときも件数を出します**（黙って消えない）。
+    na = {}
+    if waivers_path and waivers_path.exists():
+        try:
+            na = json.loads(waivers_path.read_text(
+                encoding="utf-8")).get("条件の適用外") or {}
+        except (OSError, json.JSONDecodeError):
+            na = {}
+    if not isinstance(na, dict):
+        errs.append("  `条件の適用外` は条件番号を鍵にした辞書で書いてください")
+        na = {}
+    for c, d in sorted(na.items()):
+        if not isinstance(d, dict):
+            errs.append(f"  条件{c} の適用外の宣言が辞書ではありません")
+            continue
+        miss = [k for k in ("why", "reviewBy") if not str(d.get(k, "")).strip()]
+        if miss:
+            errs.append(f"  条件{c} の適用外の宣言に {' / '.join(miss)} が"
+                        f"ありません。**理由の無い宣言は受け付けません**")
+        elif str(d["reviewBy"]) < date.today().isoformat():
+            errs.append(f"  条件{c} の適用外の宣言が棚卸しの期限"
+                        f"（{d['reviewBy']}）を過ぎています。\n"
+                        f"    **まだこのスタックでは当てはまりませんか。**")
+        if c not in live:
+            errs.append(f"  条件{c} を適用外と宣言していますが、"
+                        f"**正本にその条件はありません**（廃止済みか、番号違い）")
+
     # この案件で、生きている条件が全部測られているか
     for c in sorted(set(live) & claimed):
         if c not in covered:
             errs.append(f"  関門の条件{c}（{live[c].get('見出し')}）を、"
                         f"この案件では誰も測っていません。\n"
-                        f"    **「条件は全部満たす」が正本の決まりです。**")
+                        f"    **「条件は全部満たす」が正本の決まりです。**\n"
+                        f"    このスタックでは当てはまらないなら、"
+                        f"`stages.json` の `条件の適用外` に理由と期限を書いてください:\n"
+                        f'      "条件の適用外": {{"{c}": {{"why": "…", '
+                        f'"かわりに": "…", "reviewBy": "YYYY-MM-DD"}}}}')
 
     if errs:
         print("元ファイルの段が、この案件から落ちています:", file=sys.stderr)
         print("\n".join(errs), file=sys.stderr)
         return 1
+    _na_live = sorted(c for c in na if c in live)
+    for c, d in sorted(na.items()):
+        if c in live:
+            _alt = d.get("かわりに")
+            print(f"**関門の条件{c}（{live[c].get('見出し')}）は、この案件では"
+                  f"当てはまらないと宣言されています**: {d.get('why')}"
+                  + (f"／かわりに: {_alt}" if _alt else "／**かわりの測り方はありません**")
+                  + f"（棚卸しの期限 {d.get('reviewBy')}）")
     note = f" / 理由つきで不在 {len(waived)}段" if waived else ""
     if mitig:
         print(f"**この関門は {len(mitig)} 件の緩和の上に立っています**"
               f"（{' / '.join(str(m.get('what')) for m in mitig[:3])}）。")
     print(f"段の数: 元ファイル {len(stages)}段 → この案件 {len(ran)}段{note}。"
-          f"関門の条件 {len(live)} 件、すべて測っています。")
+          + (f"関門の条件 {len(live)} 件、すべて測っています。"
+             if not _na_live else
+             # **「すべて測っています」と言いません**（#102）。適用外の宣言は
+             # 「測らないと決めた」ことなので、**測ったことにしてはいけません**
+             f"関門の条件 {len(live)} 件のうち、"
+             f"**測っている {len(live) - len(_na_live)} 件 / "
+             f"当てはまらないと宣言 {len(_na_live)} 件**（条件"
+             + "・".join(sorted(_na_live)) + "）。"))
     # **同じ道具を別の引数で呼んでいないか**（2026-09-06・#84）。段の照合は道具の
     # ファイル名で行うので、`exporter_check.py --style` と `--samples` のように
     # 1本の道具を共有する段は、**片方しか回していなくても両方走っていることになる**
