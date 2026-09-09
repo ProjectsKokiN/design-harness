@@ -56,6 +56,34 @@ import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf
 
 #: 実装が使っている数値。2桁以上だけ見る（0〜9 は添字や真偽が混ざる）
 NUM_RX = re.compile(r"(?<![\w.])(\d{2,}(?:\.\d+)?)(?![\w.])")
+#: CSS / HTML の単位つきの値。**数だけを取り出し、単位は食べます**（#104）。
+#:
+#: 上の `NUM_RX` は数の後ろに `\w` を許さないため、**`293px` / `1.5rem` のような
+#: 単位つきの値を1件も拾いませんでした**。拾えるのは単位の無い数だけで、
+#: Web の案件では「実装の中だけの寸法」が**どの検査にも当たらないまま緑**でした。
+#: 破壊テストに `.qnd-break-test{max-width:1337px}` を足しても **0 件のまま**
+#: （2026-09-09・qnd-database で実測）。
+#:
+#: `#` と `-` を先読みで外すのは、`#1337ab`（色）や `grid-1337`（名前）を
+#: 数として拾わないため。
+#:
+#: **小数は1桁でも拾います**（`1.5rem`）。`\d{2,}` は「0 や 1 のような
+#: どうでもいい数を飛ばす」ための決まりですが、CSS の `1.5rem` は**見た目の値**です。
+CSS_UNITS = ("px", "rem", "em", "%", "vh", "vw", "vmin", "vmax",
+             "pt", "ch", "ex", "fr", "cm", "mm", "in", "pc", "q",
+             "deg", "rad", "turn", "s", "ms")
+CSS_NUM_RX = re.compile(
+    r"(?<![\w.#-])(\d{2,}(?:\.\d+)?|\d\.\d+)(?:" + "|".join(CSS_UNITS)
+    + r")?(?![\w.])",
+    re.IGNORECASE)
+#: 単位つきの値を持つ書式。**拡張子から導きます**（宣言しない）
+CSS_SUFFIXES = (".css", ".scss", ".sass", ".less", ".html", ".htm",
+                ".vue", ".svelte", ".astro")
+
+
+def num_rx(suffix):
+    """その書式に合う数の拾い方を返す（#104）。"""
+    return CSS_NUM_RX if str(suffix).lower() in CSS_SUFFIXES else NUM_RX
 #: 実装が使っているトークン名。`AppColor.frameNeutralSubtle` の後ろ
 TOKEN_RX = re.compile(r"\b(App[A-Z]\w*)\.([a-zA-Z_]\w*)")
 #: 行のコメント（この道具は「書いてある値」ではなく「使う値」を見る）
@@ -108,7 +136,9 @@ def corpus(paths):
 
 def scan(impl_dirs, blob, suffixes):
     """実装が使っていて、出どころの無い数値とトークンを返す。"""
-    nums_ok = set(NUM_RX.findall(blob))
+    # **出どころの側は、両方の拾い方で集めます。**
+    # 書き出しが CSS でも JSON でも、数として出てきたものは出どころです
+    nums_ok = set(NUM_RX.findall(blob)) | set(CSS_NUM_RX.findall(blob))
     nums_ok |= {norm(n) for n in nums_ok}
     found = {}
     files = 0
@@ -127,7 +157,7 @@ def scan(impl_dirs, blob, suffixes):
                 continue                       # 生成物は出どころそのもの
             files += 1
             text = COMMENT_RX.sub("", f.read_text(encoding="utf-8", errors="ignore"))
-            miss_n = sorted({n for n in NUM_RX.findall(text)
+            miss_n = sorted({n for n in num_rx(f.suffix).findall(text)
                              if norm(n) not in nums_ok})
             miss_t = sorted({m for c, m in TOKEN_RX.findall(text)
                              if c in token_classes and m not in blob})
@@ -277,6 +307,26 @@ def self_test():
     import io
     import tempfile
     ok = True
+
+    # ─── **単位つきの値を拾えるか**（#104・2026-09-09）───────────────
+    # `NUM_RX` は数の後ろに `\w` を許さないため、`293px` / `1.5rem` を
+    # **1件も拾いませんでした**。Web の案件では「実装の中だけの寸法」が
+    # **どの検査にも当たらないまま緑**で、破壊テストを足しても 0 件でした。
+    _cases = [
+        (".css", ".qnd-break-test{max-width:1337px}", ["1337"], "単位つきを拾えない"),
+        (".css", "a{margin:1.5rem}", ["1.5"], "小数の単位つきを拾えない"),
+        (".css", "a{color:#1337ab}", [], "**色を数として拾った**"),
+        (".css", ".grid-1337{}", [], "**名前の中の数を拾った**"),
+        (".html", '<div style="width:293px">', ["293"], "HTML の単位つきを拾えない"),
+        (".dart", "const x = 1337;", ["1337"], "Dart の拾い方が変わった"),
+        (".dart", 'const x = "1337px";', [], "**Dart で単位つきを拾うようになった**"),
+    ]
+    for _sfx, _txt, _want, _why in _cases:
+        _got = num_rx(_sfx).findall(_txt)
+        if _got != _want:
+            print(f"self-test NG: {_why}: {_sfx} {_txt!r} → {_got}（{_want} のはず）")
+            ok = False
+
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / "lib" / "ui").mkdir(parents=True)
