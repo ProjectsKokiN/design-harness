@@ -448,8 +448,22 @@ def main(argv=None):
         allow[a["file"]] = a["why"]
 
     for f in files:
-        if f.name in allow and not args.update:
-            print(f"  例外: {f.name}（{allow[f.name]}）")
+        # **`--update` でも宣言を守ります**（#100）。
+        #
+        # `and not args.update` が付いていたため、**`--update` は allow を
+        # 見ずに、その宣言が禁じている項目へ書き込んでいました**
+        # （2026-09-09・QnD で実測。`values/` の生成物4件に `producerDigest` を
+        # 書き込み、`git checkout` で戻した）。
+        #
+        # 宣言の理由は「**器の指紋を入れると、生成し直したときに消えて
+        # `gen_verify` と食い違う**」。**書き込むこと自体が壊す**ので、
+        # 読むときだけでなく書くときこそ守る必要があります。
+        if f.name in allow:
+            why = allow[f.name]
+            if args.update:
+                print(f"  例外（書き込みません）: {f.name}（{why}）")
+            else:
+                print(f"  例外: {f.name}（{why}）")
             continue
         try:
             doc = json.loads(f.read_text(encoding="utf-8"))
@@ -526,6 +540,31 @@ def self_test():
         def write(meta):
             out.write_text(json.dumps({"$meta": meta, "componentSets": {}}),
                            encoding="utf-8")
+
+        # ─── **`--update` が宣言を守るか**（#100・2026-09-09）─────────────
+        # `and not args.update` が付いていたため、`--update` は allow を見ずに
+        # **その宣言が禁じている項目へ書き込んでいた**（QnD で実測。
+        # `values/` の生成物4件に `producerDigest` を書き込み、戻した）。
+        # 宣言の理由は「器の指紋を入れると、生成し直したときに消えて
+        # `gen_verify` と食い違う」。**書き込むこと自体が壊す。**
+        _allow_out = root / "design" / "figma" / "_impl-export.json"
+        _allow_out.write_text(json.dumps(
+            {"$meta": {"producer": "design/export_components.mjs"}, "x": 1},
+            ensure_ascii=False), encoding="utf-8")
+        _before = _allow_out.read_bytes()
+        cfg.write_text(json.dumps({
+            "exports_dir": "design/figma",
+            "allow": [{"file": "_impl-export.json",
+                       "why": "器の指紋を入れると生成し直したときに消える",
+                       "reviewBy": "2099-12-31"}]}, ensure_ascii=False),
+            encoding="utf-8")
+        write({"producer": "design/export_components.mjs"})
+        main(argv + ["--update"])
+        if _allow_out.read_bytes() != _before:
+            print("self-test NG: **--update が allow の宣言を無視して書き込んだ**（#100）")
+            ok = False
+        _allow_out.unlink()
+        cfg.write_text(json.dumps({"exports_dir": "design/figma"}), encoding="utf-8")
 
         write({"producer": "design/export_components.mjs"})
         if main(argv) != 1:
