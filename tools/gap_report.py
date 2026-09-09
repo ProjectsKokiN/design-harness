@@ -44,6 +44,12 @@ AI が短くできない。
       "rules": "design/rules.json",
       "seeds": "design/seeds",
       "frames": "../design-systems/414/figma/frames.json",
+      # 入れ子の書き出しなら、**どの階層が画面かを宣言する**（#101）:
+      #   "frames": {"path": "design/figma/values/screens.json",
+      #              "at": "sections/*"}
+      # `at` は `/` 区切りで、`*` はその階層を全部たどる。
+      # **宣言しないと数を出しません**（推測で数えて `$meta` を画面として
+      # 報告していたため。2026-09-09・QnD 実測）
       "page_scope": "design/figma/page-scope.json",
       "tests": "test",
       "notVerifiable": [
@@ -122,14 +128,75 @@ def seeded_rules(seeds_dir):
     return {k for k, v in d.items() if not k.startswith("$") and k != "*" and v}
 
 
-def screens_without_test(frames_path, tests_dir):
+def frame_names(doc, at=None):
+    """画面の名前を取り出す。`(名前の一覧, 断れなかった理由)` を返す。
+
+    **形を推測しません**（#101）。直下の鍵をそのまま画面名として数えていたため、
+    入れ子の書き出し（QnD は 節 → 枠 → ノード）では
+    **`$meta` と `sections` の2件が「画面」として報告**されていました
+    （実体は 6節 11枠 179ノード。2026-09-09 実測）。
+    **報告書の冒頭に貼る数なので、間違った数を出すくらいなら出しません。**
+
+    `at` は入れ子の言い方（`"sections/*"` のように `/` で区切り、`*` は全部）。
+    """
+    if not isinstance(doc, dict):
+        return [], "画面の書き出しが辞書ではありません"
+    if isinstance(doc.get("frames"), (dict, list)):
+        doc = doc["frames"]
+        if isinstance(doc, list):
+            return [x for x in doc if isinstance(x, str)], None
+
+    if at:
+        cur = [doc]
+        for seg in [s for s in str(at).split("/") if s]:
+            nxt = []
+            for c in cur:
+                if not isinstance(c, dict):
+                    continue
+                if seg == "*":
+                    nxt += [v for k, v in c.items() if not k.startswith("$")]
+                elif seg in c:
+                    nxt.append(c[seg])
+            cur = nxt
+        names = []
+        for c in cur:
+            if isinstance(c, dict):
+                names += [k for k in c if not k.startswith("$")]
+        if not names:
+            return [], f"`at` が指す先に画面がありません: {at}"
+        return names, None
+
+    # **`$` で始まる鍵は覚え書きです**（この repo の決まり）。数えません
+    body = {k: v for k, v in doc.items() if not k.startswith("$")}
+    if not body:
+        return [], "画面の書き出しが空です"
+    # 入れ子かどうかを**導きます**。値の値がまた辞書なら、この階層は画面ではありません
+    nested = [k for k, v in body.items()
+              if isinstance(v, dict) and any(isinstance(x, dict) for x in v.values())]
+    if nested and len(body) <= 3:
+        return [], ("**画面の書き出しが入れ子です。どの階層が画面かを宣言してください。**"
+                    f"いまの直下の鍵: {', '.join(sorted(body))}。"
+                    "`gaps.json` の `frames` を "
+                    '`{"path": "...", "at": "sections/*"}` の形にしてください'
+                    "（`*` はその階層を全部たどります）")
+    return list(body), None
+
+
+def screens_without_test(frames_path, tests_dir, at=None, declared=True):
+    if not declared:
+        return None, ("画面の照合先が**指定されていません**"
+                      "（`gaps.json` に `frames` を書くと、"
+                      "画面ごとの照合テストの穴を数えます）")
     if not frames_path or not frames_path.exists():
-        return None, "frames.json がありません（画面固有の値の照合先が無い状態です）"
+        return None, (f"指定された画面の書き出しがありません: {frames_path}"
+                      "（画面固有の値の照合先が無い状態です）")
     try:
         frames = json.loads(frames_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
-        return None, f"frames.json が読めません: {e}"
-    names = list(frames.get("frames", frames)) if isinstance(frames, dict) else []
+        return None, f"画面の書き出しが読めません: {e}"
+    names, why = frame_names(frames, at)
+    if why:
+        return None, why
     if not tests_dir or not tests_dir.exists():
         return names, f"テストの置き場がありません: {tests_dir}"
     blob = "\n".join(
@@ -202,7 +269,16 @@ def main(argv=None):
     seeded = seeded_rules(rel("seeds"))
     silent = sorted(r for r, n in hits.items() if n == 0)
     unproven = [r for r in silent if r not in seeded]
-    missing_tests, frames_note = screens_without_test(rel("frames"), rel("tests"))
+    # `frames` は**文字列（場所）**でも、**辞書（場所＋どの階層が画面か）**でもよい（#101）
+    _fr = conf.get("frames")
+    _fr_at = None
+    if isinstance(_fr, dict):
+        _fr_at = _fr.get("at")
+        _fr_path = (base / _fr["path"]) if _fr.get("path") else None
+    else:
+        _fr_path = (base / _fr) if _fr else None
+    missing_tests, frames_note = screens_without_test(
+        _fr_path, rel("tests"), at=_fr_at, declared=_fr is not None)
 
     lines = ["## この実装で機械が見ていないもの（gap_report.py が生成。手で縮めない）", "",
              f"走査したファイル: {read}件{_decl(config, 'expected_targets')} / "
@@ -293,7 +369,49 @@ def main(argv=None):
     return 0
 
 
+def _self_test_frames():
+    """**画面の名前の取り出し**（#101）。
+
+    直下の鍵をそのまま画面名として数えていたため、入れ子の書き出しでは
+    `$meta` と `sections` が「画面」として報告されていた（2026-09-09・QnD 実測。
+    実体は 6節 11枠 179ノード）。**報告書の冒頭に貼る数なので、
+    間違った数を出すくらいなら出しません。**
+    """
+    ok = True
+
+    def ck(c, m):
+        nonlocal ok
+        if not c:
+            ok = False
+            print(f"  NG: {m}")
+
+    qnd = {"$meta": {"x": 1},
+           "sections": {"節A": {"枠1": {"n": 1}, "枠2": {"n": 2}},
+                        "節B": {"枠3": {"n": 3}}}}
+    ck(frame_names({"画面A": {"w": 1}, "画面B": {"w": 2}})[0] == ["画面A", "画面B"],
+       "平らな表を読めない")
+    ck(frame_names({"frames": ["画面X", "画面Y"]})[0] == ["画面X", "画面Y"],
+       "一覧の形を読めない")
+
+    names, why = frame_names(qnd)
+    ck(names == [], f"**入れ子なのに数を出した**（#101）: {names}")
+    ck(why and "入れ子" in why, f"入れ子だと言っていない: {why}")
+    ck(why and "at" in why, "何を宣言すればよいかを出していない")
+    ck(not names or "$meta" not in names, "**`$meta` を画面として数えた**")
+
+    names, why = frame_names(qnd, "sections/*")
+    ck(sorted(names) == ["枠1", "枠2", "枠3"], f"宣言しても枠を取り出せない: {names}")
+    ck(why is None, f"宣言したのに断った: {why}")
+
+    # **`$` で始まる鍵は、平らな表でも数えない**
+    ck(frame_names({"$meta": {"x": 1}, "画面A": {"w": 1}})[0] == ["画面A"],
+       "平らな表で `$meta` を数えた")
+    return ok
+
+
 def self_test():
+    if not _self_test_frames():
+        return 1
     import tempfile
     ok = True
     with tempfile.TemporaryDirectory() as td:
