@@ -88,6 +88,30 @@ def num_rx(suffix):
 TOKEN_RX = re.compile(r"\b(App[A-Z]\w*)\.([a-zA-Z_]\w*)")
 #: 行のコメント（この道具は「書いてある値」ではなく「使う値」を見る）
 COMMENT_RX = re.compile(r"//.*")
+#: 囲みのコメント `/* … */`（改行をまたぐ）
+BLOCK_COMMENT_RX = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def strip_comments(text, suffix):
+    """コメントを外す。**書式ごとに違います**（2026-09-10・#104）。
+
+    | 書式 | `//` | `/* … */` |
+    |---|---|---|
+    | `.dart` / `.js` / `.mjs` / `.ts` | 外す | 外す |
+    | `.css` | **外さない** | 外す |
+
+    **CSS で `//` を外すと `url(https://…)` を壊します。**
+    逆に `/* … */` を外していなかったため、**コメントの中の数字を
+    「実装の中だけの数値」として報告していました**——QnD の実測で
+    `183` / `243` の2件が出ましたが、実体は
+    `/* 事例詳細 183 に対して PoV 詳細 243 */` という**説明文**でした。
+    **「使う値」を見る道具なので、説明文の数は数えません。**
+    """
+    s = str(suffix).lower()
+    text = BLOCK_COMMENT_RX.sub("", text)
+    if s not in CSS_SUFFIXES:
+        text = COMMENT_RX.sub("", text)
+    return text
 
 #: 見た目に効く名前付き引数・代入。ここに数を直接書くと Figma と切れる
 STYLE_KEYS = (
@@ -156,7 +180,8 @@ def scan(impl_dirs, blob, suffixes):
             if f.name.endswith(".g.dart"):
                 continue                       # 生成物は出どころそのもの
             files += 1
-            text = COMMENT_RX.sub("", f.read_text(encoding="utf-8", errors="ignore"))
+            text = strip_comments(
+                f.read_text(encoding="utf-8", errors="ignore"), f.suffix)
             miss_n = sorted({n for n in num_rx(f.suffix).findall(text)
                              if norm(n) not in nums_ok})
             miss_t = sorted({m for c, m in TOKEN_RX.findall(text)
@@ -323,6 +348,27 @@ def self_test():
     ]
     for _sfx, _txt, _want, _why in _cases:
         _got = num_rx(_sfx).findall(_txt)
+        if _got != _want:
+            print(f"self-test NG: {_why}: {_sfx} {_txt!r} → {_got}（{_want} のはず）")
+            ok = False
+
+    # ─── **コメントの中の数字を数えない**（2026-09-10・#104）─────────────
+    # QnD の実測で `183` / `243` が「実装の中だけの数値」として出たが、実体は
+    # `/* 事例詳細 183 に対して PoV 詳細 243 */` という**説明文**だった。
+    # **この道具は「書いてある値」ではなく「使う値」を見る**ので、説明文は数えない。
+    # **CSS で `//` を外すと `url(https://…)` を壊す**ので、書式ごとに分ける
+    _ccases = [
+        (".css", "/* メモ 183 と 243 */\n.a{max-width:1337px}", ["1337"],
+         "**CSS のコメントの中の数字を数えている**"),
+        (".css", ".a{background:url(https://x/1337.png)}", [],
+         "**CSS の `//` を外して url を壊した**"),
+        (".dart", "// メモ 99\nconst x = 1337;", ["1337"],
+         "dart の行コメントを外していない"),
+        (".dart", "const x = 1337; /* 88 */", ["1337"],
+         "dart の囲みコメントを外していない"),
+    ]
+    for _sfx, _txt, _want, _why in _ccases:
+        _got = num_rx(_sfx).findall(strip_comments(_txt, _sfx))
         if _got != _want:
             print(f"self-test NG: {_why}: {_sfx} {_txt!r} → {_got}（{_want} のはず）")
             ok = False
