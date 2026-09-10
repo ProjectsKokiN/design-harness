@@ -381,7 +381,7 @@ def main(argv=None):
         return do_check(machine, conf, args.root, args.config)
 
     if args.check_paths:
-        return do_check_paths(conf, args.root, args.config)
+        return do_check_paths(conf, args.root, args.config, machine)
 
     if args.handoff:
         return do_handoff(machine, conf, args.root, args.apply)
@@ -558,7 +558,7 @@ def ghost_paths(conf, root):
     return out, no_reason, done
 
 
-def do_check_paths(conf, root, conf_path=''):
+def do_check_paths(conf, root, conf_path='', machine=None):
     """**宣言したパスが実体を指しているか**だけを見る（2026-09-06 新設・#80）。
 
     `--check`（担当外の変更を見る）とは別の段にしています。あちらは「何を変えたか」、
@@ -573,13 +573,46 @@ def do_check_paths(conf, root, conf_path=''):
         return 2
     coming = conf.get("$これから作る") or {}
     if done and not ghosts and not no_reason:
-        print(f"**できあがったのに `$これから作る` の宣言が残っています**（{len(done)}件）:",
-              file=sys.stderr)
+        # **宣言を消せる機体だけを落とします**（2026-09-10・Windows の実測）。
+        #
+        # 宣言（`$これから作る`）が在るのは `machine-scope.json` の中で、
+        # それを書き換えてよいのは**司令塔だけ**（2026-09-07 ユーザー確定）。
+        # ところが実体を作るのは**担当の機体**なので、**作った機体では
+        # 「できあがったのに宣言が残っている」が必ず落ちます。**
+        # その機体には直す手が無く、**押すために `--no-verify` を選ぶしかなくなる。**
+        #
+        # 実害（2026-09-10・FlashEnglish の `design/android.json`）: Windows が
+        # 実体を作ったところ、宣言を残せば #80 で落ち、消せば
+        # `machine-scope.json` が担当外で落ちる。**どちらに倒しても落ちた。**
+        # 「実体ができたら宣言を消す」は**必ず2台がかり**になる（`android.json` で2回目）。
+        #
+        # だから**この設定の持ち主にだけ**関門にし、他の機体には報せます。
+        # **報せない選択はしません**——気づかないと化石が残ります。
+        # **リポジトリ相対にしてから引きます。** `--config` は絶対パスで渡されることが
+        # 多く、そのままでは `owner_of` の最長一致に1つも当たらず担当が引けません
+        # （2026-09-10 実測: 誰も落ちない側に倒れていました）
+        _rel = str(conf_path or "design/machine-scope.json")
+        try:
+            _rel = Path(_rel).resolve().relative_to(Path(root).resolve()).as_posix()
+        except (ValueError, OSError):
+            _rel = Path(_rel).as_posix()
+        owner = owner_of(_rel, conf, root)
+        mine = machine is None or owner in (None, SHARED, machine)
+        head = f"**できあがったのに `$これから作る` の宣言が残っています**（{len(done)}件）:"
+        if mine:
+            print(head, file=sys.stderr)
+            for k in done:
+                print(f"  - `{k}`（実体があります）", file=sys.stderr)
+            print("  → 宣言を消してください。**残しても何も守りません**"
+                  "（宣言だけ残る化石・#80）", file=sys.stderr)
+            return 1
+        print(f"注意: {head}")
         for k in done:
-            print(f"  - `{k}`（実体があります）", file=sys.stderr)
-        print("  → 宣言を消してください。**残しても何も守りません**"
-              "（宣言だけ残る化石・#80）", file=sys.stderr)
-        return 1
+            print(f"  - `{k}`（実体があります）")
+        print(f"  → **この宣言を消せるのは `{owner}` だけです**"
+              f"（`{_rel}` の担当）。この機体（`{machine}`）では落としません。\n"
+              f"  **実体を push したあと、`{owner}` に宣言を消してもらってください。**"
+              f"（`$これから作る` は必ず2台がかりになります・#80）")
     if not ghosts and not no_reason:
         print(f"担当の宣言: {n} 件、すべて実体を指しています"
               + (f"（これから作る {len(coming)} 件は理由つきで宣言済み）" if coming else ""))
@@ -1107,6 +1140,68 @@ def self_test():
                   f"\n   {b.getvalue()[:200]}"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
+    def _ck(cond, msg):
+        if not cond:
+            print(f"  NG: {msg}")
+        return bool(cond)
+
+    import contextlib
+    import io
+
+    # ─── **`$これから作る` の引き渡し**（#80・2026-09-10）───────────────
+    # 宣言が在るのは `machine-scope.json` で、書き換えてよいのは司令塔だけ。
+    # 実体を作るのは担当の機体。**だから作った機体では必ず落ちていた**
+    # （残せば #80・消せば担当外。実測: FlashEnglish の `design/android.json`）。
+    # **直せる機体だけを落とし、他には報せる。**
+    with tempfile.TemporaryDirectory() as td:
+        hr = Path(td)
+        (hr / "design").mkdir()
+        (hr / "scripts").mkdir()
+        (hr / "README.md").write_text("x", encoding="utf-8")
+        hc = hr / "design" / "machine-scope.json"
+        hc.write_text(json.dumps({
+            "machines": {"MacBook Air": ["design/"],
+                         "Windows": ["scripts/", "design/android.json"]},
+            "shared": ["README.md"],
+            "$これから作る": {"design/android.json": "Windows がこれから測って書く"}},
+            ensure_ascii=False), encoding="utf-8")
+
+        def paths_rc(m):
+            conf2 = json.loads(hc.read_text(encoding="utf-8"))
+            b = io.StringIO()
+            with contextlib.redirect_stdout(b), contextlib.redirect_stderr(b):
+                r = do_check_paths(conf2, hr, str(hc), m)
+            return r, b.getvalue()
+
+        # 実体が無い＝宣言どおり → どちらも通る
+        for m in ("MacBook Air", "Windows"):
+            r, _ = paths_rc(m)
+            ok = _ck(r == 0, f"宣言どおりなのに落ちた（{m}）: {r}") and ok
+
+        # 実体ができた → **司令塔だけ落ちる。作った機体は通って、誰が消すかを出す**
+        (hr / "design" / "android.json").write_text("{}", encoding="utf-8")
+        r, o = paths_rc("MacBook Air")
+        ok = _ck(r == 1, f"**宣言を消せる機体が落ちない**: {r}") and ok
+        r, o = paths_rc("Windows")
+        ok = _ck(r == 0, f"**実体を作った機体が落ちた**（`--no-verify` を選ばせる形）: {r}") and ok
+        ok = _ck("消せるのは `MacBook Air`" in o,
+                 f"誰が消せるかを出していない: {o[:200]}") and ok
+        ok = _ck("できあがった" in o, "報せの中身が出ていない") and ok
+
+        # 宣言を消したあと → どちらも通る
+        conf3 = json.loads(hc.read_text(encoding="utf-8"))
+        conf3.pop("$これから作る")
+        hc.write_text(json.dumps(conf3, ensure_ascii=False), encoding="utf-8")
+        for m in ("MacBook Air", "Windows"):
+            r, _ = paths_rc(m)
+            ok = _ck(r == 0, f"消したあとに落ちた（{m}）: {r}") and ok
+
+        # **幽霊（実体が無く宣言も無い）は、どの機体でも落ちる**
+        (hr / "design" / "android.json").unlink()
+        for m in ("MacBook Air", "Windows"):
+            r, _ = paths_rc(m)
+            ok = _ck(r == 1, f"**幽霊を通した**（{m}）: {r}") and ok
+
     return 0 if ok else 1
 
 

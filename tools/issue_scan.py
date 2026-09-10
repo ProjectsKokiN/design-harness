@@ -276,9 +276,9 @@ def self_test():
     tmp = Path(tempfile.mkdtemp())
     try:
         root = tmp / "proj"; (root / "design").mkdir(parents=True)
-        pdir = tmp / "projects" / str(root.resolve()).replace("/", "-")
+        pdir = tmp / "projects" / str(root.resolve()).replace(chr(92), "/").replace("/", "-")
         pdir.mkdir(parents=True)
-        sub = tmp / "projects" / (str(root.resolve()).replace("/", "-") + "-sub")
+        sub = tmp / "projects" / (str(root.resolve()).replace(chr(92), "/").replace("/", "-") + "-sub")
         sub.mkdir(parents=True)
 
         def rec(ts, who, txt):

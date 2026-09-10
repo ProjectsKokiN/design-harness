@@ -154,6 +154,21 @@ def check_style(root):
                                    "Windows は区切りが `\\` なので食い違う。"
                                    "`Path` どうしで比べるか `.as_posix()` を通す"))
                         break
+            # **`str(Path).replace("/", …)`。** 区切りを別の文字に置き換える形
+            # （2026-09-10・Windows が実測して薦めた）。比較だけが罠ではない。
+            # 実害: `issue_scan.py` の self-test が `str(root).replace("/", "-")` で、
+            # Windows では**1文字も置き換わらず**絶対パスがそのまま残り、
+            # `tmp / "projects" / <絶対パス>` が直前に作った枠を指して FileExistsError。
+            # **本体（:32）は直っていたのに、自分の self-test だけ古い形が残っていた。**
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                    and node.func.attr == "replace" \
+                    and _is_str_call(node.func.value) \
+                    and node.args and isinstance(node.args[0], ast.Constant) \
+                    and node.args[0].value == "/":
+                ng.append((f.name, node.lineno,
+                           "**`str(Path).replace(\"/\", …)` を使っている。**"
+                           "Windows は区切りが `\\` なので**1文字も置き換わりません。**"
+                           "`.as_posix()` を通すか、先に `replace(chr(92), \"/\")` してください"))
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
                     and node.func.attr in ("startswith", "endswith") \
                     and _is_str_call(node.func.value) \
@@ -334,6 +349,31 @@ def self_test():
         check([n for n in check_style(td) if n[0] == "bad_rel.py"] != [],
               "**中身の無い `# portable-ok:` を通した**（理由の無い宣言は落とす）")
         rel.unlink()
+
+        # ─── **`str(Path).replace("/", …)`**（2026-09-10・Windows の実測）────
+        # 比較だけが罠ではない。**区切りを別の文字に置き換える**形で出た。
+        # `issue_scan` は本体が直っていたのに、**自分の self-test だけ古い形**だった。
+        rep = td / "bad_rep.py"
+        rep.write_text("import _utf8\nfrom pathlib import Path\n"
+                       "def f(root):\n"
+                       "    return str(root.resolve()).replace('/', '-')\n",
+                       encoding="utf-8")
+        found = [n for n in check_style(td) if n[0] == "bad_rep.py"]
+        check(any("1文字も置き換わりません" in m for _, _, m in found),
+              f"**str(Path).replace('/', …) を咎めていない**: {found}")
+        rep.write_text("import _utf8\nfrom pathlib import Path\n"
+                       "def f(root):\n"
+                       "    return root.resolve().as_posix().replace('/', '-')\n",
+                       encoding="utf-8")
+        check([n for n in check_style(td) if n[0] == "bad_rep.py"] == [],
+              "**as_posix() を通した形を咎めた**")
+        rep.write_text("import _utf8\nfrom pathlib import Path\n"
+                       "def f(root):\n"
+                       "    return str(root).replace(chr(92), '/').replace('/', '-')\n",
+                       encoding="utf-8")
+        check([n for n in check_style(td) if n[0] == "bad_rep.py"] == [],
+              "**先に区切りを揃えた形を咎めた**")
+        rep.unlink()
 
         sep = td / "bad_sep.py"
         sep.write_text("import _utf8\nfrom pathlib import Path\n"
