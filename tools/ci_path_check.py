@@ -5,6 +5,7 @@
   --sources    ソース・md の中で「python3 <path>」「bash <path>」の形で
                **人に案内しているパス**（--sources で有効化）
   --rules      rules.json の extends の鎖が指す先（--rules design/rules.json）
+  --links      md の相対リンク `[...](path)` の先（--links）
 
 
 414 の実害（2026-08-28）: verify.yml が `harness/tools/staleness_check.py` を
@@ -39,6 +40,18 @@ FlashEnglish の実害（2026-09-03・#43）: `design/rules.json` の extends �
 この道具は「CI に存在しないパスを参照している」構成を捕まえるために作ったのに、
 **見ていたのは YAML と散文だけで、ルールの鎖を見ていなかった。** 同じ家族の
 失敗が網の外にあった。--rules はそこを埋める。
+
+--links の由来（2026-09-11・design-harness #110）: `python3 <path>` の形の案内は
+--sources が見ていたが、**md の `[表示](path)` は誰も見ていなかった。**
+`lumilinks-hq/atlas-design-system@0bbad4a` の `scripts/check-links.mjs` が
+同じことをしている（外部の実装は**データとして読んだだけ**で、実行していない）。
+実測（2026-09-11）: design-harness 0 件／`~/.claude` の追跡下 **10 件**。
+
+**分母は git が追跡している md から導く**（`git ls-files`）。`~/.claude` には
+`plugins/` の下に他所から取ってきた md が 1,300 本あり、そこには**直せない
+リンク切れが 175 件**ある。**直せない関門を作らない**（#80・#103 と同じ形）ため、
+自分が直せる範囲＝追跡下だけを分母にする。git が使えなければ **rc=2**（
+「確かめられなかった」）を返し、0 件で通したことにしない。
 """
 
 import argparse
@@ -46,6 +59,7 @@ import json
 import re
 import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -309,11 +323,23 @@ def main(argv=None):
                     help="除外する参照先の接頭辞。上流では design/ を除外する")
     ap.add_argument("--rules", type=Path,
                     help="rules.json の extends の鎖を見る（例: design/rules.json）")
+    ap.add_argument("--links", action="store_true",
+                    help="md の相対リンク `[...](path)` の先が実在するかを見る")
+    ap.add_argument("--links-allow", type=Path,
+                    help="実在しなくてよいリンクの宣言（理由つき。既定: "
+                         "design/link-exceptions.json があれば使う）")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
     if args.self_test:
         return self_test()
+
+    if args.links:
+        allow = args.links_allow
+        if allow is None:
+            d = args.root / "design" / "link-exceptions.json"
+            allow = d if d.exists() else None
+        return check_links(args.root, allow)
 
     if args.rules is not None:
         # --workflows の既定（.github/workflows）は cwd 基準なので、そのまま渡すと
@@ -386,6 +412,164 @@ def check_sources(root, globs, ignore=None):
         print("\n".join(sorted(set(missing))), file=sys.stderr)
         return 1
     print(f"案内パス {checked} 件（{files} ファイル）、すべて実在します。")
+    return 0
+
+
+# ─── md の相対リンク（--links）───────────────────────────────────────────
+#: `[表示](先)` の「先」。`![...](...)` の画像も同じ形なので一緒に取れる。
+#: 表示側に `]` が入る（`[記事 | サイト名]`）ので、**表示は貪欲に読まない**。
+LINK_RX = re.compile(r"!?\[(?:[^\]\\]|\\.)*\]\(\s*([^)\s]+)")
+
+#: 見出しの中の `[...]` に付く id など、リンクの先として見ないもの。
+LINK_SCHEME_RX = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
+
+#: 「ここは埋めてください」の印。**リンクの先ではない**ので見ない
+LINK_PLACEHOLDER = ("<", "{", "$", "%s")
+
+#: 例外の宣言で、理由を書く欄。`$` 始まりのキーは宣言そのものの説明なので飛ばす
+LINK_ALLOW_META = "$meta"
+
+
+def _tracked_md(root):
+    """git が追跡している md を返す。git が使えなければ None（**断定しない**）。
+
+    **分母を導出する。** 手で書いた除外リストにすると、除外を足し忘れた日に
+    静かに増える。`~/.claude` は `plugins/` `projects/` `cache/` が追跡外で、
+    そこには他所から取ってきた md が 1,300 本ある（直せない）。
+    """
+    try:
+        r = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "*.md"],
+                           capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    return [Path(x) for x in r.stdout.split("\0") if x]
+
+
+def link_targets_in(text):
+    """md の本文から、実在を確かめるべきリンクの先を「(行番号, 先)」で返す。
+
+    見ないもの: `http://` などスキームつき・`#見出し` だけ・`/` 始まり
+    （リポジトリのルートではなく配信先のルートを指す書き方）・`~` 始まり
+    （手元の絶対パス）・埋める印を含むもの・`path-check-ignore` のある行。
+    """
+    out = []
+    fence = False
+    for n, line in enumerate(text.splitlines(), 1):
+        s = line.lstrip()
+        if s.startswith("```") or s.startswith("~~~"):
+            fence = not fence
+            continue
+        if fence:
+            # **コードブロックの中は見ない。** 書き方の説明が入るところで、
+            # そこに書かれた md は「この文書のリンク」ではない
+            continue
+        if PATH_IGNORE_MARK in line:
+            continue
+        for m in LINK_RX.finditer(line):
+            raw = m.group(1)
+            if LINK_SCHEME_RX.match(raw) or raw.startswith(("#", "/", "~")):
+                continue
+            if any(k in raw for k in LINK_PLACEHOLDER):
+                continue
+            target = raw.split("#")[0].split("?")[0]
+            if not target:
+                continue                     # `#見出し` だけと同じ
+            out.append((n, urllib.parse.unquote(target)))
+    return out
+
+
+def _load_link_allow(path):
+    """例外の宣言を読む。`{"<md>": {"<先>": "理由"}}`。
+
+    理由が空なら**通さない**（`$extendsOutsideRepo` と同じ形）。
+    """
+    if path is None:
+        return {}, []
+    if not path.exists():
+        return None, [f"  例外の宣言がありません: {path}"]
+    try:
+        conf = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        return None, [f"  例外の宣言が読めません: {path}（{e}）"]
+    allow, errs = {}, []
+    for f, targets in conf.items():
+        if f.startswith("$"):
+            continue
+        if not isinstance(targets, dict):
+            errs.append(f"  {path} の `{f}` が「先: 理由」の形ではありません")
+            continue
+        for tgt, reason in targets.items():
+            if not (isinstance(reason, str) and reason.strip()):
+                errs.append(f"  {path} の `{f}` → `{tgt}` に**理由がありません**。"
+                            f"なぜ実在しなくてよいかを書いてください")
+                continue
+            allow[(f, tgt)] = reason
+    return allow, errs
+
+
+def check_links(root, allow_path=None):
+    """md の相対リンクの先が実在するかを見る。"""
+    root = root.resolve()
+    mds = _tracked_md(root)
+    if mds is None:
+        print(f"git が使えないので、見る md を決められません: {root}\n"
+              f"  **0 件で通したことにしません。**", file=sys.stderr)
+        return 2
+    if not mds:
+        print(f"git の追跡下に md がありません: {root}（**空振りです**）",
+              file=sys.stderr)
+        return 2
+
+    allow, errs = _load_link_allow(allow_path)
+    if allow is None:
+        print("リンクの例外の宣言が使えません:", file=sys.stderr)
+        print("\n".join(errs), file=sys.stderr)
+        return 1
+
+    missing, checked, used = [], 0, set()
+    for rel in mds:
+        f = root / rel
+        if not f.is_file():
+            continue                          # 追跡はあるが手元に無い（sparse 等）
+        key = rel.as_posix()
+        try:
+            text = f.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for n, tgt in link_targets_in(text):
+            checked += 1
+            if (f.parent / tgt).exists():
+                continue
+            # **例外は「実際に切れているとき」だけ使ったことにする。**
+            # 先に例外を見てしまうと、切れていないリンクの宣言も「使った」に
+            # なり、**古い宣言を落とせなくなる**（self-test で実際にそうなった）
+            if (key, tgt) in allow:
+                used.add((key, tgt))
+                continue
+            missing.append(f"  {key}:{n}  `{tgt}` の先がありません")
+
+    # **化石の例外を残さない**（orphans_test の allowlist と同じ考え方）。
+    # 直したのに宣言だけ残ると、次に本当に切れたときに気づけない
+    stale = sorted(set(allow) - used)
+    for f, tgt in stale:
+        errs.append(f"  例外の宣言が古くなっています: `{f}` → `{tgt}`。"
+                    f"いまは切れていないので、宣言から消してください")
+
+    if checked == 0:
+        print(f"md {len(mds)} 件を見ましたが、確かめられるリンクが0件です"
+              f"（**空振りです**）", file=sys.stderr)
+        return 2
+
+    if missing or errs:
+        print("md の相対リンクの先が実在しません（読んだ人が空振りします）:",
+              file=sys.stderr)
+        print("\n".join(sorted(set(missing)) + errs), file=sys.stderr)
+        return 1
+    note = f"（うち {len(used)} 件は理由つきの例外）" if used else ""
+    print(f"md の相対リンク {checked} 件（{len(mds)} ファイル）、"
+          f"すべて実在します{note}。")
     return 0
 
 
@@ -531,6 +715,127 @@ def self_test():
         rc, _ = with_rules({"extends": ["../sub/rules/flutter.json"]}, pwf)
         if rc != 0:
             print(f"self-test NG: submodules を取得しているのに落ちた（exit {rc}）"); ok = False
+
+        # ─── --links（#110・2026-09-11）───────────────────────────────────
+        # **git の追跡下だけを分母にする。** 追跡外に他所の md があっても
+        # 巻き込まない（`~/.claude` の `plugins/` に 175 件の切れリンクがある）
+        lr = root / "linkrepo"
+        (lr / "docs").mkdir(parents=True)
+        (lr / "untracked").mkdir()
+
+        def git(*a):
+            subprocess.run(["git", "-C", str(lr), *a], capture_output=True)
+
+        def links(allow=None):
+            import io, contextlib
+            args = ["--links", "--root", str(lr)]
+            if allow:
+                args += ["--links-allow", str(allow)]
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                rc = main(args)
+            return rc, buf.getvalue()
+
+        # git になる前は **rc=2**（0 件で通したことにしない）
+        rc, out = links()
+        if rc != 2:
+            print(f"self-test NG: git が無いのに rc={rc}（2 であるべき）"); ok = False
+
+        git("init", "-q")
+        # **メールの形にしない。** privacy_check が「アドレスが入っている」と
+        # 正しく落とす（2026-09-11 に実際に落ちた）。git は形を検査しない
+        git("config", "user.email", "self-test")
+        git("config", "user.name", "self-test")
+        # **`git add -A` で追跡下に入れない。** ここを入れ忘れると、あとの
+        # コミットで untracked/foreign.md が追跡下になり、
+        # 「追跡外を巻き込まない」の確認が**確認になっていない**（実際そうなった）
+        (lr / ".gitignore").write_text("untracked/\nex.json\nbroken.json\n",
+                                       encoding="utf-8")
+        (lr / "docs" / "real.md").write_text("ほんもの\n", encoding="utf-8")
+        (lr / "README.md").write_text(
+            "- [ある](docs/real.md)\n"
+            "- [外](https://example.com/x.md)\n"       # スキームつきは見ない
+            "- [見出し](#section)\n"                   # アンカーだけは見ない
+            "- [埋める](<PATH>)\n"                     # 埋める印は見ない
+            "- [記事 | サイト名](docs/real.md)\n",     # 表示に `]` が無い形
+            encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "x")
+        rc, out = links()
+        if rc != 0:
+            print(f"self-test NG: 全部たどれるのに落ちた（exit {rc}）\n{out}"); ok = False
+
+        # 追跡外の md に切れリンクがあっても巻き込まない
+        (lr / "untracked" / "foreign.md").write_text(
+            "[切れている](ghost.md)\n", encoding="utf-8")
+        rc, out = links()
+        if rc != 0:
+            print(f"self-test NG: **追跡外の md を巻き込んだ**（exit {rc}）"); ok = False
+
+        # 追跡下が切れたら落ちる
+        (lr / "README.md").write_text(
+            "- [ある](docs/real.md)\n- [無い](docs/ghost.md)\n", encoding="utf-8")
+        git("add", "-A"); git("commit", "-qm", "y")
+        rc, out = links()
+        if rc != 1:
+            print(f"self-test NG: 切れたリンクで落ちなかった（exit {rc}）"); ok = False
+        if "docs/ghost.md" not in out:
+            print("self-test NG: どこが切れたかを言っていない"); ok = False
+
+        # コードブロックの中は見ない（書き方の説明）
+        (lr / "README.md").write_text(
+            "- [ある](docs/real.md)\n\n```md\n[書き方](docs/ghost.md)\n```\n",
+            encoding="utf-8")
+        git("add", "-A"); git("commit", "-qm", "z")
+        rc, out = links()
+        if rc != 0:
+            print(f"self-test NG: コードブロックの中を見た（exit {rc}）"); ok = False
+
+        # 理由つきの例外は通る／理由が空なら通さない／古い宣言は落とす
+        (lr / "README.md").write_text(
+            "- [ある](docs/real.md)\n- [見本](SPEC-A.md)\n", encoding="utf-8")
+        git("add", "-A"); git("commit", "-qm", "w")
+        ex = lr / "ex.json"
+        ex.write_text(json.dumps(
+            {"$meta": {"これは何": "説明はキーが $ 始まりなので飛ばされる"},
+             "README.md": {"SPEC-A.md": "案件側に生成される見本"}},
+            ensure_ascii=False), encoding="utf-8")
+        rc, out = links(ex)
+        if rc != 0:
+            print(f"self-test NG: 理由つきの例外で通らなかった（exit {rc}）\n{out}")
+            ok = False
+
+        ex.write_text(json.dumps({"README.md": {"SPEC-A.md": "   "}},
+                                 ensure_ascii=False), encoding="utf-8")
+        rc, out = links(ex)
+        if rc != 1:
+            print(f"self-test NG: 理由が空の例外を通した（exit {rc}）"); ok = False
+
+        ex.write_text(json.dumps(
+            {"README.md": {"SPEC-A.md": "見本", "docs/real.md": "切れていない"}},
+            ensure_ascii=False), encoding="utf-8")
+        rc, out = links(ex)
+        if rc != 1:
+            print(f"self-test NG: **古くなった例外**を通した（exit {rc}）"); ok = False
+        if "古くなっています" not in out:
+            print("self-test NG: 古い例外の直し方を言っていない"); ok = False
+
+        # 宣言のファイルが無い・壊れている
+        rc, _ = links(lr / "ghost.json")
+        if rc != 1:
+            print(f"self-test NG: 無い宣言ファイルを通した（exit {rc}）"); ok = False
+        (lr / "broken.json").write_text("{", encoding="utf-8")
+        rc, _ = links(lr / "broken.json")
+        if rc != 1:
+            print(f"self-test NG: 壊れた宣言ファイルを通した（exit {rc}）"); ok = False
+
+        # md はあるがリンクが1つも無い → **rc=2**（空振り）
+        (lr / "README.md").write_text("リンクのない文書\n", encoding="utf-8")
+        (lr / "docs" / "real.md").write_text("こちらにも無い\n", encoding="utf-8")
+        git("add", "-A"); git("commit", "-qm", "v")
+        rc, out = links()
+        if rc != 2:
+            print(f"self-test NG: リンク0件を通した（exit {rc}）"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1

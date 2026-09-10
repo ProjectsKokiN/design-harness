@@ -111,6 +111,17 @@ step "禁止パターン（全量・条件1）"   "$PY" design/design_check.py -
 #  手元 70 ファイル・11 ルール、CI は走査 0 ファイル。入れた日から一度も緑が無かった）
 step "ルールの鎖（extends が CI から解決できるか）" \
   "$PY" "$HARNESS/tools/ci_path_check.py" --rules design/rules.json
+# md の相対リンクの先が実在するか（#110）。`python3 <path>` の形の案内は
+# 上流の段が見ていたが、`[表示](path)` は誰も見ていなかった。
+# 分母は `git ls-files` から導く（追跡外に他所の md があっても巻き込まない）
+step "文書のリンク（md の相対リンクが切れていないか）" \
+  "$PY" "$HARNESS/tools/ci_path_check.py" --links
+# 公開してはいけないものが入っていないか（#109）。**公開だと導けたときだけ落とす**
+# （`--only-if-public`）。非公開の案件で落とすと、直し方が「記録を伏せ字にする」
+# しか無くなる。2026-09-11 にユーザーが伏せ字化を取り消したので、落とせば
+# **自分で戻したものを自分で落とす関門**になる。害が出るのは公開したときだけ
+step "個人の情報（公開に切り替える前に直すもの）" \
+  "$PY" "$HARNESS/tools/privacy_check.py" --root . --only-if-public
 [ "$TARGET" = "quick" ] && exit $FAILED
 
 step "文脈（共通の憲法を参照しているか・写していないか）" \
