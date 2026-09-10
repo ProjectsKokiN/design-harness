@@ -225,7 +225,7 @@ def self_test() -> int:
 
         # (1) 宣言が無ければ**外しません**。**多く見えるほうに倒します**——
         #     外しすぎた `0 件` は「綺麗」と読み違えるからです
-        found = sorted(str(p) for p, _ in list_generated(d))
+        found = sorted(p.as_posix() for p, _ in list_generated(d))
         if found != ["design/figma/y.json", "design/harness/tools/x.json"]:
             print(f"self-test NG: **宣言が無いのに外した**: {found}"); ok = False
 
@@ -233,7 +233,7 @@ def self_test() -> int:
         (d / ".gitmodules").write_text(
             '[submodule "design/harness"]\n\tpath = design/harness\n'
             '\turl = https://example.invalid/h.git\n', encoding="utf-8")
-        found = sorted(str(p) for p, _ in list_generated(d))
+        found = sorted(p.as_posix() for p, _ in list_generated(d))
         if found != ["design/figma/y.json"]:
             print(f"self-test NG: submodule を外していない: {found}"); ok = False
 
@@ -242,7 +242,7 @@ def self_test() -> int:
         (d / "design" / "harness2").mkdir(parents=True)
         (d / "design" / "harness2" / "z.json").write_text(
             '{"$手で書き換えない": "y"}', encoding="utf-8")
-        found = sorted(str(p) for p, _ in list_generated(d))
+        found = sorted(p.as_posix() for p, _ in list_generated(d))
         if found != ["design/figma/y.json", "design/harness2/z.json"]:
             print(f"self-test NG: **名前が似ているだけの置き場を外した**: {found}"); ok = False
         (d / "design" / "harness2" / "z.json").unlink()

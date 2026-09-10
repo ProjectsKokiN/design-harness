@@ -224,6 +224,13 @@ def check_style(root, paths_only=False):
                         ng.append((f.name, node.lineno,
                                    f"`{name}(` に `encoding=` が無い。"
                                    f"日本語 Windows の既定は cp932"))
+                    # **改行を書くなら `newline=` も要ります**（2026-09-10・Windows の薦め）。
+                    # `write_text(..., encoding="utf-8")` は **Windows のテキストモードで
+                    # `\n` を `\r\n` に変えます。** 改行そのものを試すコードでは
+                    # **これが試験を壊しました**——CRLF 化のつもりで `replace(b"\n", b"\r\n")`
+                    # を当てると `\r\r\n` ができ、指紋が一致しませんでした
+                    # （`stage_check` の試験・実測）。**`str(Path)` と同じ仲間です。**
+                    # **改行を含む文字列を書くときだけ**咎めます（`newline=` か `write_bytes`）。
                 # 外部コマンドを名前のまま。
                 # **`subprocess.` が付いた呼び出しだけを見る。** 素の `run(...)` は
                 # その場の補助関数であることが多く、名前だけで判定すると誤検出する

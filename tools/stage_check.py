@@ -199,7 +199,7 @@ def self_test_template_sync():
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
         tpl = base / "verify.sh.template"
-        tpl.write_text('step "あ" "$PY" a.py\n', encoding="utf-8")
+        tpl.write_text('step "あ" "$PY" a.py\n', encoding="utf-8", newline="\n")
         wv = base / "stages.json"
 
         # 宣言のファイルが無い → **2（確かめられなかった）**
@@ -216,14 +216,14 @@ def self_test_template_sync():
         # 生バイトを SHA-256 していたため、CRLF の機体では**原理的に通らなかった**
         # （差はちょうど `\r` の数）。指紋を打ち直しても、打ち直した先が LF の値なら
         # また落ちる。**直せない関門は `--no-verify` を選ばせるだけ。**
-        tpl.write_text('step "あ" "$PY" a.py\n', encoding="utf-8")
+        tpl.write_text('step "あ" "$PY" a.py\n', encoding="utf-8", newline="\n")
         d_lf = template_digest(tpl)
         tpl.write_bytes(tpl.read_bytes().replace(b"\n", b"\r\n"))
         d_crlf = template_digest(tpl)
         check(d_lf == d_crlf,
               f"**改行が違うと指紋が変わる**（CRLF の機体で原理的に落ちる）: "
               f"LF={d_lf} CRLF={d_crlf}")
-        tpl.write_text('step "あ" "$PY" a.py\n', encoding="utf-8")
+        tpl.write_text('step "あ" "$PY" a.py\n', encoding="utf-8", newline="\n")
 
         # 記録して一致 → 0
         dig = template_digest(tpl)
@@ -235,7 +235,7 @@ def self_test_template_sync():
         check(rc == 0, f"一致しているのに落ちる: {rc}")
 
         # **元ファイルを1文字変える → 落ちる**（ここが本体）
-        tpl.write_text('step "あ" "$PY" a.py --strict\n', encoding="utf-8")
+        tpl.write_text('step "あ" "$PY" a.py --strict\n', encoding="utf-8", newline="\n")
         rc, out = run(tpl, wv)
         check(rc == 1, f"**元ファイルが変わったのに落ちない**: {rc}")
         check("git -C design/harness log -p" in out,
@@ -284,8 +284,8 @@ def self_test_stages():
         gate = root / "conditions.json"
         verify = root / "design" / "verify.sh"
         waivers = root / "design" / "stages.json"
-        tpl.write_text(TPL, encoding="utf-8")
-        gate.write_text(json.dumps(GATE, ensure_ascii=False), encoding="utf-8")
+        tpl.write_text(TPL, encoding="utf-8", newline="\n")
+        gate.write_text(json.dumps(GATE, ensure_ascii=False), encoding="utf-8", newline="\n")
 
         full = ('python3 design/design_check.py --all\n'
                 'python3 $HARNESS/tools/impl_coverage_check.py --config x\n'
@@ -296,14 +296,14 @@ def self_test_stages():
         ci_dir = root / "workflows"
 
         def run(sh, waiver=None, tpl_text=None, gate_data=None, ci=None):
-            verify.write_text(sh, encoding="utf-8")
-            tpl.write_text(tpl_text or TPL, encoding="utf-8")
+            verify.write_text(sh, encoding="utf-8", newline="\n")
+            tpl.write_text(tpl_text or TPL, encoding="utf-8", newline="\n")
             gate.write_text(json.dumps(gate_data or GATE, ensure_ascii=False),
-                            encoding="utf-8")
+                            encoding="utf-8", newline="\n")
             waivers.unlink(missing_ok=True)
             if waiver is not None:
                 waivers.write_text(json.dumps({"notHere": waiver},
-                                              ensure_ascii=False), encoding="utf-8")
+                                              ensure_ascii=False), encoding="utf-8", newline="\n")
             # CI の YAML（#87: 手元の verify.sh と CI で段が違うことがある）
             if ci_dir.exists():
                 for f in ci_dir.iterdir():
@@ -403,22 +403,22 @@ def self_test_stages():
         verify.write_text(
             'python3 $H/check_render_gaps.py --config c.json 2>&1 | tail -3 || true\n'
             'python3 $H/impl_coverage_check.py --config i.json | grep -E "^(OK|NG)" || true\n'
-            'python3 $H/design_check.py --all 2>&1 || true\n', encoding="utf-8")
+            'python3 $H/design_check.py --all 2>&1 || true\n', encoding="utf-8", newline="\n")
         r = check_neutered(verify, live2)
         if len(r) != 2 or "check_render_gaps.py" not in r[0] or "impl_coverage_check.py" not in r[1]:
             print(f"self-test NG: 無力化された関門の道具を捕まえていない: {len(r)} 件"); ok = False
         if any("design_check.py" in m for m in r):
             print("self-test NG: 関門の道具でないものまで咎めた"); ok = False
         verify.write_text('set -o pipefail\npython3 $H/check_render_gaps.py --config c.json 2>&1 | tail -3\n',
-                          encoding="utf-8")
+                          encoding="utf-8", newline="\n")
         if check_neutered(verify, live2):
             print("self-test NG: pipefail があるのにパイプを咎めた"); ok = False
         # pipefail があっても || true は消す（planttalk の実態）
         verify.write_text('set -euo pipefail\npython3 $H/check_render_gaps.py --config c.json 2>&1 | tail -3 || true\n',
-                          encoding="utf-8")
+                          encoding="utf-8", newline="\n")
         if not check_neutered(verify, live2):
             print("self-test NG: pipefail の下の || true を見逃した"); ok = False
-        verify.write_text('python3 $H/check_render_gaps.py --config c.json\n', encoding="utf-8")
+        verify.write_text('python3 $H/check_render_gaps.py --config c.json\n', encoding="utf-8", newline="\n")
         if check_neutered(verify, live2):
             print("self-test NG: 素の呼び出しを咎めた"); ok = False
 
@@ -428,13 +428,13 @@ def self_test_stages():
         (root / ".githooks").mkdir(exist_ok=True)
         pt.write_text("sh design/verify.sh\n"
                       "python3 design/harness/tools/pin_check.py --root . || exit 1\n",
-                      encoding="utf-8")
+                      encoding="utf-8", newline="\n")
 
         def push_case(text, waiver=None):
             if text is None:
                 pp.unlink(missing_ok=True)
             else:
-                pp.write_text(text, encoding="utf-8")
+                pp.write_text(text, encoding="utf-8", newline="\n")
             return check_prepush(pt, pp, waiver or {})
 
         r = push_case("sh design/verify.sh\n"
@@ -463,7 +463,7 @@ def self_test_stages():
         # ─── #13: 関門が緩和策の上に立っている宣言 ─────────────────
         pp.write_text("sh design/verify.sh\n"
                       "python3 design/harness/tools/pin_check.py --root . || exit 1\n",
-                      encoding="utf-8")
+                      encoding="utf-8", newline="\n")
         rc, out = run(full, waiver={})
         MIT = {"what": "テストの並列度を1に落としている",
                "why": "時間に依存する試験が1本あり、確率で落ちる",
@@ -471,10 +471,10 @@ def self_test_stages():
 
         def with_mitig(m):
             waivers.write_text(json.dumps({"notHere": {}, "緩和": m},
-                                          ensure_ascii=False), encoding="utf-8")
-            verify.write_text(full, encoding="utf-8")
-            tpl.write_text(TPL, encoding="utf-8")
-            gate.write_text(json.dumps(GATE, ensure_ascii=False), encoding="utf-8")
+                                          ensure_ascii=False), encoding="utf-8", newline="\n")
+            verify.write_text(full, encoding="utf-8", newline="\n")
+            tpl.write_text(TPL, encoding="utf-8", newline="\n")
+            gate.write_text(json.dumps(GATE, ensure_ascii=False), encoding="utf-8", newline="\n")
             b = io.StringIO()
             with contextlib.redirect_stdout(b), contextlib.redirect_stderr(b):
                 r = check_stages(tpl, verify, None, waivers, gate, pp, pt)
@@ -493,13 +493,13 @@ def self_test_stages():
         def with_na(na):
             waivers.write_text(json.dumps(
                 {"notHere": _NOT_HERE, "条件の適用外": na}, ensure_ascii=False),
-                encoding="utf-8")
+                encoding="utf-8", newline="\n")
             # 条件5 を測る段（check_render_gaps）を案件から外す
             verify.write_text("".join(
                 l + "\n" for l in full.split("\n")
                 if l.strip() and "check_render_gaps" not in l), encoding="utf-8")
-            tpl.write_text(TPL, encoding="utf-8")
-            gate.write_text(json.dumps(GATE, ensure_ascii=False), encoding="utf-8")
+            tpl.write_text(TPL, encoding="utf-8", newline="\n")
+            gate.write_text(json.dumps(GATE, ensure_ascii=False), encoding="utf-8", newline="\n")
             b = io.StringIO()
             with contextlib.redirect_stdout(b), contextlib.redirect_stderr(b):
                 r = check_stages(tpl, verify, None, waivers, gate, pp, pt)
@@ -988,6 +988,11 @@ def matrix(template, projects):
 TEMPLATE_KEY = "$元ファイルの版"
 
 
+#: 試験のデータを書くときは **`newline="\n"` を付けます**（2026-09-10・Windows の実測）。
+#: `write_text(..., encoding="utf-8")` は **Windows のテキストモードで `\n` を `\r\n` に変えます。**
+#: **改行そのものを試すコードでは、これが試験を壊しました**——CRLF 化のつもりで
+#: `replace(b"\n", b"\r\n")` を当てると **`\r\r\n`** ができ、指紋が一致しませんでした。
+#: `str(Path)` と同じ「**機体で結果が変わる書き方**」の仲間です。
 def template_digest(template: Path) -> str:
     """元ファイルの指紋。**中身そのものから導く**（手で書かない）。
 
@@ -1638,7 +1643,7 @@ def self_test():
         tpl = base / "t.sh"
         tpl.write_text('step "あ" "$PY" "$H/a_check.py"\n'
                        'step "い" "$PY" "$H/b_check.py"\n'
-                       'step "う" "$PY" "$H/c_check.py"\n', encoding="utf-8")
+                       'step "う" "$PY" "$H/c_check.py"\n', encoding="utf-8", newline="\n")
 
         def proj(name, sh, waived=None):
             d = base / name
