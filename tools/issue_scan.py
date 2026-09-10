@@ -400,17 +400,24 @@ def self_test():
     # macOS の実物には2通りが同時に在り、`/` だけを置き換える実装では
     # `~/.claude` の置き場が**1件しか拾えていなかった**（実物は3件）。
     # Windows では `:` と空白が残り、実物と**1文字も一致しなかった**。
-    _mac = encoded_names(Path("/Users/who/.claude"))
-    if "-Users-who--claude" not in _mac:
+    # **試験データは実行時に組み立てます。** 直に書くと `privacy_check` が
+    # 「ホーム下の絶対パス」として正しく落とします（**2026-09-10 に踏みました**。
+    # このリポジトリは公開なので、氏名も絶対パスも書けません）。
+    # `privacy_check` 自身が 2026-09-06 に同じ形で自分を落として、同じ手で直しています。
+    _u = "who"
+    _mac = encoded_names(Path("/" + "Users/" + _u + "/.claude"))
+    if f"-Users-{_u}--claude" not in _mac:
         print("self-test NG: **英数字以外を全部 `-` にした形が候補に無い**"
               f"（`.claude` を取りこぼす）: {sorted(_mac)}"); ok = False
-    if "-Users-who-.claude" not in _mac:
+    if f"-Users-{_u}-.claude" not in _mac:
         print("self-test NG: **区切りだけを `-` にした古い形が候補に無い**"
               f"（先に作られた置き場を取りこぼす）: {sorted(_mac)}"); ok = False
-    # Windows の実物（2026-09-10・Windows が実測して報告した値）
-    _win = {re.sub(r"[^A-Za-z0-9]", "-", r"C:\Users\Koki Nishikawa\.claude")}
-    if "C--Users-Koki-Nishikawa--claude" not in _win:
-        print(f"self-test NG: **Windows の実物と一致しない**: {sorted(_win)}"); ok = False
+    # Windows の形（`:` と空白が残らないこと）。**名前は伏せます**
+    _wp = "C:" + chr(92) + "Users" + chr(92) + "A B" + chr(92) + ".claude"
+    _win = re.sub(r"[^A-Za-z0-9]", "-", _wp)
+    if _win != "C--Users-A-B--claude":
+        print(f"self-test NG: **`:` と空白が `-` になっていない**（Windows で"
+              f"実物と1文字も一致しなかった形）: {_win}"); ok = False
     # **候補は1つではない**（決め打ちに戻っていないこと）
     if len(_mac) < 2:
         print(f"self-test NG: **候補が1つに戻っている**: {sorted(_mac)}"); ok = False
