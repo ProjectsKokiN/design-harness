@@ -55,7 +55,9 @@ FlashEnglish の実害（2026-09-03・#43）: `design/rules.json` の extends �
 """
 
 import argparse
+import builtins
 import json
+import os
 import re
 import subprocess
 import sys
@@ -332,7 +334,23 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     if args.self_test:
-        return self_test()
+        # **例外は「合格」でも「不合格」でもなく「試験が成立しなかった」。**
+        # `stage_check` は self-test の stdout の**最終行だけ**を見せるので、
+        # 最終行に理由を出す。2026-09-11、CI でだけ例外で落ち、表示された最終行が
+        # 直前の正常な出力だったため**原因が読めず1往復無駄にした**
+        try:
+            return self_test()
+        except Exception as e:                    # noqa: BLE001
+            import traceback
+            where = traceback.format_exc().strip().splitlines()
+            spot = next((l.strip() for l in reversed(where)
+                         if l.strip().startswith("File ")), "場所不明")
+            print(f"self-test: NG（例外 {type(e).__name__}: {e} / {spot}）")
+            # mutation-ok: **self-test 自身が例外で死んだときの帰り道**なので、
+            # self-test の中からは通せない（自分を呼び直すと入れ子になる）。
+            # 2026-09-11 に仕込み（`self_test` の頭でわざと例外を起こす）で、
+            # 最終行に「例外 RuntimeError: … / File …, line …」が出ることを確かめた
+            return 1
 
     if args.links:
         allow = args.links_allow
@@ -577,6 +595,17 @@ def self_test():
     """この検査自身の妨害テスト（落ちるケースを1つ持つ）。"""
     import tempfile
     ok = True
+    # **NG の理由を覚える。** `stage_check` は self-test の stdout の**最終行だけ**を
+    # 見せるので、最終行に理由を載せないと CI で原因が読めない（2026-09-11 に踏んだ）
+    _ngs = []
+    _out = builtins.print
+
+    def print(*a, **k):          # noqa: A001  自分の NG を覚えるためだけの上書き
+        m = " ".join(str(x) for x in a)
+        if m.startswith("self-test NG"):
+            _ngs.append(m.replace("self-test NG: ", "").replace("*", ""))
+        _out(*a, **k)
+
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         wf = root / ".github/workflows"
@@ -723,8 +752,26 @@ def self_test():
         (lr / "docs").mkdir(parents=True)
         (lr / "untracked").mkdir()
 
+        # **周りの git 設定に依らせない。** CI では利用者の設定・所有者の確認
+        # （safe.directory）・既定のブランチ名が手元と違い、**黙って失敗すると
+        # `ls-files` が空になって、この試験そのものが意味を失う**。
+        # 失敗したら理由を残す（2026-09-11、CI でだけ落ちて理由が見えなかった）
+        git_env = dict(os.environ,
+                       GIT_CONFIG_GLOBAL=os.devnull,
+                       GIT_CONFIG_SYSTEM=os.devnull,
+                       GIT_AUTHOR_NAME="self-test", GIT_AUTHOR_EMAIL="selftest",
+                       GIT_COMMITTER_NAME="self-test", GIT_COMMITTER_EMAIL="selftest")
+        git_fail = []
+
         def git(*a):
-            subprocess.run(["git", "-C", str(lr), *a], capture_output=True)
+            r = subprocess.run(
+                ["git", "-c", "init.defaultBranch=main",
+                 "-c", f"safe.directory={lr}", "-C", str(lr), *a],
+                capture_output=True, text=True, env=git_env)
+            if r.returncode != 0:
+                git_fail.append(f"git {' '.join(a)} → {r.returncode}: "
+                                f"{(r.stderr or r.stdout).strip()[:160]}")
+            return r
 
         def links(allow=None):
             import io, contextlib
@@ -829,6 +876,13 @@ def self_test():
         if rc != 1:
             print(f"self-test NG: 壊れた宣言ファイルを通した（exit {rc}）"); ok = False
 
+        # **git が言うことを聞かなかったら、この試験は成立していない。**
+        # 「落ちなかった＝合格」ではない（0件は「見ていない」の系）
+        if git_fail:
+            print("self-test NG: **試験用の git が失敗しました**（この試験は"
+                  f"成立していません）: {git_fail[0]}")
+            ok = False
+
         # md はあるがリンクが1つも無い → **rc=2**（空振り）
         (lr / "README.md").write_text("リンクのない文書\n", encoding="utf-8")
         (lr / "docs" / "real.md").write_text("こちらにも無い\n", encoding="utf-8")
@@ -837,7 +891,11 @@ def self_test():
         if rc != 2:
             print(f"self-test NG: リンク0件を通した（exit {rc}）"); ok = False
 
-    print("self-test:", "OK" if ok else "NG")
+    # **最終行に理由を出す。** `stage_check` は self-test の stdout の
+    # **最終行だけ**を見せるので、「NG」だけだと CI で原因が読めない
+    # （2026-09-11、CI でだけ落ちて理由が分からず1往復無駄にした）
+    first_ng = _ngs[0][:180] if _ngs else None
+    _out("self-test:", "OK" if ok else f"NG（最初の理由: {first_ng or '不明'}）")
     return 0 if ok else 1
 
 
