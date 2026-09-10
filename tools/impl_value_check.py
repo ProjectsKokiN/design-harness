@@ -145,6 +145,76 @@ def norm(n):
     return n.rstrip("0").rstrip(".") if "." in n else n
 
 
+#: `clamp(下限, N単位, 上限)` の形。上限は `var(--トークン)` か生値。
+#: **生値の上限も見ます**——2026-09-10 に QnD で `clamp(48px,6.25vw,120px)` が
+#: 2箇所ありました。値が出どころに在るので静かに通り、**係数とトークンの結びが
+#: 切れた状態**でした。トークン参照にすれば、トークンを変えたとき係数も検算されます。
+CLAMP_RX = re.compile(
+    r"clamp\(\s*(-?\d+(?:\.\d+)?)\s*[a-z%]*\s*,"
+    r"\s*(-?\d+(?:\.\d+)?)\s*(vw|vh|vmin|vmax)\s*,"
+    r"\s*(?:var\(\s*(--[\w-]+)\s*\)|(-?\d+(?:\.\d+)?)\s*[a-z%]*)\s*\)", re.I)
+#: トークンの定義（`--name: 60px`）。単位は問わない
+TOKEN_DEF_RX = re.compile(r"(--[\w-]+)\s*:\s*(-?\d+(?:\.\d+)?)\s*[a-z%]*\s*[;}]", re.I)
+
+
+def token_values(blob):
+    """出どころの中のトークン定義を `{名前: 値}` にする。"""
+    return {m.group(1): float(m.group(2)) for m in TOKEN_DEF_RX.finditer(blob)}
+
+
+def clamp_findings(impl_dirs, blob, suffixes, canvas):
+    """`clamp` の係数が、上限のトークンと版面幅から**導ける**かを見る（#104）。
+
+    **係数は任意の数字ではありません。** QnD の `clamp` は全10箇所が
+    `clamp(下限px, Nvw, var(--トークン))` の形で、
+    **N = トークンの値 ÷ 版面幅 × 100 が10件すべて一致**しました
+    （2026-09-10・QnD 実測）。
+
+    宣言（`off-figma.json`）で片付けると、**係数を書き換えても誰も気づきません。**
+    導出を教えれば、**係数とトークンの食い違いがそのまま検査になります。**
+
+    **版面幅は道具に埋め込みません**（`impl-values.json` の `canvasWidth`）。
+    案件ごとに違い、埋め込むと**別の案件で静かに間違った答えを出します。**
+
+    戻り: `(照合できた件数, [(ファイル, 行, いまの係数, 導いた係数, トークン)])`
+    """
+    if not canvas:
+        return None, []
+    vals = token_values(blob)
+    ok_n, bad = 0, []
+    for d in impl_dirs:
+        if not d.exists():
+            continue
+        for f in sorted(d.rglob("*")):
+            if not f.is_file() or f.suffix.lower() not in suffixes:
+                continue
+            text = f.read_text(encoding="utf-8", errors="ignore")
+            for m in CLAMP_RX.finditer(text):
+                coef, unit, tok, lit = (float(m.group(2)), m.group(3).lower(),
+                                        m.group(4), m.group(5))
+                line = text[:m.start()].count("\n") + 1
+                if unit != "vw":
+                    continue          # 縦・最小・最大は版面幅から導けない
+                if tok is None:
+                    # **上限が生値。** 係数は導けるが、トークンとの結びが無い
+                    bad.append((f, line, m.group(2), None, f"{lit}（生値）"))
+                    continue
+                if tok not in vals:
+                    continue          # トークンが出どころに無いのは別の段が言う
+                want = vals[tok] / float(canvas) * 100
+                # **丸めの桁は決め打ちしません。** 書いてある係数の桁数に合わせます
+                dec = len(m.group(2).split(".")[1]) if "." in m.group(2) else 0
+                if abs(round(want, dec) - coef) < 10 ** -(dec + 1):
+                    ok_n += 1
+                else:
+                    # **比べるのは書いてある桁で、出すのは導いた値そのもの。**
+                    # 丸めた値を報告すると `3.125` を `3.1` と出してしまい、
+                    # **直しようがない数**を見せることになる（2026-09-10 に踏んだ）
+                    exact = f"{want:.4f}".rstrip("0").rstrip(".")
+                    bad.append((f, line, m.group(2), exact, tok))
+    return ok_n, bad
+
+
 def corpus(paths):
     """書き出しと生成物の中身をひとまとめにする。"""
     blob = []
@@ -278,17 +348,35 @@ def main(argv=None):
         if comp_dirs else []
     comp_hits = check_components(comp_files)
 
+    canvas = conf.get("canvasWidth")
+    clamp_ok, clamp_bad = clamp_findings(impl, blob, suffixes, canvas)
+
     found, files = scan(impl, blob, suffixes)
     if files == 0:
         print(f"実装が1つもありません: {', '.join(str(p) for p in impl)}\n"
               f"  **0件は「綺麗」ではなく「見ていない」です。**", file=sys.stderr)
         return 2
 
+    # **導けた係数は「出どころのある数」です。** トークンと版面幅から出ているので、
+    # 宣言で黙らせる必要はありません（#104 の判断 b・2026-09-10）
+    derived = set()
+    if clamp_ok is not None:
+        for d0 in impl:
+            if not d0.exists():
+                continue
+            for f0 in sorted(d0.rglob("*")):
+                if f0.is_file() and f0.suffix.lower() in suffixes:
+                    for m0 in CLAMP_RX.finditer(f0.read_text(encoding="utf-8", errors="ignore")):
+                        derived.add(m0.group(2))
+                        derived.add(norm(m0.group(2)))
+
     errs, waived = [], 0
     for f, (nums, toks) in sorted(found.items()):
         rel = f.relative_to(base).as_posix()
         d = declared.get(rel, {})
         for n in nums:
+            if n in derived or norm(n) in derived:
+                continue          # clamp の係数。トークンと版面幅から導けている
             why = d.get(n) or d.get(norm(n))
             if isinstance(why, str) and why.strip():
                 waived += 1
@@ -310,6 +398,26 @@ def main(argv=None):
         errs.append(f"  {rel}:{ln} 部品が {what} を持っています。{why}\n"
                     f"    **変異表から読んでください。**"
                     f"手で写した数は Figma と切れます。")
+
+    for f, ln, got, want, tok in clamp_bad:
+        rel = f.relative_to(base).as_posix()
+        if want is None:
+            errs.append(f"  {rel}:{ln} `clamp` の上限が **{tok}** です。"
+                        f"トークン参照（`var(--…)`）にしてください。\n"
+                        f"    生値だと**係数とトークンの結びが切れ**、"
+                        f"トークンを変えても係数が検算されません。")
+        else:
+            errs.append(f"  {rel}:{ln} `clamp` の係数が `{got}vw` ですが、"
+                        f"上限 `var({tok})` と版面幅 {canvas} からは **`{want}vw`** です。\n"
+                        f"    **係数はトークンから導ける値**なので、"
+                        f"ずれていたらどちらかが手で書き換わっています。")
+
+    if clamp_ok is not None:
+        print(f"clamp の係数: **{clamp_ok} 件**が上限のトークンと版面幅 {canvas} から"
+              f"導けました（食い違い {len(clamp_bad)} 件）")
+    elif conf.get("canvasWidth") is None:
+        print("注意: `canvasWidth` が設定にありません。"
+              "**`clamp` の係数が導けるかを見ていません**（#104）")
 
     if errs:
         print(f"実装の中だけの数値があります（実装 {files} ファイル"
@@ -501,6 +609,77 @@ def self_test():
         rc, out = run(CLEAN)
         if rc != 2 or "全部まちがい" not in out:
             print(f"self-test NG: 出どころ0で報告を出した（{rc}）"); ok = False
+    # ─── **`clamp` の係数は導ける**（#104 の判断 b・2026-09-10）───────────
+    # QnD の clamp は全10箇所が `clamp(下限px, Nvw, var(--トークン))` で、
+    # **N = トークンの値 ÷ 版面幅 × 100 が10件すべて一致**した（QnD 実測）。
+    # 宣言で片付けると**係数を書き換えても誰も気づかない**ので、導出を教える。
+    # **版面幅は道具に埋め込まない**（案件ごとに違う。埋め込むと静かに間違える）。
+    with tempfile.TemporaryDirectory() as td:
+        cr = pathlib.Path(td) if False else Path(td)
+        (cr / "styles").mkdir()
+        (cr / "src").mkdir()
+        # **下限にも出どころが要ります。** `clamp(20px, …)` の `20` は手で書いた数なので、
+        # 出どころに無ければ（正しく）別の指摘として落ちます。
+        # 作り物では下限もトークンにして、**見たいのは係数だけ**にします
+        # （2026-09-10: 最初これを忘れて、自分の試験が自分で落ちました）
+        (cr / "src" / "tokens.css").write_text(
+            ":root{--gap-xxl:60px;--gap-xxxl:120px;--font-size-m:24px;"
+            "--min-a:20px;--min-b:48px;--min-c:19px;--min-d:10px}\n", encoding="utf-8")
+        ccss = cr / "styles" / "a.css"
+        ccfg = cr / "iv.json"
+
+        def crun(css_text, canvas=1920):
+            ccss.write_text(css_text, encoding="utf-8")
+            conf = {"impl": ["styles"], "suffixes": [".css"], "sources": ["src/tokens.css"]}
+            if canvas is not None:
+                conf["canvasWidth"] = canvas
+            ccfg.write_text(json.dumps(conf, ensure_ascii=False), encoding="utf-8")
+            b = io.StringIO()
+            with contextlib.redirect_stdout(b), contextlib.redirect_stderr(b):
+                r = main(["--config", str(ccfg), "--root", str(cr)])
+            return r, b.getvalue()
+
+        def ck(c, m):
+            nonlocal ok
+            if not c:
+                ok = False
+                print(f"  NG: {m}")
+
+        # 1) 導ける係数は「出どころの無い数」に出さない（60/1920 = 3.125）
+        r, o = crun(".a{gap:clamp(20px, 3.125vw, var(--gap-xxl))}\n")
+        ck(r == 0, f"**導ける係数を落とした**: {r}\n{o[:300]}")
+        ck("3.125" not in o.split("clamp の係数")[0], f"係数を出どころ無しとして並べた: {o[:200]}")
+        ck("**1 件**" in o, f"導けた件数（分母）を出していない: {o[:200]}")
+
+        # 2) **係数がずれていたら落ちて、導いた値を出す**（ここが本体）
+        r, o = crun(".a{gap:clamp(20px, 4.5vw, var(--gap-xxl))}\n")
+        ck(r == 1, f"**ずれた係数を通した**: {r}")
+        ck("3.125vw" in o, f"導いた値を出していない: {o[:300]}")
+
+        # 3) 上限が生値 → 落ちて、トークン参照にせよと出す
+        r, o = crun(".a{gap:clamp(48px,6.25vw,120px)}\n")
+        ck(r == 1, f"**生値の上限を通した**: {r}")
+        ck("生値" in o and "var(--" in o, f"直し方を出していない: {o[:300]}")
+
+        # 4) `canvasWidth` が無ければ「見ていない」と出す
+        r, o = crun(".a{gap:clamp(20px, 3.125vw, var(--gap-xxl))}\n", canvas=None)
+        ck("見ていません" in o, f"**canvasWidth 無しで黙った**: {o[:200]}")
+
+        # 5) `vh` は版面幅から導けないので触らない
+        r, o = crun(".a{height:clamp(10px, 3.125vh, var(--gap-xxl))}\n")
+        ck("clamp の係数: **0 件**" in o, f"vh を導いたことにした: {o[:200]}")
+
+        # 6) **丸めの桁は書いてある係数に合わせる。** 24/1920 = 1.25
+        r, o = crun(".a{font-size:clamp(19px, 1.25vw, var(--font-size-m))}\n")
+        ck(r == 0, f"桁の少ない係数を落とした: {r}")
+        # 120/1920 = 6.25 を 6.3 と書いた場合は**落ちる**（桁を合わせても値が違う）
+        r, o = crun(".a{gap:clamp(48px, 6.3vw, var(--gap-xxxl))}\n")
+        ck(r == 1, f"**桁を合わせたうえで値が違うのを通した**: {r}")
+
+        # 7) 版面幅を変えると導く値も変わる（道具に埋め込んでいないこと）
+        r, o = crun(".a{gap:clamp(20px, 6.25vw, var(--gap-xxl))}\n", canvas=960)
+        ck(r == 0, f"**版面幅が設定から効いていない**（60/960=6.25）: {r}\n{o[:200]}")
+
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
 
