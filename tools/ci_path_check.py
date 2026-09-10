@@ -346,11 +346,11 @@ def main(argv=None):
             spot = next((l.strip() for l in reversed(where)
                          if l.strip().startswith("File ")), "場所不明")
             print(f"self-test: NG（例外 {type(e).__name__}: {e} / {spot}）")
-            # mutation-ok: **self-test 自身が例外で死んだときの帰り道**なので、
-            # self-test の中からは通せない（自分を呼び直すと入れ子になる）。
-            # 2026-09-11 に仕込み（`self_test` の頭でわざと例外を起こす）で、
-            # 最終行に「例外 RuntimeError: … / File …, line …」が出ることを確かめた
-            return 1
+            # **self-test 自身が例外で死んだときの帰り道**なので、self-test の
+            # 中からは通せない（自分を呼び直すと入れ子になる）。2026-09-11 に
+            # 仕込み（`self_test` の頭でわざと例外を起こす）で、最終行に
+            # 「例外 RuntimeError: … / File …, line …」が出ることを確かめた
+            return 1  # mutation-ok: self-test 自身の例外の帰り道。中からは通せない
 
     if args.links:
         allow = args.links_allow
