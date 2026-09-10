@@ -59,6 +59,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
 
 HEAD_RX = re.compile(r"^## (\d{4}-\d{2}-\d{2}) 宛先: (.+?) \[(未対応|完了)\] — (.+?)\s*$", re.M)
+#: **書式から外れた見出し**を見つけるための緩い形（2026-09-11・machine-relay で実害）。
+#: `[未対応]` の角括弧を落とした見出しが1件あり、**`HEAD_RX` に当たらないので
+#: どの道具からも見えていなかった**（3件あるのに「未対応 2 件」と数え、
+#: `--complete` は「0 件当たりました」と返した）。**見えない節は片付かない。**
+#: 「0件」が「無い」なのか「読めていない」なのかを、ここで分ける
+LOOSE_HEAD_RX = re.compile(r"^## .*宛先:.*$", re.M)
+
 INDEX_HEAD = "## 未対応の依頼（索引）"
 #: 索引の見出しは案件で少し違う（FlashEnglish は「## 未対応の依頼」）。行頭の一致で探す
 INDEX_HEAD_RX = re.compile(r"^## 未対応の依頼.*$", re.M)
@@ -241,8 +248,48 @@ def do_complete(path, archive, query):
     return 0
 
 
+def malformed_heads(text):
+    """**依頼の見出しに見えるが、書式から外れている**行を返す。
+
+    `HEAD_RX` は厳しい形（`## <日付> 宛先: <宛先> [未対応|完了] — <要件>`）でしか
+    当たりません。**当たらない見出しは、どの道具からも存在しないことになります。**
+
+    2026-09-11 の実害（machine-relay）: `[未対応]` の角括弧を落とした見出しが
+    1件あり、`--check-target` は「未対応 2 件」（実際は3件）と数え、
+    `--complete` は「0 件当たりました」と返しました。**片付けようとしても
+    片付けられない節**が、誰にも見えないまま 1 日残りました。
+    """
+    # **1行目だけで比べる。** `HEAD_RX` の末尾は `\s*$` で、`\s` は改行にも当たるため
+    # 一致が次の行まで伸びることがある（そのまま比べると、正しい見出しまで
+    # 「書式から外れている」と言ってしまう。2026-09-11 に実際に3件とも誤検出した）
+    good = {m.group(0).splitlines()[0] for m in HEAD_RX.finditer(text)}
+    out = []
+    for m in LOOSE_HEAD_RX.finditer(text):
+        line = m.group(0)
+        if line in good:
+            continue
+        if line.strip().startswith("##") and "宛先はファイル名ではなく" in line:
+            continue                      # 書式の説明そのもの
+        if "<宛先>" in line or "YYYY-MM-DD" in line:
+            continue                      # 書式の見本
+        out.append(line.strip())
+    return out
+
+
 def do_check_target(path, root, require_for):
     text = path.read_text(encoding="utf-8")
+    # **数える前に、読めているかを見る。** 書式から外れた見出しは `HEAD_RX` に
+    # 当たらず、**「未対応 0 件」と「読めていない」が区別できません**（2026-09-11）
+    bad = malformed_heads(text)
+    if bad:
+        print(f"{path.name} の見出しが書式から外れています（**この節は道具から"
+              f"見えません**。数え落とし・`--complete` の空振りになります）:",
+              file=sys.stderr)
+        for line in bad:
+            print(f"  {line}", file=sys.stderr)
+        print("  形: `## YYYY-MM-DD 宛先: <宛先> [未対応|完了] — 要件`"
+              "（**角括弧まで**）", file=sys.stderr)
+        return 1
     secs = [s for s in sections(text) if s[4] == "未対応"]
     if not secs:
         print("未対応の依頼はありません（対象の commit を確かめるものが無い）")
@@ -598,6 +645,29 @@ def self_test():
         inbox.write_text(t.replace(INDEX_HEAD, "## 索引ではない"), encoding="utf-8")
         rc, _ = run("--add", "--to", "Windows", "--title", "x", "--body", str(body2), "--no-target")
         check(rc == 1, f"索引の無い受信箱に足した（{rc}）")
+
+        # ─── 書式から外れた見出し（2026-09-11・machine-relay の実害）────────
+        # `[未対応]` の角括弧を落とした見出しは `HEAD_RX` に当たらず、
+        # **どの道具からも見えない**。「未対応 0 件」と「読めていない」が
+        # 区別できなくなる（実測: 3件あるのに「未対応 2 件」と数えた）
+        inbox.write_text(t, encoding="utf-8")
+        check(malformed_heads(inbox.read_text(encoding="utf-8")) == [],
+              "正しい見出しを「書式から外れている」と言った")
+        # **`\s*$` は改行にも当たる。** 1行目だけで比べないと、正しい見出しまで
+        # 誤検出する（2026-09-11 に実際に3件とも誤検出した）
+        broken = t.replace("[未対応] — 既存の依頼", "未対応 — 既存の依頼")
+        inbox.write_text(broken, encoding="utf-8")
+        bad = malformed_heads(broken)
+        check(len(bad) == 1 and "既存の依頼" in bad[0],
+              f"角括弧の無い見出しを見つけられない（{bad}）")
+        rc, out = run("--check-target")
+        check(rc == 1, f"書式から外れた見出しがあるのに通した（{rc}）")
+        check("道具から見えません" in out, "見えないことを言っていない")
+        # 書式の説明・見本は誤検出しない
+        check(malformed_heads(
+            "## 見出しの書式\n\n    ## YYYY-MM-DD 宛先: <宛先> [未対応|完了] — 要件\n"
+            ) == [], "書式の見本を誤検出した")
+        inbox.write_text(t, encoding="utf-8")
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
