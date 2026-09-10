@@ -134,7 +134,7 @@ def load(out: Path):
 
 def head_sha(root: Path):
     r = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
     return r.stdout.strip() if r.returncode == 0 else ""
 
 

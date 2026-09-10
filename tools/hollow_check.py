@@ -678,7 +678,7 @@ def check_sabotage(config_path, base):
         try:
             out = subprocess.run(["git", "-C", str(base), "log", "-1",
                                   "--format=%cs", "--", path],
-                                 capture_output=True, text=True, timeout=20)
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
             changed = out.stdout.strip()
         except (OSError, subprocess.SubprocessError):
             changed = ""

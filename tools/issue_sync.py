@@ -195,7 +195,7 @@ def target_repo(fi, default=None):
     if not (d / ".git").exists():
         return default
     r = subprocess.run(["git", "-C", str(d), "remote", "get-url", "origin"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         return default
     m = re.search(r"github\.com[:/](.+?)(?:\.git)?$", r.stdout.strip())
@@ -225,7 +225,7 @@ def gh(args, repo=None):
     cmd = ["gh", *args]
     if repo:
         cmd += ["--repo", repo]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         raise RuntimeError(r.stderr.strip() or r.stdout.strip())
     return r.stdout

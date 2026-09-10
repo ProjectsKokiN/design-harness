@@ -132,7 +132,7 @@ def _git_root(start):
     d = start if start.is_dir() else start.parent
     try:
         out = subprocess.run(["git", "-C", str(d), "rev-parse", "--show-toplevel"],
-                             capture_output=True, text=True, timeout=10)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
     except (OSError, subprocess.SubprocessError):
         return None
     return Path(out.stdout.strip()) if out.returncode == 0 else None
@@ -457,7 +457,7 @@ def _tracked_md(root):
     """
     try:
         r = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "*.md"],
-                           capture_output=True, text=True, timeout=60)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     except (OSError, subprocess.SubprocessError):
         return None
     if r.returncode != 0:
@@ -767,7 +767,7 @@ def self_test():
             r = subprocess.run(
                 ["git", "-c", "init.defaultBranch=main",
                  "-c", f"safe.directory={lr}", "-C", str(lr), *a],
-                capture_output=True, text=True, env=git_env)
+                capture_output=True, text=True, encoding="utf-8", errors="replace", env=git_env)
             if r.returncode != 0:
                 git_fail.append(f"git {' '.join(a)} → {r.returncode}: "
                                 f"{(r.stderr or r.stdout).strip()[:160]}")

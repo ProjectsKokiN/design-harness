@@ -132,7 +132,7 @@ def detect_machine():
         return None
     try:
         name = subprocess.run([exe, "--get", "ComputerName"],
-                              capture_output=True, text=True, timeout=10).stdout.strip()
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return None
     if not name:
@@ -235,7 +235,7 @@ def changed_files(root):
     def git(*args, want_code=False):
         try:
             r = subprocess.run(["git", "-C", str(root), *args],
-                               capture_output=True, text=True, timeout=30)
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
             if want_code:
                 return r.returncode
             return r.stdout if r.returncode == 0 else None
@@ -477,7 +477,7 @@ def do_handoff(machine, conf, root, apply=False):
     made = []
     for holder, paths in sorted(by_holder.items()):
         diff = subprocess.run(["git", "-C", str(root), "diff", "--", *paths],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
         if diff.returncode != 0 or not diff.stdout.strip():
             print(f"  {holder}: 差分が取れません（新規ファイルは "
                   f"`git add -N` してください）: {' / '.join(paths)}",
@@ -509,7 +509,7 @@ def do_handoff(machine, conf, root, apply=False):
 
     for holder, pf, paths in made:
         r = subprocess.run(["git", "-C", str(root), "checkout", "--", *paths],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
         if r.returncode != 0:
             print(f"作業ツリーから外せませんでした: {' / '.join(paths)}\n"
                   f"  {r.stderr.strip()[:200]}", file=sys.stderr)
@@ -891,7 +891,7 @@ def self_test():
         root = Path(td3)
         def g(*a, cwd=root):
             return subprocess.run(["git", "-C", str(cwd), *a],
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace")
         up = Path(td3 + "-up")
         g("init", "-q", "--bare", str(up), cwd=root.parent) if False else None
         subprocess.run(["git", "init", "-q", "--bare", str(up)], capture_output=True)
@@ -959,7 +959,7 @@ def self_test():
         root = Path(td5)
         def g5(*a):
             return subprocess.run(["git", "-C", str(root), *a],
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace")
         subprocess.run(["git", "init", "-q", "-b", "main", str(root)], capture_output=True)
         g5("config", "user.email", "t@t"); g5("config", "user.name", "t")
         # **作業ツリーは CRLF・リポジトリは LF**（Windows の core.autocrlf=true）
@@ -1121,7 +1121,7 @@ def self_test():
         # **変更はパッチに残っている**（当て直せる）
         latest = sorted((root / "design" / "handoff").glob("*.patch"))[-1]
         r = subprocess.run(["git", "-C", str(root), "apply", str(latest)],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
         if r.returncode != 0 or \
                 (root / "lib" / "theirs.dart").read_text(encoding="utf-8") != "2\n":
             print(f"self-test NG: パッチを当て直せない: {r.stderr[:150]}"); ok = False

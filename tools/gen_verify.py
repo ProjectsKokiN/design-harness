@@ -140,7 +140,7 @@ def main(argv=None):
         # **載せられないものは、べき等の検査から漏れる。**
         before = out.read_bytes() if out.exists() else None
         cmd = _command(here / g["file"])
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=root)
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=root)
         if r.returncode != 0:
             print(f'[NG] {g["file"]} が落ちました:\n{r.stdout}{r.stderr}', file=sys.stderr)
             _restore(out, before)

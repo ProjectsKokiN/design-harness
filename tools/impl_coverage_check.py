@@ -409,7 +409,7 @@ def check_tokens(conf, base, today):
             # からルートを求めて正しい場所に書いているので、終了コードは 0 のまま
             [sys.executable, str(Path(__file__).resolve().parent / "gen_verify.py"),
              "--manifest", str(man)],
-            capture_output=True, text=True)
+            capture_output=True, text=True, encoding="utf-8", errors="replace")
         if r.returncode != 0:
             problems.append(
                 f"生成物が書き出しと一致していません（gen_verify）:\n"

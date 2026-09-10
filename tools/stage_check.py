@@ -798,12 +798,12 @@ def resolve_prepush(root, given):
     # （QnD は `site/design/harness/verify.sh`）`site/design/.githooks/pre-push`
     # という**存在しない場所**を見て「フックがありません」と出ていました。
     top = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-                         capture_output=True, text=True)
+                         capture_output=True, text=True, encoding="utf-8", errors="replace")
     base = Path(top.stdout.strip()) if top.returncode == 0 and top.stdout.strip() \
         else Path(root)
 
     r = subprocess.run(["git", "-C", str(root), "config", "core.hooksPath"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
     hp = r.stdout.strip() if r.returncode == 0 else ""
     if hp:
         d = Path(hp)
@@ -1445,7 +1445,7 @@ def main(argv=None):
                 checked.append(name)
                 continue
             r = subprocess.run([sys.executable, str(path), "--self-test"],
-                               capture_output=True, text=True, timeout=180)
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
             if r.returncode != 0:
                 problems.append(f"「{label}」の {name}.py の self-test が落ちました:\n"
                                 f"      {r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr.strip()[:150]}")

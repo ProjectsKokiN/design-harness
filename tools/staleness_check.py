@@ -73,7 +73,7 @@ def git_date(path):
     try:
         out = subprocess.run(
             ["git", "log", "-1", "--format=%cI", "--", path.name],
-            capture_output=True, text=True, cwd=path.parent, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=path.parent, check=True,
         ).stdout.strip()
     except (subprocess.CalledProcessError, OSError):
         return None

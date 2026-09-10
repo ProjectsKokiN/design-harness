@@ -74,7 +74,7 @@ def check_encoding(root, verbose=False):
     for f in _tools(root):
         try:
             r = subprocess.run([sys.executable, str(f), "--self-test"],
-                               capture_output=True, text=True, errors="replace",
+                               capture_output=True, text=True, encoding="utf-8", errors="replace",
                                env=env, timeout=300)
         except subprocess.SubprocessError as e:
             ng.append((f.name, f"回せません: {e}")); continue
@@ -245,7 +245,44 @@ def check_style(root, paths_only=False):
                                    f"外部コマンド `{bad}` を名前のまま起動。"
                                    f"Windows の `.bat`/`.cmd` は解決されない"
                                    f"（`shutil.which` を通す）"))
+                # **`text=True` に `encoding=` が無い。** その機体のロケールで
+                # 復号するので、**日本語を含む出力が cp932 の機体で例外になります。**
+                #
+                # 実害（2026-09-11・Windows が実測して報告・10 件目のこの仲間）:
+                # `pin_check.py:68` が `git log --oneline` を `text=True` だけで読み、
+                # **日本語のコミットメッセージを復号できずに読み取りスレッドが死に**、
+                # `stdout` が `None` になって `:190` の `log.strip()` が
+                # `AttributeError` で落ちた。**`pre-push` が止まり、push できなかった。**
+                # 出ていたのは「ピンが遅れています」で、**理由がまったく読めない形**。
+                #
+                # `str(Path)` と同じ仲間——**Mac では絶対に踏めません。**
+                if (name in ("run", "Popen", "check_output", "call")
+                        and isinstance(node.func, ast.Attribute)
+                        and _text_without_encoding(node)
+                        and not _reason_ok(src_lines, node.lineno)):
+                    ng.append((f.name, node.lineno,
+                               "`text=True` に `encoding=` が無い。**その機体の"
+                               "ロケールで復号する**ので、日本語を含む出力は "
+                               "cp932 の機体で例外になり、`stdout` が `None` に"
+                               "なります（`encoding=\"utf-8\", errors=\"replace\"` "
+                               "を足す）"))
     return ng
+
+
+def _text_without_encoding(node) -> bool:
+    """`text=True`（または `universal_newlines=True`）なのに `encoding=` が無いか。
+
+    **`encoding=` があれば `text` は要りません**（渡すと文字列で返る）。
+    ここが見たいのは「**文字列で受けると言っているのに、どう読むかを言っていない**」形。
+    """
+    kw = {k.arg: k.value for k in node.keywords}
+    if "encoding" in kw:
+        return False
+    for flag in ("text", "universal_newlines"):
+        v = kw.get(flag)
+        if isinstance(v, ast.Constant) and v.value is True:
+            return True
+    return False
 
 
 def _mode_of(node):
@@ -334,6 +371,56 @@ def self_test():
             "    subprocess.run([sys.executable, '-c', 'pass'])\n"
             "    subprocess.run(['git', 'status'])\n", encoding="utf-8")
         check(check_style(td) == [], f"綺麗な道具を咎めた: {check_style(td)}")
+
+        # ─── **`text=True` に `encoding=` が無い**（2026-09-11・#110 の後）────
+        # 実害（Windows が実測して報告）: `pin_check.py:68` が `git log --oneline` を
+        # `text=True` だけで読み、**日本語のコミットメッセージを cp932 で復号できず**
+        # 読み取りスレッドが死に、`stdout` が `None` になって `.strip()` が
+        # `AttributeError`。**`pre-push` が止まって push できなかった。**
+        # 出ていたのは「ピンが遅れています」で、**理由がまったく読めない形**。
+        # **Mac では絶対に踏めない**——`str(Path)` と同じ仲間。
+        base = ("import sys\nfrom pathlib import Path\n"
+                "sys.path.insert(0, str(Path(__file__).resolve().parent))\n"
+                "import _utf8  # noqa\nimport subprocess\n")
+        enc = td / "enc.py"
+
+        def only_enc():
+            return [n for n in check_style(td) if n[0] == "enc.py"]
+
+        enc.write_text(base + "def f():\n"
+                       "    subprocess.run(['git', 'log'], text=True)\n",
+                       encoding="utf-8")
+        check(any("encoding=" in m for _, _, m in only_enc()),
+              f"`text=True` に `encoding=` が無いのを見逃した: {only_enc()}")
+        # `universal_newlines=True` も同じ（古い書き方）
+        enc.write_text(base + "def f():\n"
+                       "    subprocess.run(['git', 'log'], universal_newlines=True)\n",
+                       encoding="utf-8")
+        check(only_enc() != [], "`universal_newlines=True` を見逃した")
+        # `encoding=` があれば咎めない
+        enc.write_text(base + "def f():\n"
+                       "    subprocess.run(['git', 'log'], text=True,\n"
+                       "                   encoding='utf-8', errors='replace')\n",
+                       encoding="utf-8")
+        check(only_enc() == [], f"`encoding=` があるのに咎めた: {only_enc()}")
+        # `text` を渡していない（バイト列で受ける）なら関係ない
+        enc.write_text(base + "def f():\n"
+                       "    subprocess.run(['git', 'log'], capture_output=True)\n",
+                       encoding="utf-8")
+        check(only_enc() == [], f"バイト列で受ける形を咎めた: {only_enc()}")
+        # `text=False` も関係ない
+        enc.write_text(base + "def f():\n"
+                       "    subprocess.run(['git', 'log'], text=False)\n",
+                       encoding="utf-8")
+        check(only_enc() == [], f"`text=False` を咎めた: {only_enc()}")
+        # **理由を書けば通る**（`portable-ok:`）。直せない関門を作らない。
+        # **印は呼び出しの1行目に置く**（`_reason_ok` はその行だけを見る）
+        enc.write_text(base + "def f():\n"
+                       "    subprocess.run(['git', 'log'], text=True)"
+                       "  # portable-ok: ASCII しか来ない\n",
+                       encoding="utf-8")
+        check(only_enc() == [], f"理由つきなのに咎めた: {only_enc()}")
+        enc.unlink()
 
         # ─── **`str(Path)` の比較**（2026-09-07 に足した）─────────────────
         # 説明の表には昔から載っていたのに**当てていなかった**。実害:

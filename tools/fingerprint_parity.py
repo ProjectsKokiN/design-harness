@@ -49,7 +49,7 @@ FP = HERE.parent / "fingerprint"
 
 def run(cmd, path):
     try:
-        r = subprocess.run(cmd + [str(path)], capture_output=True, text=True,
+        r = subprocess.run(cmd + [str(path)], capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=60)
     except (OSError, subprocess.TimeoutExpired) as e:
         return None, f"NOTFOUND:{cmd[0]} を実行できません: {e}"

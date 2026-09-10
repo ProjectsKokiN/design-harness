@@ -65,7 +65,7 @@ TOOL_RX = re.compile(r"tools/([a-z_][a-z0-9_]*\.py)")
 
 
 def run(cmd, cwd=None):
-    return subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd)
 
 
 def default_ref(sub):
@@ -177,7 +177,12 @@ def main(argv=None):
     used = project_tools(args.root.resolve(), sub)
     hit = sorted(changed & used)
 
-    log = run(["git", "log", "--oneline", f"HEAD..{ref}"], cwd=sub).stdout
+    # **`stdout` は `None` になりえます。** 復号に失敗すると読み取りスレッドが死に、
+    # `capture_output=True` でも `None` が返ります。2026-09-11、Windows で
+    # `text=True` に `encoding=` が無く、**日本語のコミットメッセージで実際にそうなり**、
+    # 下の `.strip()` が `AttributeError` で落ちて **push が止まりました**。
+    # `encoding=` は足しましたが、**None を受けても落ちない形にしておきます**
+    log = run(["git", "log", "--oneline", f"HEAD..{ref}"], cwd=sub).stdout or ""
     print(f"design-harness のピンが {ref} から {n} コミット遅れています{note}。")
     if hit:
         print(f"  **この案件が使っている道具が {len(hit)} 本変わっています**: "
@@ -187,7 +192,8 @@ def main(argv=None):
         print(f"  遅れが {args.max_behind} を超えました。取り込みどきです。")
     print(f"  取り込む: git -C {sub} checkout {ref} && git add {sub}")
     print("  上流の変更:")
-    print("\n".join(f"    {l}" for l in log.strip().splitlines()[:10]))
+    print("\n".join(f"    {l}" for l in log.strip().splitlines()[:10])
+          or "    （上流の変更を読めませんでした）")
     return 1 if args.strict else 0
 
 

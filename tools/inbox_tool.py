@@ -112,7 +112,7 @@ ARCHIVE_TITLE = "# マシン間の申し送り（完了ぶんの保管）"
 
 
 def git(root, *args):
-    r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True)
+    r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
     return r.returncode, r.stdout.strip()
 
 

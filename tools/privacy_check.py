@@ -232,7 +232,7 @@ def scan_text(text: str, names: set[str] | None = None) -> list[tuple[int, str, 
 def tracked_files(root: Path) -> list[Path]:
     """**git が追跡しているファイルだけ**を歩く（無視されているものは公開されない）。"""
     r = subprocess.run(["git", "-C", str(root), "ls-files"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         return sorted(p for p in root.rglob("*") if p.is_file())
     out = []
@@ -260,7 +260,7 @@ def visibility(root: Path) -> str | None:
         return None
     try:
         r = subprocess.run([gh, "repo", "view", "--json", "isPrivate", "-q", ".isPrivate"],
-                           cwd=str(root), capture_output=True, text=True, timeout=20)
+                           cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
     except (OSError, subprocess.SubprocessError):
         # **`gh` が入っていない機体・CI で落ちてはいけない**（この検査の本体は
         # 個人情報の走査で、公開かどうかは添え物）。2026-09-10 に PATH を外して踏んだ

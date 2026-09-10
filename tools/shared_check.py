@@ -62,7 +62,7 @@ import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf
 
 
 def run(*args, cwd=None):
-    return subprocess.run(["git", *args], capture_output=True, text=True, cwd=cwd)
+    return subprocess.run(["git", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd)
 
 
 def default_ref(cwd):
