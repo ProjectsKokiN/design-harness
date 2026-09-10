@@ -38,6 +38,19 @@
 伏せ字（`<誰か>` `<name>` `someone` `user` `runner` など）は通します。
 **検出のための試験データが落ちてしまう**ためです。
 
+## 公開かどうかは**導きます**（2026-09-10 に直した）
+
+**この道具は「**このリポジトリは公開です**」と無条件で出していました。**
+`isPrivate` も `visibility` も見ずに、確かめていないことを断定していました。
+
+**実害（2026-09-10）**: FlashEnglish（**非公開**）の作業ツリーに当てた出力を、
+読んだ側（AI）がそのまま事実として受け取り、**「公開リポジトリに個人情報が 6 件」と
+ユーザーへ誤って報告しました。** そのうえ間違った前提で共有ファイル 3 本を書き換えて
+push しました。**嘘の緊急性を作るのが、この形のいちばん重い害です。**
+
+いまは `gh repo view --json isPrivate` から導きます。**取れないときは言いません**
+（「公開かどうかは確かめられませんでした」と出す）。**取れないのに断定するのが最悪です。**
+
 ## 0件の扱い
 
 **ここは 0件が正常です。** そのぶん「見ていない」と区別が付きません。
@@ -120,6 +133,30 @@ def tracked_files(root: Path) -> list[Path]:
     return out
 
 
+def visibility(root: Path) -> str | None:
+    """公開かどうかを**導く**。分からなければ `None`（**断定しない**）。
+
+    `gh` が無い・認証が無い・remote が GitHub ではない、のどれでも `None` です。
+    **`None` を「公開」に丸めません**——2026-09-10 に、確かめていない断定が
+    嘘の緊急性を作りました（docstring の「公開かどうかは導きます」を参照）。
+    """
+    try:
+        r = subprocess.run(["gh", "repo", "view", "--json", "isPrivate", "-q", ".isPrivate"],
+                           cwd=str(root), capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        # **`gh` が入っていない機体・CI で落ちてはいけない**（この検査の本体は
+        # 個人情報の走査で、公開かどうかは添え物）。2026-09-10 に PATH を外して踏んだ
+        return None
+    if r.returncode != 0:
+        return None
+    out = r.stdout.strip()
+    if out == "true":
+        return "非公開"
+    if out == "false":
+        return "公開"
+    return None
+
+
 def check(root: Path) -> tuple[list[str], int]:
     """`(見つかったもの, 走ったファイル数)`。呼ぶ側が 0 ファイルを exit 2 にする。"""
     found, n = [], 0
@@ -192,6 +229,36 @@ def self_test() -> int:
     rc, out = run_in({"a.md": f"見よ /Users/{u}/dev/x.js"})
     if rc != 1 or "公開してはいけない" not in out:
         print(f"self-test NG: **実パスがあるのに exit {rc}**（期待 1）"); ok = False
+
+    # ─── 公開かどうかを**断定しない**（2026-09-10 の実害）─────────────────
+    # 一時ディレクトリは GitHub の remote を持たないので `visibility()` は None。
+    # **None を「公開」に丸めると、この道具は嘘の緊急性を作る**
+    if "公開かどうかは確かめられませんでした" not in out:
+        print("self-test NG: **remote が無いのに公開かどうかを断定している**\n"
+              f"   {out[:220]}"); ok = False
+    for wrong in ("**このリポジトリは公開です。**", "このリポジトリは**非公開**です"):
+        if wrong in out:
+            print(f"self-test NG: **確かめていないのに {wrong!r} と言っている**"); ok = False
+    # 導出そのもの: 一時ディレクトリでは None、この repo では 公開 / 非公開 のどちらか
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as _d:
+        if visibility(Path(_d)) is not None:
+            print("self-test NG: **remote の無い場所で公開かどうかを返した**"); ok = False
+    _here = visibility(Path(__file__).resolve().parent.parent)
+    if _here not in ("公開", "非公開", None):
+        print(f"self-test NG: visibility() が {_here!r} を返した"); ok = False
+    # **`gh` が無い機体・CI で落ちない**（2026-09-10 に PATH を外して踏んだ）
+    import os as _os
+    _path = _os.environ.get("PATH", "")
+    _os.environ["PATH"] = "/nonexistent"
+    try:
+        if visibility(Path(__file__).resolve().parent.parent) is not None:
+            print("self-test NG: gh が無いのに公開かどうかを返した"); ok = False
+        # **`run_in` はここで呼べません**——PATH を外すと `git` も無くなり、
+        # 測りたいもの（gh の不在）ではなく足場が壊れます（2026-09-10 に踏んだ）。
+        # 走査が gh に依らないことは、上の「remote が無い」ケースが見ています
+    finally:
+        _os.environ["PATH"] = _path
     rc, out = run_in({"a.md": f"connect {mail}"})
     if rc != 1:
         print(f"self-test NG: **メールがあるのに exit {rc}**（期待 1）"); ok = False
@@ -233,16 +300,26 @@ def main(argv=None) -> int:
               f"  git リポジトリですか（`git ls-files` が空）。--root を確かめてください",
               file=sys.stderr)
         return 2
+    vis = visibility(args.root)
+    #: 公開かどうかは**導いた結果だけ**を書く。分からないときは分からないと書く
+    vis_line = {
+        "公開": "**このリポジトリは公開です**（`gh repo view` で確かめました）。",
+        "非公開": "このリポジトリは**非公開**です（`gh repo view` で確かめました）。"
+                  "**公開に切り替える前に**直してください。",
+        None: "**公開かどうかは確かめられませんでした**（`gh` が無い・認証が無い・"
+              "remote が GitHub ではない）。**公開とも非公開とも言えません。**",
+    }[vis]
     if found:
         print("公開してはいけないものが入っています。", file=sys.stderr)
-        print("**このリポジトリは公開です。** 消しても git の履歴には残るので、"
-              "**push する前に**直してください。", file=sys.stderr)
+        print(vis_line, file=sys.stderr)
+        print("消しても **git の履歴には残ります。**", file=sys.stderr)
         for f in found:
             print(f"  {f}", file=sys.stderr)
         print(f"\n  伏せ字にしてください（`/Users/<誰か>/` の形）。"
               f"検出のための試験データも同じです。", file=sys.stderr)
         return 1
-    print(f"公開してよいものだけです（{n} ファイルを見ました）。\n"
+    print(f"見たかぎり公開してよいものだけです（{n} ファイルを見ました）。\n"
+          f"  {vis_line}\n"
           f"  見たもの: ホーム下の絶対パス・メールアドレス\n"
           f"  **見ていないもの: 氏名・機体名**（伏せ字にできないので検査に書けない）"
           f"**・git の履歴**")
