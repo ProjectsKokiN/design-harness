@@ -124,7 +124,7 @@ def _reason_ok(src_lines, lineno) -> bool:
     return bool(after.strip())
 
 
-def check_style(root):
+def check_style(root, paths_only=False):
     """書き方を静的に見る。"""
     ng = []
     for f in _tools(root):
@@ -136,7 +136,12 @@ def check_style(root):
             ng.append((f.name, 0, f"読めません: {e}")); continue
 
         # _utf8 を import しているか（出力で死なないための土台）
-        if "import _utf8" not in src:
+        # **`--paths` では見ません。** 案件の道具は `_utf8` を別の場所から読むことがあり、
+        # そこまで求めると**本物の罠を当てるために 71 件の指摘が邪魔をします**
+        # （2026-09-10 実測: 案件の `design/gen` に当てたら 71 件のうち 70 件が これ。
+        #  外したら**本物が2件**出た——`build_manifest.py:61` の `str(relative_to)` と
+        #  `gen_appicon_layers.py:90` の `encoding=` 無し）
+        if not paths_only and "import _utf8" not in src:
             ng.append((f.name, 1, "**`import _utf8` が無い**。"
                                   "絵文字を出した瞬間に cp932 で死ぬ"))
 
@@ -207,7 +212,13 @@ def check_style(root):
                     name = node.func.attr
                 elif isinstance(node.func, ast.Name):
                     name = node.func.id
-                if name in ("read_text", "write_text", "open"):
+                # **`open` は素の呼び出しだけを見ます**（2026-09-10 実測）。
+                # `Image.open(...)`（PIL）は画像を開く別の関数で、`encoding=` を
+                # **取りません。** 名前だけで判定して aub の `gen_appicon_layers.py:90`
+                # を誤検出し、**直そうとしてファイルを壊しました。**
+                # `Path.read_text` / `Path.write_text` は属性でよい（それらは実在する）。
+                _bare_open = name == "open" and isinstance(node.func, ast.Name)
+                if name in ("read_text", "write_text") or _bare_open:
                     kw = {k.arg for k in node.keywords}
                     if "encoding" not in kw and "b" not in _mode_of(node):
                         ng.append((f.name, node.lineno,
@@ -260,13 +271,16 @@ def main(argv=None):
                     metavar="DIR", help="歩く場所（複数可）")
     ap.add_argument("--encoding", action="store_true", help="出力の文字コードだけ")
     ap.add_argument("--style", action="store_true", help="書き方だけ")
+    ap.add_argument("--paths", action="store_true",
+                    help="**Windows で落ちる書き方だけ**（案件の道具に当てるため。"
+                         "`import _utf8` の土台は見ない）")
     ap.add_argument("--verbose", action="store_true")
     ap.add_argument("--self-test", action="store_true")
     a = ap.parse_args(argv)
     if a.self_test:
         return self_test()
 
-    both = not (a.encoding or a.style)
+    both = not (a.encoding or a.style or a.paths)
     failed = 0
     tools = _tools(a.root)
     if not tools:
@@ -275,8 +289,8 @@ def main(argv=None):
               file=sys.stderr)
         return 2
 
-    if a.style or both:
-        ng = check_style(a.root)
+    if a.style or a.paths or both:
+        ng = check_style(a.root, a.paths)
         print(f"書き方（道具 {len(tools)}本）: {len(ng)} 件")
         for name, line, why in ng:
             print(f"  {name}:{line}  {why}", file=sys.stderr)
@@ -353,6 +367,36 @@ def self_test():
         # ─── **`str(Path).replace("/", …)`**（2026-09-10・Windows の実測）────
         # 比較だけが罠ではない。**区切りを別の文字に置き換える**形で出た。
         # `issue_scan` は本体が直っていたのに、**自分の self-test だけ古い形**だった。
+        # ─── **`Image.open` を誤検出しない**（2026-09-10 実測）──────────
+        # `open` を名前だけで判定して PIL の `Image.open(...)` を咎め、
+        # **直そうとして案件のファイルを壊しました**（`encoding=` を足すと動きません）。
+        pil = td / "pil_open.py"
+        pil.write_text("import _utf8\nfrom PIL import Image\n"
+                       "def f(p):\n"
+                       "    with Image.open(p) as im:\n        return im.size\n",
+                       encoding="utf-8")
+        check([n for n in check_style(td) if n[0] == "pil_open.py"] == [],
+              "**`Image.open` を咎めた**（`encoding=` を取らない別の関数）")
+        pil.write_text("import _utf8\ndef f(p):\n    return open(p).read()\n",
+                       encoding="utf-8")
+        check(any("encoding=" in m for n, _, m in check_style(td) if n == "pil_open.py"),
+              "素の `open(` を見逃した")
+        pil.write_text("import _utf8\ndef f(p):\n"
+                       "    return open(p, encoding='utf-8').read()\n", encoding="utf-8")
+        check([n for n in check_style(td) if n[0] == "pil_open.py"] == [],
+              "`encoding=` つきを咎めた")
+        pil.unlink()
+
+        # ─── **`--paths` は土台を見ない**（案件の道具に当てるため）───────
+        bare = td / "no_utf8.py"
+        bare.write_text("from pathlib import Path\ndef f(p):\n    return p\n",
+                        encoding="utf-8")
+        check(any("import _utf8" in m for _, _, m in check_style(td)),
+              "既定で `import _utf8` を見ていない")
+        check(not any("import _utf8" in m for _, _, m in check_style(td, True)),
+              "**`--paths` で土台まで見ている**（案件で 70 件の指摘が邪魔をする）")
+        bare.unlink()
+
         rep = td / "bad_rep.py"
         rep.write_text("import _utf8\nfrom pathlib import Path\n"
                        "def f(root):\n"

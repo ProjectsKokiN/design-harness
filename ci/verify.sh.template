@@ -217,6 +217,14 @@ step "押す前の関門（この機体で効いているか）" \
 # --style は読むだけで速い。--encoding は cp932 で全道具を回すので遅い。
 step "移植性（Windows でだけ落ちる書き方）" \
   "$PY" "$HARNESS/tools/portable_check.py" --root "$HARNESS/tools" --style
+# **案件の道具にも当てる**（2026-09-10・#96 の6件目・7件目）。
+# 上の段は**共有層の道具だけ**を歩くので、案件の `design/gen/` は見ていなかった。
+# 実害: `build_manifest.py:61` の `str(Path.relative_to(...))` が Windows で `\` を作り、
+# **`/` で保存された台帳と原理的に一致せず** `flutter test` が落ちて push できなかった。
+# **ルールは在ったのに当てていなかった**（#94 と同じ形）。
+# `--paths` は `import _utf8` の土台を見ない（案件では 70 件の指摘が邪魔をする）。
+step "移植性（案件の道具）" \
+  "$PY" "$HARNESS/tools/portable_check.py" --paths --root design/gen
 
 # 見なかったものを機械が出す。完了レポートの「残っている限界」はこの出力を貼る
 # （AI の自己申告にしない。走査が空振りしていれば exit 2 で落ちる）

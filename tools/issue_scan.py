@@ -406,16 +406,23 @@ def self_test():
     # `privacy_check` 自身が 2026-09-06 に同じ形で自分を落として、同じ手で直しています。
     _u = "who"
     _mac = encoded_names(Path("/" + "Users/" + _u + "/.claude"))
-    if f"-Users-{_u}--claude" not in _mac:
+    # **末尾一致で見ます**（2026-09-10・Windows の実測・確信度 高の提案）。
+    # `encoded_names` は中で `resolve()` するので、**Windows はドライブ文字を足します**:
+    #     試験が渡すパス   <区切り>Users<区切り><名><区切り>.claude   ← ドライブ無し
+    #     resolve() の結果 ドライブ文字が足される
+    #     作られる候補      <ドライブ>--Users-<名>--claude
+    #     完全一致の期待値   -Users-<名>--claude     ← **先頭のドライブの差だけで落ちていた**
+    # **本体は通っていて、落ちていたのは期待値の側**でした。
+    if not any(x.endswith(f"-Users-{_u}--claude") for x in _mac):
         print("self-test NG: **英数字以外を全部 `-` にした形が候補に無い**"
               f"（`.claude` を取りこぼす）: {sorted(_mac)}"); ok = False
-    if f"-Users-{_u}-.claude" not in _mac:
+    if not any(x.endswith(f"-Users-{_u}-.claude") for x in _mac):
         print("self-test NG: **区切りだけを `-` にした古い形が候補に無い**"
               f"（先に作られた置き場を取りこぼす）: {sorted(_mac)}"); ok = False
     # Windows の形（`:` と空白が残らないこと）。**名前は伏せます**
     _wp = "C:" + chr(92) + "Users" + chr(92) + "A B" + chr(92) + ".claude"
     _win = re.sub(r"[^A-Za-z0-9]", "-", _wp)
-    if _win != "C--Users-A-B--claude":
+    if not _win.endswith("--Users-A-B--claude"):
         print(f"self-test NG: **`:` と空白が `-` になっていない**（Windows で"
               f"実物と1文字も一致しなかった形）: {_win}"); ok = False
     # **候補は1つではない**（決め打ちに戻っていないこと）
