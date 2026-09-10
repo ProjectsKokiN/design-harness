@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""書き出しの中身の指紋（`$meta.payloadDigest`）を、**一覧を持たずに全部**照合する（2026-09-05 新設・#66）。
+"""書き出しの中身のハッシュ（`$meta.payloadDigest`）を、**一覧を持たずに全部**照合する（2026-09-05 新設・#66）。
 
 ## なぜ要るか
 
-書き出しの `$meta` には指紋がある。意味はファイル自身にこう書いてある。
+書き出しの `$meta` にはハッシュがある。意味はファイル自身にこう書いてある。
 
 > **Figma から書き出したものを、そのまま写せているかの証明。**
 
 ところが照合する道具は案件ローカルで、**対象が手書きの一覧**（21ファイル）だった。
 画面まわりの書き出し5件は**後から足した日に一覧への追加を忘れ**、忘れたことは誰にも
-分からなかった——指紋は書いてあるので、見た目は揃っている。
-結果、`screen_chrome_layout.json` の指紋が**丸1日古いまま通った**。
+分からなかった——ハッシュは書いてあるので、見た目は揃っている。
+結果、`screen_chrome_layout.json` のハッシュが**丸1日古いまま通った**。
 
 **一覧を持たない。** `design/figma/*.json` を全部歩き、`$meta.payloadDigest` を持つものは
-全部照合する。持たないものは「照合できない」と**名指しで出す**（飾りの指紋を見つけるため）。
+全部照合する。持たないものは「照合できない」と**名指しで出す**（飾りのハッシュを見つけるため）。
 
 ## 式（aub の `design/gen/digests.py` と同じ。ここが正本になる）
 
@@ -26,7 +26,7 @@
     python3 tools/digest_check.py [--dir design/figma] [--allow-missing frames.json ...]
 
 捕まえないもの: 中身が Figma と合っているか（鮮度の段）。ここは「写した後に手直ししていないか」だけ
-確かめた方法: --self-test（中身を1字変えると落ちること・指紋の無い書き出しを名指しすること）
+確かめた方法: --self-test（中身を1字変えると落ちること・ハッシュの無い書き出しを名指しすること）
 """
 
 import argparse
@@ -54,7 +54,7 @@ def payload_digest(doc: dict) -> dict:
 
 
 def check_dir(d: Path, allow_missing=()):
-    """(照合した, ずれた, 指紋の無い) を返す。"""
+    """(照合した, ずれた, ハッシュの無い) を返す。"""
     files = sorted(p for p in d.glob("*.json") if p.is_file())
     checked, bad, missing = [], [], []
     for f in files:
@@ -73,7 +73,7 @@ def check_dir(d: Path, allow_missing=()):
             continue
         got = payload_digest(doc)
         if got["value"] != want.get("value") or got["chars"] != want.get("chars"):
-            bad.append(f"  {f.name}: 指紋がずれています（記録 {want.get('value')} / "
+            bad.append(f"  {f.name}: ハッシュがずれています（記録 {want.get('value')} / "
                        f"いま {got['value']}・文字数 {want.get('chars')} → {got['chars']}）。\n"
                        f"    **写した後に手で直したか、取り直したのに $meta を更新していません。**")
         else:
@@ -82,10 +82,10 @@ def check_dir(d: Path, allow_missing=()):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="書き出しの中身の指紋を全部照合する")
+    ap = argparse.ArgumentParser(description="書き出しの中身のハッシュを全部照合する")
     ap.add_argument("--dir", type=Path, default=Path("design/figma"))
     ap.add_argument("--allow-missing", nargs="*", default=[],
-                    help="指紋を持たなくてよい書き出し（手書きの宣言など）。理由は exporters.json の allow に")
+                    help="ハッシュを持たなくてよい書き出し（手書きの宣言など）。理由は exporters.json の allow に")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
@@ -100,16 +100,16 @@ def main(argv=None):
               file=sys.stderr)
         return 2
     if bad:
-        print(f"書き出しの指紋がずれています（{len(bad)}/{total} 件）:", file=sys.stderr)
+        print(f"書き出しのハッシュがずれています（{len(bad)}/{total} 件）:", file=sys.stderr)
         print("\n".join(bad), file=sys.stderr)
         return 1
     if missing:
-        # 指紋が無いのは落とさない（手書きの宣言は器を持たない）。**ただし必ず名指しする**
-        print(f"注意: 指紋（payloadDigest）を持たない書き出し {len(missing)} 件: "
+        # ハッシュが無いのは落とさない（手書きの宣言は器を持たない）。**ただし必ず名指しする**
+        print(f"注意: ハッシュ（payloadDigest）を持たない書き出し {len(missing)} 件: "
               + " / ".join(missing) + "\n"
               f"  器が作ったものなら $meta.payloadDigest を持たせてください。"
-              f"手書きの宣言なら --allow-missing に理由つきで。**飾りの指紋（式の無い digest）はここに出ます**")
-    print(f"書き出しの指紋: {len(checked)}/{total} 件を照合、すべて一致（一覧は持たない。全部歩いた）")
+              f"手書きの宣言なら --allow-missing に理由つきで。**飾りのハッシュ（式の無い digest）はここに出ます**")
+    print(f"書き出しのハッシュ: {len(checked)}/{total} 件を照合、すべて一致（一覧は持たない。全部歩いた）")
     return 0
 
 
@@ -140,11 +140,11 @@ def self_test():
         if rc != 1 or "手で直したか" not in out:
             print(f"self-test NG: 手直しを見逃した（{rc}）"); ok = False
         (d / "a.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
-        # 指紋の無い書き出しは名指しする（飾りの指紋・一覧の抜けはここに出る）
+        # ハッシュの無い書き出しは名指しする（飾りのハッシュ・一覧の抜けはここに出る）
         (d / "b.json").write_text(json.dumps({"$meta": {"digest": {"value": 1}}, "frames": {}}), encoding="utf-8")
         rc, out = run()
         if rc != 0 or "b.json" not in out or "持たない書き出し 1 件" not in out:
-            print(f"self-test NG: 指紋の無い書き出しを名指ししていない（{rc}）"); ok = False
+            print(f"self-test NG: ハッシュの無い書き出しを名指ししていない（{rc}）"); ok = False
         rc, out = run("--allow-missing", "b.json")
         if "持たない書き出し" in out:
             print("self-test NG: --allow-missing が効いていない"); ok = False

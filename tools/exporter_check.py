@@ -16,10 +16,10 @@
 
 1. `producer` — 作った器のパス。**無ければ落とす**（「名前を書いただけ」を許さない）
 2. その器が**実在する**こと
-3. `producerDigest` — 取ったときの器の指紋。**いまの器の指紋と一致する**こと
+3. `producerDigest` — 取ったときの器のハッシュ。**いまの器のハッシュと一致する**こと
 
-指紋は `fingerprint/text_digest.py`（JS 側と同じ式）で取ります。
-案件が自前の指紋関数を書きません。
+ハッシュは `fingerprint/text_digest.py`（JS 側と同じ式）で取ります。
+案件が自前のハッシュ関数を書きません。
 
 ## `--style`: 器の書き方（2026-09-04 新設・#32）
 
@@ -69,7 +69,7 @@
     python3 design/harness/tools/exporter_check.py --config design/exporters.json
     python3 design/harness/tools/exporter_check.py --config design/exporters.json --update
 
-`--update` は**書き出しを取り直した直後だけ**回します（指紋を記録し直す）。
+`--update` は**書き出しを取り直した直後だけ**回します（ハッシュを記録し直す）。
 
     {
       "exports_dir": "design/figma",
@@ -282,11 +282,11 @@ def digest_of(path):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="書き出しを作った器の保存と指紋")
+    ap = argparse.ArgumentParser(description="書き出しを作った器の保存とハッシュ")
     ap.add_argument("--config", type=Path, default=Path("design/exporters.json"))
     ap.add_argument("--root", type=Path)
     ap.add_argument("--update", action="store_true",
-                    help="いまの器の指紋を書き出しに記録し直す（取り直した直後だけ）")
+                    help="いまの器のハッシュを書き出しに記録し直す（取り直した直後だけ）")
     ap.add_argument("--style", action="store_true",
                     help="器が figma.mixed を素で読んでいないかを見る")
     ap.add_argument("--exporters", type=Path,
@@ -455,7 +455,7 @@ def main(argv=None):
         # （2026-09-09・QnD で実測。`values/` の生成物4件に `producerDigest` を
         # 書き込み、`git checkout` で戻した）。
         #
-        # 宣言の理由は「**器の指紋を入れると、生成し直したときに消えて
+        # 宣言の理由は「**器のハッシュを入れると、生成し直したときに消えて
         # `gen_verify` と食い違う**」。**書き込むこと自体が壊す**ので、
         # 読むときだけでなく書くときこそ守る必要があります。
         if f.name in allow:
@@ -503,7 +503,7 @@ def main(argv=None):
             okc += 1
 
     if args.update:
-        print(f"器の指紋を記録し直しました: {updated}件 / 全{len(files)}件")
+        print(f"器のハッシュを記録し直しました: {updated}件 / 全{len(files)}件")
         # **--update でも problems を捨てない**（2026-09-02。planttalk 指摘9）。
         # それまで producer が無い・器が実在しない・**allow の期限切れ**を
         # 表示せずに捨てて常に成功していた。保守用のコマンドで
@@ -515,7 +515,7 @@ def main(argv=None):
             for m in problems:
                 print(f"  - {m}", file=sys.stderr)
         return 0  # swallow-ok: --update は保守用。problems は上で全部表示している（捨てていない）
-    print(f"書き出しの器: {okc}/{len(files)}件が保存済みで指紋も一致")
+    print(f"書き出しの器: {okc}/{len(files)}件が保存済みでハッシュも一致")
     if problems:
         print("\n書き出しの出どころが確かめられていません:", file=sys.stderr)
         for p in problems:
@@ -545,7 +545,7 @@ def self_test():
         # `and not args.update` が付いていたため、`--update` は allow を見ずに
         # **その宣言が禁じている項目へ書き込んでいた**（QnD で実測。
         # `values/` の生成物4件に `producerDigest` を書き込み、戻した）。
-        # 宣言の理由は「器の指紋を入れると、生成し直したときに消えて
+        # 宣言の理由は「器のハッシュを入れると、生成し直したときに消えて
         # `gen_verify` と食い違う」。**書き込むこと自体が壊す。**
         _allow_out = root / "design" / "figma" / "_impl-export.json"
         _allow_out.write_text(json.dumps(
@@ -555,7 +555,7 @@ def self_test():
         cfg.write_text(json.dumps({
             "exports_dir": "design/figma",
             "allow": [{"file": "_impl-export.json",
-                       "why": "器の指紋を入れると生成し直したときに消える",
+                       "why": "器のハッシュを入れると生成し直したときに消える",
                        "reviewBy": "2099-12-31"}]}, ensure_ascii=False),
             encoding="utf-8")
         write({"producer": "design/export_components.mjs"})

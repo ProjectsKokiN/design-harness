@@ -212,23 +212,23 @@ def self_test_template_sync():
         check(rc == 1, f"版の記録が無いのに落ちない: {rc}")
         check(TEMPLATE_KEY in out, "何を足せばよいか出していない")
 
-        # **改行が違っても同じ指紋**（#96・2026-09-10・Windows の実測）。
+        # **改行が違っても同じハッシュ**（#96・2026-09-10・Windows の実測）。
         # 生バイトを SHA-256 していたため、CRLF の機体では**原理的に通らなかった**
-        # （差はちょうど `\r` の数）。指紋を打ち直しても、打ち直した先が LF の値なら
+        # （差はちょうど `\r` の数）。ハッシュを打ち直しても、打ち直した先が LF の値なら
         # また落ちる。**直せない関門は `--no-verify` を選ばせるだけ。**
         tpl.write_text('step "あ" "$PY" a.py\n', encoding="utf-8", newline="\n")
         d_lf = template_digest(tpl)
         tpl.write_bytes(tpl.read_bytes().replace(b"\n", b"\r\n"))
         d_crlf = template_digest(tpl)
         check(d_lf == d_crlf,
-              f"**改行が違うと指紋が変わる**（CRLF の機体で原理的に落ちる）: "
+              f"**改行が違うとハッシュが変わる**（CRLF の機体で原理的に落ちる）: "
               f"LF={d_lf} CRLF={d_crlf}")
         tpl.write_text('step "あ" "$PY" a.py\n', encoding="utf-8", newline="\n")
 
         # 記録して一致 → 0
         dig = template_digest(tpl)
         wv.write_text(_json.dumps(
-            {"notHere": {}, TEMPLATE_KEY: {"指紋": dig, "確かめた版": "abc1234",
+            {"notHere": {}, TEMPLATE_KEY: {"ハッシュ": dig, "確かめた版": "abc1234",
                                            "確かめた日": "2026-09-07"}},
             ensure_ascii=False), encoding="utf-8")
         rc, _ = run(tpl, wv)
@@ -244,7 +244,7 @@ def self_test_template_sync():
 
         # 版を書き換えたら通る（「見た」の記録）
         wv.write_text(_json.dumps(
-            {"notHere": {}, TEMPLATE_KEY: {"指紋": template_digest(tpl),
+            {"notHere": {}, TEMPLATE_KEY: {"ハッシュ": template_digest(tpl),
                                            "確かめた版": "abc1234",
                                            "確かめた日": "2026-09-07"}},
             ensure_ascii=False), encoding="utf-8")
@@ -991,10 +991,10 @@ TEMPLATE_KEY = "$元ファイルの版"
 #: 試験のデータを書くときは **`newline="\n"` を付けます**（2026-09-10・Windows の実測）。
 #: `write_text(..., encoding="utf-8")` は **Windows のテキストモードで `\n` を `\r\n` に変えます。**
 #: **改行そのものを試すコードでは、これが試験を壊しました**——CRLF 化のつもりで
-#: `replace(b"\n", b"\r\n")` を当てると **`\r\r\n`** ができ、指紋が一致しませんでした。
+#: `replace(b"\n", b"\r\n")` を当てると **`\r\r\n`** ができ、ハッシュが一致しませんでした。
 #: `str(Path)` と同じ「**機体で結果が変わる書き方**」の仲間です。
 def template_digest(template: Path) -> str:
-    """元ファイルの指紋。**中身そのものから導く**（手で書かない）。
+    """元ファイルのハッシュ。**中身そのものから導く**（手で書かない）。
 
     **改行を揃えてから取ります**（2026-09-10・Windows の実測）。
     生バイトを SHA-256 していたため、**Windows では原理的に通りませんでした**:
@@ -1003,11 +1003,11 @@ def template_digest(template: Path) -> str:
         git の blob（LF・22,285 バイト）    → b543422a62a1bea9   ← 案件の記録と一致
 
     **差はちょうど 326 バイト＝`\r` の数**でした。`core.autocrlf` が効いている機体では
-    作業ツリーが CRLF になるので、**指紋を打ち直しても、打ち直した先が LF の値なら
+    作業ツリーが CRLF になるので、**ハッシュを打ち直しても、打ち直した先が LF の値なら
     また落ちます。** 直せない関門は `--no-verify` を選ばせるだけです（#103・#80 と同じ形）。
 
     **改行の違いは中身の違いではありません。** `\r\n` と `\r` を `\n` に畳んでから取ります。
-    LF の機体では**値が変わらない**ので、記録済みの指紋はそのまま使えます。
+    LF の機体では**値が変わらない**ので、記録済みのハッシュはそのまま使えます。
     """
     raw = template.read_bytes()
     return hashlib.sha256(
@@ -1033,7 +1033,7 @@ def check_template_sync(template: Path, waivers_path: Path):
 
     案件ごとの差（`--owns` の対象・案件固有の段・パスの読み替え）は**正当**。
     だから**中身を比べるのではなく、「元ファイルが変わったことに気づいたか」を見る。**
-    指紋が変われば落とし、**人（か AI）が差分を読んでから版を書き換える**。
+    ハッシュが変われば落とし、**人（か AI）が差分を読んでから版を書き換える**。
     書き換えることが「見た」の記録になる。
 
     **これは「同じであること」を求める検査ではない。**「見たこと」を求める検査。
@@ -1056,27 +1056,29 @@ def check_template_sync(template: Path, waivers_path: Path):
               f"  **確かめられないので落とします。**0件ではありません", file=sys.stderr)
         return 2
 
-    was = rec.get("指紋")
+    # 旧い名前（`指紋`）で記録した案件も読めるようにしておく（2026-09-10 の言い換え）。
+    # **書くのは新しい名前だけ**。読むほうだけ両方見る（機体ごとに版が揃わない期間があるため）。
+    was = rec.get("ハッシュ") or rec.get("指紋")
     if not was:
         print(f"**元ファイルの版を、この案件が記録していません。**\n"
               f"  `{waivers_path}` に次を足してください:\n"
-              f'    "{TEMPLATE_KEY}": {{"指紋": "{now}", '
+              f'    "{TEMPLATE_KEY}": {{"ハッシュ": "{now}", '
               f'"確かめた版": "<design/harness の sha>", "確かめた日": "<YYYY-MM-DD>"}}\n'
               f"  **足す前に元ファイルを一度読んでください。**"
               f"記録は「同じにした」ではなく「見た」の意味です", file=sys.stderr)
         return 1
     if was == now:
-        print(f"元ファイルの版: 見たときから変わっていません（指紋 {now}）")
+        print(f"元ファイルの版: 見たときから変わっていません（ハッシュ {now}）")
         return 0
 
     seen = rec.get("確かめた版") or "<記録なし>"
     print(f"**元ファイルが変わっています。この案件はまだ見ていません。**\n"
-          f"  この案件が見た指紋: {was}（{rec.get('確かめた日', '日付なし')}・"
+          f"  この案件が見たハッシュ: {was}（{rec.get('確かめた日', '日付なし')}・"
           f"harness {seen}）\n"
-          f"  いまの指紋:        {now}\n"
+          f"  いまのハッシュ:        {now}\n"
           f"  差分を読んでください:\n"
           f"    git -C design/harness log -p {seen}..HEAD -- ci/verify.sh.template\n"
-          f"  **この案件に要るものを入れてから**、`{TEMPLATE_KEY}` の指紋を"
+          f"  **この案件に要るものを入れてから**、`{TEMPLATE_KEY}` のハッシュを"
           f"`{now}` に書き換えてください。\n"
           f"  **要らないなら要らないと分かった上で書き換えてください。**"
           f"書き換えが「見た」の記録です", file=sys.stderr)

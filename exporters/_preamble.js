@@ -76,7 +76,7 @@ function revZ(n) {
   return typeof v === 'boolean' ? v : null;
 }
 
-/** 指紋。**気づくためだけの値**なので暗号強度は要らない（FNV-1a 32bit）。 */
+/** ハッシュ。**気づくためだけの値**なので暗号強度は要らない（FNV-1a 32bit）。 */
 function h(s) {
   let x = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {

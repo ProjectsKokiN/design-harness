@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""指紋が JS と Python で同じ値になるかを見る（aub 提案7・2026-08-29）。
+"""ハッシュが JS と Python で同じ値になるかを見る（aub 提案7・2026-08-29）。
 
 ## 実害
 
-> 指紋関数が JS と Python で不一致。**非 ASCII を含む行で、行数も文字数も
+> ハッシュ関数が JS と Python で不一致。**非 ASCII を含む行で、行数も文字数も
 > 一致したまま値だけずれる**（aub-familywalk 2026-08-29）
 
 **いちばん気づきにくい種類の食い違い**。行数も文字数も合うので、目でも
 `wc` でも分からない。書き出し器（Figma プラグイン = JS）と検査（Python）で
-指紋が割れると、**鮮度の検査が毎回「変わった」と言い続けるか、逆に
+ハッシュが割れると、**鮮度の検査が毎回「変わった」と言い続けるか、逆に
 変わったのに黙る**。
 
 ## 直し方（この道具の前提）
 
-**各案件が自前の指紋関数を書かない。** `fingerprint/text_digest.{py,mjs}` を使う。
+**各案件が自前のハッシュ関数を書かない。** `fingerprint/text_digest.{py,mjs}` を使う。
 両方に同じ3つの決まりが書いてある:
 
 1. 改行を LF に統一する
@@ -25,9 +25,9 @@
 
 ## この検査が捕まえないもの
 
-- 案件が独自の指紋関数を書いてしまった場合。それは「使っているか」の話で、
+- 案件が独自のハッシュ関数を書いてしまった場合。それは「使っているか」の話で、
   `gen_input_check` / コードレビューの領域
-- 指紋に**何を入れるか**の設計（`figma_freshness.py` の DIGEST_FIELDS）
+- ハッシュに**何を入れるか**の設計（`figma_freshness.py` の DIGEST_FIELDS）
 - 確かめた方法: --self-test（NFC を省いた実装が固定具で割れることを示す）
 
 ## 使い方
@@ -60,7 +60,7 @@ def run(cmd, path):
     #
     # 2026-08-30、Windows で `text_digest.mjs` の本体が一度も動かないのに
     # **終了コードは 0** で、標準出力だけが空でした。ここがそれを値として
-    # 受け取ったせいで、「指紋が JS と Python で割れています / JS: （空）」と
+    # 受け取ったせいで、「ハッシュが JS と Python で割れています / JS: （空）」と
     # 出ていました。**割れていたのではなく、片側が何も見ていなかった**のです。
     if not out:
         return None, (f"EMPTY:{cmd[0]} が**何も出力しませんでした**（終了コードは 0）。\n"
@@ -72,7 +72,7 @@ def run(cmd, path):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="指紋が JS と Python で一致するか")
+    ap = argparse.ArgumentParser(description="ハッシュが JS と Python で一致するか")
     ap.add_argument("--fixture", type=Path, default=FP / "fixture.txt")
     ap.add_argument("--expected", type=Path, default=FP / "expected.txt")
     ap.add_argument("--self-test", action="store_true")
@@ -107,7 +107,7 @@ def main(argv=None):
         return 2
 
     if py != js:
-        print(f"指紋が JS と Python で割れています。\n"
+        print(f"ハッシュが JS と Python で割れています。\n"
               f"  Python: {py}\n  JS    : {js}\n"
               f"  改行の統一 / NFC 正規化 / UTF-8 バイト列 のどれかが"
               f"片側で抜けています。", file=sys.stderr)
@@ -116,14 +116,14 @@ def main(argv=None):
     if args.expected.exists():
         want = args.expected.read_text(encoding="utf-8").strip()
         if py != want:
-            print(f"指紋の式が変わりました（両側そろって動いています）。\n"
+            print(f"ハッシュの式が変わりました（両側そろって動いています）。\n"
                   f"  記録: {want}\n  いま: {py}\n"
                   f"  意図した変更なら {args.expected} を更新してください"
-                  f"（差分が git に残ります）。**下流の指紋が全部ずれます。**",
+                  f"（差分が git に残ります）。**下流のハッシュが全部ずれます。**",
                   file=sys.stderr)
             return 1
 
-    print(f"OK: 指紋は JS と Python で一致し、記録とも同じです（{py[:16]}…）。")
+    print(f"OK: ハッシュは JS と Python で一致し、記録とも同じです（{py[:16]}…）。")
     return 0
 
 
@@ -244,7 +244,7 @@ def self_test():
             exp = d / "expected.txt"
             exp.write_text("0" * 64 + "\n", encoding="utf-8")
             check(run_main(text, SAME_PY, SAME_JS, ["--expected", str(exp)]) == 1,
-                  "記録と違う指紋なのに通した")
+                  "記録と違うハッシュなのに通した")
             import hashlib as _hl
             exp.write_text(_hl.sha256(unicodedata.normalize(
                 "NFC", "が\nは\n").encode("utf-8")).hexdigest() + "\n", encoding="utf-8")

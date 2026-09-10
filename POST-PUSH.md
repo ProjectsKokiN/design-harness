@@ -23,7 +23,7 @@ design-harness を push したあと、各案件で1回ずつ実行します。
 | 期待値の出どころ | `expectation_source_check.py` | `design/expectations.json` |
 | 書き出しの器 | `exporter_check.py` | `design/exporters.json` |
 | 条件9 の網羅 | `tree_test_check.py` | `design/tree-tests.json` |
-| 指紋の一致 | `fingerprint_parity.py` | （設定なし） |
+| ハッシュの一致 | `fingerprint_parity.py` | （設定なし） |
 | 段の健全性 | `stage_check.py` | `--verify design/verify.sh` |
 
 **設定ファイルは全部コミット済み**です。道具が届けば、そのまま通ります。

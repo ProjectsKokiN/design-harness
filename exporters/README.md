@@ -54,7 +54,7 @@ return JSON.stringify({ $meta: { declared: c.declared, pages: c.pages }, result 
 |---|---|
 | 単体 component を落としていないか | `tools/impl_coverage_check.py`（`$meta.declared.singleComponents` の宣言を要求） |
 | 参照してよいページか | `tools/page_scope_check.py` |
-| 器が保存され指紋が一致するか | `tools/exporter_check.py` |
+| 器が保存されハッシュが一致するか | `tools/exporter_check.py` |
 | **画面が全部書き出されているか**（記録層を消せる前提） | `tools/screen_export_check.py` |
 
 ## 実害の記録

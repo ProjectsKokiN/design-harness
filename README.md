@@ -52,12 +52,12 @@
 | `templates/machine-scope.json` | 担当の宣言のひな形（案件の `design/` へコピーする） |
 | **`tools/gap_report.py`** | **検査が見なかったものを機械が出す**（完了レポートの「限界」を自己申告にしない） |
 | **`tools/expectation_source_check.py`** | 照合テストの期待値が書き出し由来か（手書きの期待値を禁じる） |
-| **`tools/digest_check.py`** | **書き出しの中身の指紋**（`$meta.payloadDigest`）を、一覧を持たず `design/figma/*.json` 全部で照合する。指紋の無い書き出しを名指しする |
-| **`tools/exporter_check.py`** | 書き出しを作った器が保存され、指紋が一致するか |
+| **`tools/digest_check.py`** | **書き出しの中身のハッシュ**（`$meta.payloadDigest`）を、一覧を持たず `design/figma/*.json` 全部で照合する。ハッシュの無い書き出しを名指しする |
+| **`tools/exporter_check.py`** | 書き出しを作った器が保存され、ハッシュが一致するか |
 | **`tools/tree_test_check.py`** | 条件9 の網羅（状態・スロットを持つセットにテストがあるか） |
 | **`tools/stage_check.py`** | **verify.sh の各段が「落ちるところを見た」道具か**（self-test の有無と結果） |
-| **`tools/fingerprint_parity.py`** | 指紋が JS と Python で同じ値になるか（非 ASCII の固定具で照合） |
-| **`fingerprint/text_digest.{py,mjs}`** | テキスト指紋の正本（両言語）。**案件が自前で書かない** |
+| **`tools/fingerprint_parity.py`** | ハッシュが JS と Python で同じ値になるか（非 ASCII の固定具で照合） |
+| **`fingerprint/text_digest.{py,mjs}`** | テキストハッシュの正本（両言語）。**案件が自前で書かない** |
 | `tools/staleness_check.py` | 下流が上流より古くないか（鮮度差） |
 | `tools/impl_coverage_check.py` | **実装網羅（条件7）**: Figma にあるものが全部実装されているか。トークンは完全一致で照合 |
 | `tools/check_render_gaps.py` | **再現性の判定（条件5）**: 値が合っても描画で別物になる指定と、判定の網羅 |
@@ -65,7 +65,7 @@
 | **`tools/pin_check.py`** | **submodule のピンが上流の既定ブランチから遅れていないか**。枝の途中を指していたら落とす。遅れの中に**この案件が使っている道具の変更**が含まれれば名指しする |
 | `tools/ci_path_check.py` | 案内しているパスが実在するか / rules.json の extends が CI から解決できるか（`--rules`） |
 | **`tools/readme_check.py`** | **この表がディスクと合っているか**（手で保守する一覧は古くなる） |
-| `tools/figma_freshness.py` | 書き出しが Figma より古くないか（指紋） |
+| `tools/figma_freshness.py` | 書き出しが Figma より古くないか（ハッシュ） |
 | `tools/gen_input_check.py` | 生成器・照合の入力が書き出しだけか（記録層の廃止・2026-08-29） |
 | `tools/coverage_check.py` | 照合体制（**参考**。条件2 は 2026-09-03 に廃止）: 照合相手が書き出しだけか |
 | `ci/verify.sh.template` | 統合検査の入口の雛形（必須段を減らさない） |
@@ -74,7 +74,7 @@
 | `tools/token_query.py` | 値からトークン名の逆引き |
 | `vocab/_vocab.json` | status / blockedBy / origin の語彙の正本 |
 | `attack/engine_attack_test.py` | エンジンの妨害テスト（全機能に「落ちるケース」を持つ） |
-| `tools/figma_freshness.py --vocab-check` | **読むべきプロパティの一覧（分母）に穴が無いか**（#86。指紋の項目と突き合わせ、棚卸しの期限も見る。分母に穴があると「読めていない0件」が嘘になる） |
+| `tools/figma_freshness.py --vocab-check` | **読むべきプロパティの一覧（分母）に穴が無いか**（#86。ハッシュの項目と突き合わせ、棚卸しの期限も見る。分母に穴があると「読めていない0件」が嘘になる） |
 | `tools/machine_scope.py --check-paths` | **担当の宣言が実体を指しているか**（#80。改名でずれると静かに担当なしになる。これから作るものは `$これから作る` に理由つきで） |
 | **`tools/hook_check.py`** | **押す前の関門が、この機体で実際に効いているか**（`core.hooksPath` はクローンごとのローカル設定で、リポジトリを配っても付いてこない。2026-09-07、未設定のクローンから `verify.sh` が赤いまま push が通った） |
 | **`tools/artifact_provenance.py`** | **配った物から、どのコードで作ったかが分かるか**（名前の形は決めず、**この repo に実在するコミットが取り出せるか**だけを見る。iOS の `.ipa` には何も残っていなかった。**その名前は製品名なので案件ごとに違う**——決め打ちしない。配布物が0件なら `2`） |
@@ -317,7 +317,7 @@ CI は最後の砦ですが、**気づくのが push のあと**になります�
 
 | 書き方 | 何が起きるか |
 |---|---|
-| `write_text(..., encoding="utf-8")` で**改行を含む文字列**を書く | **Windows は `\n` を `\r\n` に変えます。** 改行そのものを試すコードでは、これが試験を壊します（2026-09-10 実測: CRLF 化のつもりで `replace(b"\n", b"\r\n")` を当てると `\r\r\n` ができ、指紋が一致しませんでした）。**`newline="\n"` を付けるか `write_bytes` を使ってください** |
+| `write_text(..., encoding="utf-8")` で**改行を含む文字列**を書く | **Windows は `\n` を `\r\n` に変えます。** 改行そのものを試すコードでは、これが試験を壊します（2026-09-10 実測: CRLF 化のつもりで `replace(b"\n", b"\r\n")` を当てると `\r\r\n` ができ、ハッシュが一致しませんでした）。**`newline="\n"` を付けるか `write_bytes` を使ってください** |
 
 **機械で見ていない理由**: 全部の `write_text` を咎めると**共有層で 185 件**出ました。
 改行に敏感なファイルだけに絞っても **157 件**で、**実害は1件**でした。

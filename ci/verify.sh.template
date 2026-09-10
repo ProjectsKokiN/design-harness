@@ -266,11 +266,11 @@ step "器の書き方（figma.mixed で止まらないか）" \
 # 部分一致（.test / includes）は一括置換に引っかからず旧名のまま残る。page-scope.json の allowed が正
 step "器のページ名（改名で黙って壊れないか）" \
   "$PY" "$HARNESS/tools/exporter_check.py" --pages --config design/exporters.json
-# 書き出しの**中身**の指紋（写した後に手直ししていないか）。一覧を持たず全部歩く
-# （#66: 手書きの一覧に画面まわりの5件を足し忘れ、古い指紋が丸1日通った）
-step "書き出しの指紋（写した後に手直ししていないか）" \
+# 書き出しの**中身**のハッシュ（写した後に手直ししていないか）。一覧を持たず全部歩く
+# （#66: 手書きの一覧に画面まわりの5件を足し忘れ、古いハッシュが丸1日通った）
+step "書き出しのハッシュ（写した後に手直ししていないか）" \
   "$PY" "$HARNESS/tools/digest_check.py" --dir design/figma
-step "書き出しの器（保存されていて指紋が一致するか）" \
+step "書き出しの器（保存されていてハッシュが一致するか）" \
   "$PY" "$HARNESS/tools/exporter_check.py" --config design/exporters.json
 # **押した状態が試験で一度も描かれない**（tap は down と up の間に
 # フレームを挟まない）＋ **Figma に無い組み合わせへ実装が動きうる**。
@@ -290,7 +290,7 @@ step "押した状態と変異の穴" \
   "$PY" "$HARNESS/tools/interaction_check.py" --config design/interaction.json
 step "条件9 の網羅（状態・スロットを持つセットにテストがあるか）" \
   "$PY" "$HARNESS/tools/tree_test_check.py" --config design/tree-tests.json
-step "指紋の一致（JS と Python で同じ値になるか）" \
+step "ハッシュの一致（JS と Python で同じ値になるか）" \
   "$PY" "$HARNESS/tools/fingerprint_parity.py"
 # **検査が回っているのに何も見ていない書き方**を見る（aub 2026-09-02〜03 で
 # 2日に5件。全部緑で、うち3件は実機とユーザーが見つけた）。

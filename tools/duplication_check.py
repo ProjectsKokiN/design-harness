@@ -59,7 +59,7 @@ DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def scan(roots, scope, suffixes, exclude):
-    """name → [(案件, 大きさ, 指紋)] を返す。"""
+    """name → [(案件, 大きさ, ハッシュ)] を返す。"""
     seen = {}
     for root in roots:
         root = Path(root).expanduser()

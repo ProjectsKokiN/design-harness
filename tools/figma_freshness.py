@@ -13,16 +13,16 @@ figma-fullexport.md が「Figma を触る作業の前に必ず回す」と書い
 
     source ~/.claude/.env            # FIGMA_TOKEN を読む
     python3 design/figma_freshness.py           # 変わったセットを名指しする
-    python3 design/figma_freshness.py --update  # 書き出しを取り直した後に指紋を更新
+    python3 design/figma_freshness.py --update  # 書き出しを取り直した後にハッシュを更新
 
 ## 仕組み
 
 書き出し（`../design-systems/414/figma/components.json`）は Plugin API で
 作りますが、**この検査は REST API だけで完結させます**。プラグインと REST の
 値の差でぬか喜び・空振りを起こさないため、比べるのは
-「REST で読んだ指紋」対「REST で読んで保存した指紋」です。
+「REST で読んだハッシュ」対「REST で読んで保存したハッシュ」です。
 
-指紋に入れる項目（[DIGEST_FIELDS]）は**色と余白と並び**に絞ります。
+ハッシュに入れる項目（[DIGEST_FIELDS]）は**色と余白と並び**に絞ります。
 座標のような、Figma で並べ替えるだけで動く値は入れません。
 
 ## 3つの面を見ます
@@ -42,7 +42,7 @@ aub-familywalk の実測（2026-09-02〜03）で、ユーザーが直した4件�
 低いと想定していました。**実際は逆で、部品は安定し、画面はフィードバックのたびに
 動きます。**
 
-画面は**1枚ごとに指紋**を持ちます。「どこかが変わった」では取り直す気になりませんが、
+画面は**1枚ごとにハッシュ**を持ちます。「どこかが変わった」では取り直す気になりませんが、
 「ALBUM_ScrapBoard が変わった」なら、その画面の実装を見直す動機になります。
 """
 
@@ -90,7 +90,7 @@ DESCS_EXPORT = None
 FRAMES_EXPORT = None
 # ---------------------------------------------------------------------------
 
-#: 指紋に入れる項目。**並べ替えで動く値（座標）は入れない。**
+#: ハッシュに入れる項目。**並べ替えで動く値（座標）は入れない。**
 DIGEST_FIELDS = [
     'itemSpacing', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
     'layoutMode', 'primaryAxisAlignItems', 'counterAxisAlignItems',
@@ -113,18 +113,18 @@ def get(url: str) -> dict:
 
 
 def node_digest(n: dict, names: dict | None = None) -> str:
-    """1ノードぶんの指紋のもと。子は名前と型と指紋の並びだけ見る。
+    """1ノードぶんのハッシュのもと。子は名前と型とハッシュの並びだけ見る。
 
-    **id ではなく名前で指紋を作ります**（2026-08-22 の監査での是正）。
-    それまで色は変数の id、スタイルはスタイルの id で指紋にしていたため、
+    **id ではなく名前でハッシュを作ります**（2026-08-22 の監査での是正）。
+    それまで色は変数の id、スタイルはスタイルの id でハッシュにしていたため、
     **改名だけが起きたときに動きませんでした**（書き出しは名前を保存するので、
     書き出しの中身は間違いになるのに検査は黙って通る）。
     実際にレジストリの履歴に「エフェクトの改名を取り込む」があります。
 
     [names] は `id → 名前` の対応。スタイル名は REST の応答に入っています。
     変数名は `design/figma-raw/_varmap.json`（プラグインで取った対応表）から
-    引きます。**対応表に無い id は id のまま指紋に入れます**（新しい変数が
-    増えたときは指紋が動くので、それで気づけます）。
+    引きます。**対応表に無い id は id のままハッシュに入れます**（新しい変数が
+    増えたときはハッシュが動くので、それで気づけます）。
     """
     names = names or {}
     parts = [n.get('name', ''), n['type']]
@@ -170,7 +170,7 @@ def pages_of(doc) -> tuple[list, str]:
 
 
 def read_sets() -> dict:
-    """参照するページの component set を name → 指紋 で返す。"""
+    """参照するページの component set を name → ハッシュ で返す。"""
     doc = get(f'https://api.figma.com/v1/files/{FILE_KEY}?depth=1')['document']
     pages, how = pages_of(doc)
     print(f'ページの選び方: {how}')
@@ -183,7 +183,7 @@ def read_sets() -> dict:
         # 単体の COMPONENT も読む（planttalk 2026-08-28: COMPONENT_SET しか
         # 読まなかったため、Header / Footer など「全画面に出るのに単体」の部品が
         # 鮮度の対象外だった。414 に単体が0件だったため露出していなかった）。
-        # COMPONENT_SET の子（バリアント）は親の指紋に含まれるので数えない。
+        # COMPONENT_SET の子（バリアント）は親のハッシュに含まれるので数えない。
         if n['type'] == 'COMPONENT_SET' or (n['type'] == 'COMPONENT' and not in_set):
             name = n['name']
             if name in found:
@@ -215,7 +215,7 @@ def read_sets() -> dict:
 
 
 def read_frames() -> dict | None:
-    """参照するページの**画面**（トップレベルの FRAME）を 名前 → 指紋 で返す。
+    """参照するページの**画面**（トップレベルの FRAME）を 名前 → ハッシュ で返す。
 
     2026-09-04 新設（#25）。**それまで鮮度は部品とスタイルしか見ていなかった。**
 
@@ -229,7 +229,7 @@ def read_frames() -> dict | None:
     変更の頻度が低いと想定していたが、**実際は逆で、部品は安定し、
     画面はフィードバックのたびに動く。**
 
-    画面ごとの指紋にする。「どこかが変わった」では取り直す気にならないが、
+    画面ごとのハッシュにする。「どこかが変わった」では取り直す気にならないが、
     「ALBUM_ScrapBoard が変わった」なら、その画面の実装を見直す動機になる。
 
     FRAMES_EXPORT が無ければ None（見ない）。
@@ -260,11 +260,11 @@ def read_frames() -> dict | None:
 
 
 def compare_frames(now: dict) -> tuple[list, dict]:
-    """保存してある画面ごとの指紋と比べ、動いた画面を名指しする。"""
+    """保存してある画面ごとのハッシュと比べ、動いた画面を名指しする。"""
     doc = json.loads(Path(FRAMES_EXPORT).read_text(encoding='utf-8'))
     saved = (doc.get('$meta', {}).get('restDigests') or {})
     if not saved:
-        return ['画面の指紋がまだ記録されていません（--update で記録します）'], doc
+        return ['画面のハッシュがまだ記録されていません（--update で記録します）'], doc
     msgs = []
     for name in sorted(set(now) - set(saved)):
         msgs.append(f'Figma にしか無い画面: {name}')
@@ -330,17 +330,17 @@ def compare_styles(now: dict) -> list[str]:
 
 
 def body_hash(doc: dict) -> str:
-    """書き出し本体（componentSets）の指紋。
+    """書き出し本体（componentSets）のハッシュ。
 
     **なぜ要るか**（2026-08-21 の監査）: `--update` は `restDigests` を今の
     Figma で上書きするだけで、書き出し本体を読みも比べもしていませんでした。
     そのため **Plugin API の取り直しを忘れて `--update` を先に打つ**と、以後の
     検査は永久に緑になり、表示は「Figma は書き出しと同じです」と断言します。
-    本体の指紋を並べて持ち、「Figma は動いたのに本体は動いていない」を拒みます。
+    本体のハッシュを並べて持ち、「Figma は動いたのに本体は動いていない」を拒みます。
     """
     # **単体 component も入れる**（2026-09-02 に aub から回収）。componentSets
     # だけを掛けていたので、Header / Footer / BottomNavigation / EmptyStates を
-    # 取り直しても本体の指紋が動かなかった——つまり「取り直し忘れの拒否」が
+    # 取り直しても本体のハッシュが動かなかった——つまり「取り直し忘れの拒否」が
     # その4件については働いていなかった
     body = json.dumps({'componentSets': doc['componentSets'],
                        'singleComponents': doc.get('singleComponents') or {}},
@@ -517,7 +517,7 @@ def self_test() -> int:
                 (g2['EXPORT'], g2['get'], g2['PAGE_SCOPE'], g2['SKIP_PAGES'],
                  sys.argv) = keep2
 
-        # いまの Figma で指紋を作り、それを書き出しに入れれば「同じ」になる
+        # いまの Figma でハッシュを作り、それを書き出しに入れれば「同じ」になる
         g3 = globals()
         keep3 = (g3['get'], g3['SKIP_PAGES'], g3['PAGE_SCOPE'])
         g3['get'], g3['SKIP_PAGES'], g3['PAGE_SCOPE'] = fake_get, [], None
@@ -542,7 +542,7 @@ def self_test() -> int:
                       body_hash({'componentSets': {}, 'singleComponents': {'H': 1}})
                       != body_hash({'componentSets': {}, 'singleComponents': {'H': 2}})))
 
-        # **単体 COMPONENT も指紋の対象**（planttalk が 2026-08-28 に直した退行）
+        # **単体 COMPONENT もハッシュの対象**（planttalk が 2026-08-28 に直した退行）
         cases.append(('main: 単体 COMPONENT も見ている', 'Header' in now))
 
         # 値が変わったら 1
@@ -561,7 +561,7 @@ def self_test() -> int:
                       run_main(stale, argv=('x', '--update', '--force')) != 2))
 
         # ─── --vocab-check（#86・2026-09-06）────────────────────────
-        # **分母に穴があると「読めていない0件」が嘘になる。** 指紋の項目と突き合わせる
+        # **分母に穴があると「読めていない0件」が嘘になる。** ハッシュの項目と突き合わせる
         import io as _io3, contextlib as _cx3, json as _js3
         keep_vocab = globals()['VOCAB']
         try:
@@ -581,7 +581,7 @@ def self_test() -> int:
             short = _js3.loads(_js3.dumps(full))
             short['layout'].pop(DIGEST_FIELDS[0])
             rc, out = run_vc(short)
-            cases.append(('--vocab-check: **指紋にあって一覧に無いものを落とす**',
+            cases.append(('--vocab-check: **ハッシュにあって一覧に無いものを落とす**',
                           rc == 1 and DIGEST_FIELDS[0] in out))
             # api 欄で束ねている書き方も読む（padding → paddingLeft …）
             bundled = {'$meta': {'reviewBy': '2099-01-01'},
@@ -680,7 +680,7 @@ def self_test() -> int:
                 (g5['get'], g5['FRAMES_EXPORT'], g5['SKIP_PAGES'],
                  g5['PAGE_SCOPE'], g5['EXPORT'], sys.argv) = keep5
 
-        # いまの画面で指紋を作る
+        # いまの画面でハッシュを作る
         keep6 = (g5['get'], g5['FRAMES_EXPORT'], g5['SKIP_PAGES'], g5['PAGE_SCOPE'])
         fp.write_text('{}', encoding='utf-8')
         g5['get'], g5['FRAMES_EXPORT'] = (lambda u: fake_all(u)), str(fp)
@@ -697,10 +697,10 @@ def self_test() -> int:
         rc, out = run_frames(ok_doc)
         cases.append(('画面: 一致していれば 0', rc == 0 and '2 枚が一致' in out))
 
-        # 1. 指紋を1文字変える → 落ちる
+        # 1. ハッシュを1文字変える → 落ちる
         bad = {'$meta': {'restDigests': {**fnow, 'CAMERA': 'x' + fnow['CAMERA'][1:]}}}
         rc, out = run_frames(bad)
-        cases.append(('画面: 指紋を変えたら落ちる',
+        cases.append(('画面: ハッシュを変えたら落ちる',
                       rc == 1 and 'CAMERA' in out and '画面が変わっています' in out))
 
         # 2. Figma 側で画面の余白を変える → 落ちる（**ここが本番**）
@@ -894,13 +894,13 @@ def vocab_check() -> int:
     """**2つの一覧を突き合わせる**（2026-09-06 新設・#86）。
 
     Figma のプロパティの一覧が2か所にあります——`vocab/figma-properties.json`
-    （読むべきプロパティ）と、この道具の `DIGEST_FIELDS`（画面の指紋に入れる項目）。
+    （読むべきプロパティ）と、この道具の `DIGEST_FIELDS`（画面のハッシュに入れる項目）。
     **どちらも手書きで、突き合わせがありませんでした。**
 
     `gen_notcaptured.py` は「器が読んでいるキー」を器のソースから導きますが、
     その**分母（vocab の一覧）は 2026-08-20 の棚卸しで固定された手書き**です。
     一覧に穴があると「読めていない0件」が嘘になります（2026-09-04 に
-    `itemReverseZIndex` で実際に起きた）。**指紋の項目が足りなくても指紋は計算できる**ので、
+    `itemReverseZIndex` で実際に起きた）。**ハッシュの項目が足りなくてもハッシュは計算できる**ので、
     鮮度検査は緑のまま穴が開きます。
     """
     if not VOCAB.exists():
@@ -926,18 +926,18 @@ def vocab_check() -> int:
                         f'一覧に穴が無いか見直してください')
     only_digest = [x for x in DIGEST_FIELDS if x not in names]
     if only_digest:
-        problems.append('**指紋に入れているのに、読むべき一覧に無い**プロパティ: '
+        problems.append('**ハッシュに入れているのに、読むべき一覧に無い**プロパティ: '
                         + ' / '.join(only_digest)
                         + '\n    一覧が分母なので、ここに無いものは'
                           '「読めていない」の数にも入りません')
-    print(f'プロパティの一覧: {len(names)} 個 / 指紋の項目 {len(DIGEST_FIELDS)} 個'
+    print(f'プロパティの一覧: {len(names)} 個 / ハッシュの項目 {len(DIGEST_FIELDS)} 個'
           f'（棚卸しの期限 {by or "なし"}）')
     if problems:
         print('読むべきプロパティの一覧に穴があります:', file=sys.stderr)
         for m in problems:
             print(f'  - {m}', file=sys.stderr)
         return 1
-    print('  OK: 指紋の項目はすべて一覧にあります。')
+    print('  OK: ハッシュの項目はすべて一覧にあります。')
     return 0
 
 
@@ -955,7 +955,7 @@ def main() -> int:
     saved = (doc['$meta'].get('restDigests') or {})
     now = read_sets()
 
-    # **名前の照合を先にする。** 指紋だけ見ていると「書き出しに無いセット」を
+    # **名前の照合を先にする。** ハッシュだけ見ていると「書き出しに無いセット」を
     # 見落とす（2026-08-21 実測: 初回の実行で Slider が書き出しに無く、
     # ProgressCircular / ProgressLinear / Progress/Circular/BuildingBlocks は
     # Figma 側の名前が Charts/Pie / Progress / Charts/Pie/BuildingBlocks に
@@ -1021,17 +1021,17 @@ def main() -> int:
             print(f'画面の鮮度: {len(fr)} 枚が一致')
 
     if update:
-        # 画面の指紋も同じときに記録する（**別々に更新すると片方だけ古くなる**）
+        # 画面のハッシュも同じときに記録する（**別々に更新すると片方だけ古くなる**）
         if fr is not None:
             fdoc.setdefault('$meta', {})['restDigests'] = dict(sorted(fr.items()))
             fdoc['$meta']['restDigests とは'] = (
-                'REST API で読んだ**画面ごと**の指紋（tools/figma_freshness.py が'
+                'REST API で読んだ**画面ごと**のハッシュ（tools/figma_freshness.py が'
                 '計算・更新する）。画面が動いたことに気づくためだけの値で、'
                 '内容の正は Plugin API の書き出し本体')
             Path(FRAMES_EXPORT).write_text(
                 json.dumps(fdoc, ensure_ascii=False, indent=1) + '\n',
                 encoding='utf-8')
-            print(f'画面の指紋を更新しました（{len(fr)} 枚）')
+            print(f'画面のハッシュを更新しました（{len(fr)} 枚）')
 
         # **取り直し忘れを拒む。** Figma が動いているのに書き出し本体が
         # 前回の --update から1バイトも変わっていないなら、Plugin API の
@@ -1050,7 +1050,7 @@ def main() -> int:
                 'design/figma_pack_components.py --write で差し込んでください。\n'
                 '  次の場合だけ --force を付けます:\n'
                 '    - 本体を変えなくてよいと分かっている\n'
-                '    - **指紋の作り方（node_digest）を変えた**ので全件動いた\n'
+                '    - **ハッシュの作り方（node_digest）を変えた**ので全件動いた\n'
                 '      （2026-08-22 に id → 名前へ変えたときがこれ）',
                 file=sys.stderr)
             return 2
@@ -1062,17 +1062,17 @@ def main() -> int:
             '取り直しを忘れている（2026-08-21 の監査で追加）')
         doc['$meta']['restDigests'] = dict(sorted(now.items()))
         doc['$meta']['restDigests とは'] = (
-            'REST API で読んだセットごとの指紋（design/figma_freshness.py が'
+            'REST API で読んだセットごとのハッシュ（design/figma_freshness.py が'
             '計算・更新する）。**Figma が変わったことに気づくためだけの値**で、'
             '内容の正は Plugin API の書き出し本体。'
             '色・余白・並び・文字の寄せを見て、座標は見ない')
         EXPORT.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + '\n',
                           encoding='utf-8')
-        print(f'指紋を更新しました（{len(now)} セット）')
+        print(f'ハッシュを更新しました（{len(now)} セット）')
         return 0
 
     if not saved:
-        print('指紋がまだ記録されていません。'
+        print('ハッシュがまだ記録されていません。'
               '書き出しを取り直した直後に --update を実行してください')
         return 1
 

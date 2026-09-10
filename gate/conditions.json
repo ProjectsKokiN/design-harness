@@ -1,6 +1,6 @@
 {
   "$生成元": "gate/production-gate.md",
-  "$生成元の指紋": "f6aae5f9a5b2e111",
+  "$生成元のハッシュ": "f6aae5f9a5b2e111",
   "$手で書き換えない": "tools/gen_gate.py が生成します",
   "生きている条件": {
     "1": {

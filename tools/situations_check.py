@@ -18,7 +18,7 @@
 1. **守る状況を、人が選ばずに実装の機能から導く。** カメラを使うなら「許可を断られた」、
    通信するなら「圏外」、入力欄があるなら「キーボードで隠れる」。根拠（どのファイルの何）を書く
 2. **一度確かめたら、関わる実装が変わったときだけ「もう一度見て」と言う。** 確かめた記録に
-   関わるファイルの指紋を持ち、指紋が動いたときだけ落とす。**毎回のビルドでは何も求めない**
+   関わるファイルのハッシュを持ち、ハッシュが動いたときだけ落とす。**毎回のビルドでは何も求めない**
 
 ## 使い方（案件のルートで）
 
@@ -28,7 +28,7 @@
 
 ## 見るもの・見ないもの
 
-- 見る: 状況が**未確認**（記録が無い）／確認が**古い**（関わるファイルの指紋が動いた）
+- 見る: 状況が**未確認**（記録が無い）／確認が**古い**（関わるファイルのハッシュが動いた）
 - 見る: **導けなくなった状況**（`$消えた状況`）。理由が書かれていなければ落とす（#83）。
   導けなくなる筋は複数あり（機能を消した／印が変わった／ファイルが `--extra` の外へ動いた）、
   **道具には見分けられません**。「機能が消えた」と断定すると、実機確認の要求が
@@ -110,12 +110,12 @@ def derive(lib: Path, extra=()):
             found[name] = {"根拠": [str(p) for p in hits[:12]] + (["…"] if len(hits) > 12 else []),
                            "関わるファイル": len(hits),
                            "実機で見ること": how,
-                           "指紋": fingerprint(hits)}
+                           "ハッシュ": fingerprint(hits)}
     return found
 
 
 def fingerprint(paths):
-    """関わるファイルの中身の指紋。動けば「もう一度見て」の合図。"""
+    """関わるファイルの中身のハッシュ。動けば「もう一度見て」の合図。"""
     h = hashlib.sha256()
     for p in sorted(paths):
         h.update(str(p).encode("utf-8"))
@@ -169,7 +169,7 @@ def main(argv=None):
         return 2
     rec = prev.get("状況", {})
 
-    # 記録を組み直す。導いた状況は根拠と指紋を更新し、確認の記録は引き継ぐ
+    # 記録を組み直す。導いた状況は根拠とハッシュを更新し、確認の記録は引き継ぐ
     merged = {}
     for name, info in now.items():
         old = rec.get(name, {})
@@ -184,7 +184,7 @@ def main(argv=None):
         root = args.out.resolve().parent.parent
         merged[args.confirm]["確認"] = {"at": date.today().isoformat(), "by": args.by,
                                         "commit": head_sha(root),
-                                        "指紋": merged[args.confirm]["指紋"]}
+                                        "ハッシュ": merged[args.confirm]["ハッシュ"]}
         print(f"記録しました: {args.confirm}（{args.by}・{merged[args.confirm]['確認']['commit']}）")
 
     doc = {
@@ -240,7 +240,7 @@ def main(argv=None):
         if not c:
             errs.append(f"  {name}: **一度も実機で確かめていません。** "
                         f"見ること: {v['実機で見ること']}")
-        elif c.get("指紋") != v["指紋"]:
+        elif (c.get("ハッシュ") or c.get("指紋")) != v["ハッシュ"]:
             errs.append(f"  {name}: 確認（{c.get('at')}・{c.get('by')}）のあとに"
                         f"**関わる実装が変わりました**（{v['関わるファイル']} ファイル）。"
                         f"もう一度見て --confirm してください")

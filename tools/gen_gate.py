@@ -19,11 +19,11 @@ FlashEnglish の実害（2026-09-03）: 条件5（再現性の判定）と条件
 で、**どの案件のリポジトリからも、GitHub Actions からも見えない。** 手で写せば
 古くなる（このハーネスが繰り返し潰してきた病そのもの）。
 
-だから **生成して、指紋で鮮度を見る**。gen_rules.py と同じ処方。
+だから **生成して、ハッシュで鮮度を見る**。gen_rules.py と同じ処方。
 
 - 生成: 正本を読んで `gate/conditions.json` を書く（正本の sha256 を同梱）
 - `--check`: 生成し直して1バイトでも違えば落ちる
-- 正本が**読めない機体**（CI）では、`--check` は指紋の照合を飛ばし、
+- 正本が**読めない機体**（CI）では、`--check` はハッシュの照合を飛ばし、
   「生成物があること」だけを見る。**飛ばしたことは必ず出力に書く**
 
 ## 何を生成しないか
@@ -157,7 +157,7 @@ def build(source, tools_dir=None):
         # （CI・別のホーム名の Mac）で置換が起きず、絶対パスがそのまま入る。
         # `--check` は文字列で比べるので、**中身が同じでも必ず食い違う**。
         "$生成元": _repo_rel(source),
-        "$生成元の指紋": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+        "$生成元のハッシュ": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
         "$手で書き換えない": "tools/gen_gate.py が生成します",
         "生きている条件": conds,
     }, None
@@ -196,7 +196,7 @@ def main(argv=None):
             return 2
         n = len(got.get("生きている条件", {}))
         print(f"関門の条件 {n} 件（生成物）。正本がこの機体に無いので"
-              f"**鮮度は見ていません**（指紋: {got.get('$生成元の指紋')}）。")
+              f"**鮮度は見ていません**（ハッシュ: {got.get('$生成元のハッシュ') or got.get('$生成元の指紋')}）。")
         return 0
 
     data, err = build(args.source)
