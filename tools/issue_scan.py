@@ -28,8 +28,8 @@ def encoded_names(root: Path):
     **どれが正かを当てません。** 作り方は機体と時期で違い、
     **macOS の実物には2通りが同時に在りました**:
 
-        -Users-nishikawakoki-.claude    ← 区切りだけを `-` にした形
-        -Users-nishikawakoki--claude    ← **英数字以外を全部** `-` にした形
+        -Users-<ユーザー名>-.claude    ← 区切りだけを `-` にした形
+        -Users-<ユーザー名>--claude    ← **英数字以外を全部** `-` にした形
 
     `/` だけを置き換える実装では**後者を取りこぼしていました**
     （実測: `~/.claude` で置き場が1件しか拾えず、実物は2件以上）。
@@ -68,7 +68,7 @@ def sessions_by_cwd(root: Path, limit_days=30):
     """**案件の外で開いたセッション**を、記録の中身から見つける（2026-09-04・#31）。
 
     実害（2026-09-03）: qnd-database の作業を `~/.claude` で開いたセッションから
-    行ったため、記録は `projects/-Users-nishikawakoki--claude/` に入った。
+    行ったため、記録は `projects/-Users-<ユーザー名>--claude/` に入った。
     `--status` は「この案件の会話記録が見つかりません」で止まり、
     **「どこまで見たかを機械が持つ」という肝が働かなかった。** 結果、課題を
     人が思い出して立てることになった。
