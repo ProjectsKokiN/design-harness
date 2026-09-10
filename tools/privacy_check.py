@@ -64,6 +64,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -140,8 +141,13 @@ def visibility(root: Path) -> str | None:
     **`None` を「公開」に丸めません**——2026-09-10 に、確かめていない断定が
     嘘の緊急性を作りました（docstring の「公開かどうかは導きます」を参照）。
     """
+    # **`shutil.which` を通す**（Windows では `gh.cmd` / `gh.exe`。名前のままでは解決しない。
+    # 2026-09-10、`portable_check` に指摘された）
+    gh = shutil.which("gh")
+    if gh is None:
+        return None
     try:
-        r = subprocess.run(["gh", "repo", "view", "--json", "isPrivate", "-q", ".isPrivate"],
+        r = subprocess.run([gh, "repo", "view", "--json", "isPrivate", "-q", ".isPrivate"],
                            cwd=str(root), capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
         # **`gh` が入っていない機体・CI で落ちてはいけない**（この検査の本体は
