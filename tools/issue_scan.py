@@ -37,8 +37,8 @@ def encoded_names(root: Path):
     Windows では**さらに `:` と空白**が残り、実物と1文字も一致しませんでした
     （2026-09-10・Windows の実測）:
 
-        いまの形  C:-Users-Koki Nishikawa-.claude
-        実物      C--Users-Koki-Nishikawa--claude
+        いまの形  C:-Users-<姓 名>-.claude      ← `:` と空白と `.` が残る
+        実物      C--Users-<姓>-<名>--claude    ← 英数字以外が全部 `-`
 
     **取りこぼすと「会話記録が見つかりません」で黙って 0 件になります。**
     """
