@@ -212,6 +212,19 @@ def self_test_template_sync():
         check(rc == 1, f"版の記録が無いのに落ちない: {rc}")
         check(TEMPLATE_KEY in out, "何を足せばよいか出していない")
 
+        # **改行が違っても同じ指紋**（#96・2026-09-10・Windows の実測）。
+        # 生バイトを SHA-256 していたため、CRLF の機体では**原理的に通らなかった**
+        # （差はちょうど `\r` の数）。指紋を打ち直しても、打ち直した先が LF の値なら
+        # また落ちる。**直せない関門は `--no-verify` を選ばせるだけ。**
+        tpl.write_text('step "あ" "$PY" a.py\n', encoding="utf-8")
+        d_lf = template_digest(tpl)
+        tpl.write_bytes(tpl.read_bytes().replace(b"\n", b"\r\n"))
+        d_crlf = template_digest(tpl)
+        check(d_lf == d_crlf,
+              f"**改行が違うと指紋が変わる**（CRLF の機体で原理的に落ちる）: "
+              f"LF={d_lf} CRLF={d_crlf}")
+        tpl.write_text('step "あ" "$PY" a.py\n', encoding="utf-8")
+
         # 記録して一致 → 0
         dig = template_digest(tpl)
         wv.write_text(_json.dumps(
@@ -976,8 +989,24 @@ TEMPLATE_KEY = "$元ファイルの版"
 
 
 def template_digest(template: Path) -> str:
-    """元ファイルの指紋。**中身そのものから導く**（手で書かない）。"""
-    return hashlib.sha256(template.read_bytes()).hexdigest()[:16]
+    """元ファイルの指紋。**中身そのものから導く**（手で書かない）。
+
+    **改行を揃えてから取ります**（2026-09-10・Windows の実測）。
+    生バイトを SHA-256 していたため、**Windows では原理的に通りませんでした**:
+
+        作業ツリー（CRLF・22,611 バイト）  → 4d6430b5013e4fb0   ← 検査が「いま」と言う値
+        git の blob（LF・22,285 バイト）    → b543422a62a1bea9   ← 案件の記録と一致
+
+    **差はちょうど 326 バイト＝`\r` の数**でした。`core.autocrlf` が効いている機体では
+    作業ツリーが CRLF になるので、**指紋を打ち直しても、打ち直した先が LF の値なら
+    また落ちます。** 直せない関門は `--no-verify` を選ばせるだけです（#103・#80 と同じ形）。
+
+    **改行の違いは中身の違いではありません。** `\r\n` と `\r` を `\n` に畳んでから取ります。
+    LF の機体では**値が変わらない**ので、記録済みの指紋はそのまま使えます。
+    """
+    raw = template.read_bytes()
+    return hashlib.sha256(
+        raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")).hexdigest()[:16]
 
 
 def check_template_sync(template: Path, waivers_path: Path):

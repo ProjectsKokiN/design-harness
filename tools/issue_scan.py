@@ -8,7 +8,7 @@
 **--mark は「いま」ではなく「実際に読んだ最後の記録の時刻」を書く。**
 「いま」を書くと、走査してから記録するまでの間の発言が永久に落ちる。
 """
-import argparse, json, os, sys, tempfile
+import argparse, json, os, re, sys, tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -22,16 +22,46 @@ MAX_CHARS = 400_000          # これを超えたら**黙って切らずに報�
 KINDS = ("user", "assistant")
 
 
+def encoded_names(root: Path):
+    """その案件の置き場の名前の**候補**を全部返す（#96・2026-09-10）。
+
+    **どれが正かを当てません。** 作り方は機体と時期で違い、
+    **macOS の実物には2通りが同時に在りました**:
+
+        -Users-nishikawakoki-.claude    ← 区切りだけを `-` にした形
+        -Users-nishikawakoki--claude    ← **英数字以外を全部** `-` にした形
+
+    `/` だけを置き換える実装では**後者を取りこぼしていました**
+    （実測: `~/.claude` で置き場が1件しか拾えず、実物は2件以上）。
+
+    Windows では**さらに `:` と空白**が残り、実物と1文字も一致しませんでした
+    （2026-09-10・Windows の実測）:
+
+        いまの形  C:-Users-Koki Nishikawa-.claude
+        実物      C--Users-Koki-Nishikawa--claude
+
+    **取りこぼすと「会話記録が見つかりません」で黙って 0 件になります。**
+    """
+    s = str(Path(root).resolve())
+    return {
+        # いまの Claude Code。**英数字以外を全部** `-`（`:` も空白も `.` も）
+        re.sub(r"[^A-Za-z0-9]", "-", s),
+        # 古い形。区切りだけを `-`（`.` は残る）
+        s.replace(chr(92), "/").replace("/", "-"),
+    }
+
+
 def encoded_dirs(root: Path):
-    """その案件の会話記録がある置き場をすべて返す（サブディレクトリで作業した分も拾う）。"""
+    """その案件の会話記録がある置き場をすべて返す（サブディレクトリで作業した分も拾う）。
+
+    **候補を全部作って、実在するものを全部返します**（`encoded_names`）。
+    """
     if not PROJECTS.is_dir():
         return []
-    # **区切りは `/` とは限りません。** Windows は `\\` なので、`/` だけを置き換えると
-    # 名前がまるごと変わらず、置き場が1つも見つかりません（design-harness #96 と同じ形）。
-    # **Windows でのドライブ文字（`C:`）の扱いは未検証**です（この機体では出せません）。
-    want = str(root.resolve()).replace("\\", "/").replace("/", "-")
+    wants = encoded_names(root)
     return [d for d in PROJECTS.iterdir()
-            if d.is_dir() and (d.name == want or d.name.startswith(want + "-"))]
+            if d.is_dir() and any(d.name == w or d.name.startswith(w + "-")
+                                  for w in wants)]
 
 
 def sessions_by_cwd(root: Path, limit_days=30):
@@ -276,9 +306,9 @@ def self_test():
     tmp = Path(tempfile.mkdtemp())
     try:
         root = tmp / "proj"; (root / "design").mkdir(parents=True)
-        pdir = tmp / "projects" / str(root.resolve()).replace(chr(92), "/").replace("/", "-")
+        pdir = tmp / "projects" / sorted(encoded_names(root))[0]
         pdir.mkdir(parents=True)
-        sub = tmp / "projects" / (str(root.resolve()).replace(chr(92), "/").replace("/", "-") + "-sub")
+        sub = tmp / "projects" / (sorted(encoded_names(root))[0] + "-sub")
         sub.mkdir(parents=True)
 
         def rec(ts, who, txt):
@@ -365,6 +395,26 @@ def self_test():
         shutil.rmtree(tmp, ignore_errors=True)
 
     print("self-test:", "OK" if ok else "NG")
+    # ─── **置き場の名前の候補**（#96・2026-09-10）──────────────────────
+    # 作り方は機体と時期で違う。**1つの規則を決め打ちすると取りこぼす。**
+    # macOS の実物には2通りが同時に在り、`/` だけを置き換える実装では
+    # `~/.claude` の置き場が**1件しか拾えていなかった**（実物は3件）。
+    # Windows では `:` と空白が残り、実物と**1文字も一致しなかった**。
+    _mac = encoded_names(Path("/Users/who/.claude"))
+    if "-Users-who--claude" not in _mac:
+        print("self-test NG: **英数字以外を全部 `-` にした形が候補に無い**"
+              f"（`.claude` を取りこぼす）: {sorted(_mac)}"); ok = False
+    if "-Users-who-.claude" not in _mac:
+        print("self-test NG: **区切りだけを `-` にした古い形が候補に無い**"
+              f"（先に作られた置き場を取りこぼす）: {sorted(_mac)}"); ok = False
+    # Windows の実物（2026-09-10・Windows が実測して報告した値）
+    _win = {re.sub(r"[^A-Za-z0-9]", "-", r"C:\Users\Koki Nishikawa\.claude")}
+    if "C--Users-Koki-Nishikawa--claude" not in _win:
+        print(f"self-test NG: **Windows の実物と一致しない**: {sorted(_win)}"); ok = False
+    # **候補は1つではない**（決め打ちに戻っていないこと）
+    if len(_mac) < 2:
+        print(f"self-test NG: **候補が1つに戻っている**: {sorted(_mac)}"); ok = False
+
     return 0 if ok else 1
 
 
