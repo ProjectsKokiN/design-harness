@@ -5,7 +5,8 @@
   "正本": "~/.claude/skills/machine-relay/references/worker.md。案件で役割が違うなら、この宣言を先に直す",
   "検査": "design/harness/tools/machine_scope.py（--owns で段を結び、--check で担当外の変更を落とす）",
   "注意": "verify.sh に機体名を直接書かない。担当は案件ごとに変わりうる",
-  "CI について": "CI は何も触らないので担当パスは空にする。CI 側は HARNESS_MACHINE=CI を渡す。これで design/ の担当機でしか意味がない段（Figma の鮮度）が理由つきで飛び、--check は変更0件で通る。**machines に CI が無いと機体不明で exit 2 になり、CI が全部落ちる**（2026-09-02）。"
+  "CI について": "CI は何も触らないので担当パスは空にする。CI 側は HARNESS_MACHINE=CI を渡す。これで design/ の担当機でしか意味がない段（Figma の鮮度）が理由つきで飛び、--check は変更0件で通る。**machines に CI が無いと機体不明で exit 2 になり、CI が全部落ちる**（2026-09-02）。",
+  "生成物は宣言しない": "**`build/` のような生成物（.gitignore の対象）を担当に書かない**（#117・2026-09-11 PlantTalk）。追跡されていないので差分に一度も出ず `--check` の判定に当たらない＝**宣言しても効かない**。ところが `--check-paths` は実体の有無を見るので、**ビルドしていないクローンでだけ落ちる**。実際、Mac mini が取り直した直後に「担当の宣言が実体を指していません: Windows: build/」で報告の push ごと止まった。**機体によって結果が変わる宣言**になっていた。生成物の担当は `--owns` で段に結ぶのではなく、生成器のあるパスで宣言する"
  },
  "machines": {
   "MacBook Air": [
@@ -21,8 +22,7 @@
    "lib/providers/",
    "lib/router/",
    "lib/main.dart",
-   "scripts/",
-   "build/"
+   "scripts/"
   ],
   "CI": []
  },

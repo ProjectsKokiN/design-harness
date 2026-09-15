@@ -330,6 +330,9 @@ def main(argv=None):
                     help="--handoff で作業ツリーからも外す（**変更はパッチに残る**）")
     ap.add_argument("--check", action="store_true",
                     help="担当外のパスを変えていないか")
+    ap.add_argument("--strict-unclaimed", action="store_true",
+                    help="担当の宣言が無いパスを変えたら落とす（#122）。"
+                         "machine-scope.json の `担当なしを許すか: false` でも同じ")
     ap.add_argument("--check-paths", action="store_true",
                     help="担当の宣言が実体を指しているか（#80。改名でずれると静かに担当なしになる）")
     ap.add_argument("--root", type=Path, default=Path("."))
@@ -378,7 +381,8 @@ def main(argv=None):
         return 2
 
     if args.check:
-        return do_check(machine, conf, args.root, args.config)
+        return do_check(machine, conf, args.root, args.config,
+                        strict_unclaimed=args.strict_unclaimed)
 
     if args.check_paths:
         return do_check_paths(conf, args.root, args.config, machine)
@@ -558,6 +562,32 @@ def ghost_paths(conf, root):
     return out, no_reason, done
 
 
+def ignored_decls(conf, root):
+    """**追跡されていないパスの宣言**を `(機体, パス)` で返す（#117）。
+
+    実体はあるのに `git ls-files` に1件も出てこないもの。`.gitignore` の対象で、
+    **差分に出ないので `--check` の判定には一度も当たりません。**
+    """
+    try:
+        r = subprocess.run(["git", "-C", str(root), "ls-files"], capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", timeout=60)
+        tracked = set(r.stdout.split()) if r.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        tracked = None
+    if not tracked:
+        return []                      # 数えられないときは言わない（断定しない）
+    out = []
+    for m, paths in (conf.get("machines") or {}).items():
+        for x in paths or []:
+            here = Path(root) / x
+            if not here.exists():
+                continue               # 実体が無いものは幽霊の側で見る
+            hit = any(f == x or f.startswith(x.rstrip("/") + "/") for f in tracked)
+            if not hit:
+                out.append((m, x))
+    return out
+
+
 def do_check_paths(conf, root, conf_path='', machine=None):
     """**宣言したパスが実体を指しているか**だけを見る（2026-09-06 新設・#80）。
 
@@ -566,6 +596,7 @@ def do_check_paths(conf, root, conf_path='', machine=None):
     `stage_check --stages` から見え、案件が外したときに「黙って落ちた段」として捕まります。
     """
     ghosts, no_reason, done = ghost_paths(conf, root)
+    ignored = ignored_decls(conf, root)
     n = sum(len(v) for v in (conf.get("machines") or {}).values()) + len(conf.get("shared") or [])
     if not n:
         print(f"担当の宣言が1つもありません: {conf_path or '(設定)'}\n"
@@ -613,6 +644,23 @@ def do_check_paths(conf, root, conf_path='', machine=None):
               f"（`{_rel}` の担当）。この機体（`{machine}`）では落としません。\n"
               f"  **実体を push したあと、`{owner}` に宣言を消してもらってください。**"
               f"（`$これから作る` は必ず2台がかりになります・#80）")
+    if ignored:
+        # **追跡されていないパスの宣言は効きません**（#117・2026-09-11 PlantTalk）。
+        # `--check` は差分を見るので、`.gitignore` の対象は**一度も判定に当たりません**。
+        # ところが実体の有無を見るこの段は、**ビルドした機体でだけ通ります**。
+        # 実害: ひな形の Windows に `build/` が入っており、取り直した直後の
+        # Mac mini が「実体を指していません」で落ち、報告の push ごと止まった。
+        # **機体によって結果が変わる宣言**になっていた
+        print(f"**追跡されていないパスを担当に宣言しています**（{len(ignored)}件）。\n"
+              f"  `.gitignore` の対象は差分に出ないので `--check` の判定に"
+              f"**一度も当たりません**（宣言しても効かない）。\n"
+              f"  一方この段は実体の有無を見るので、**ビルドした機体でだけ通ります**"
+              f"（機体で結果が変わる）:", file=sys.stderr)
+        for m, x in ignored:
+            print(f"  - {m}: `{x}`（追跡 0 件）", file=sys.stderr)
+        print("  → 宣言から外してください。生成物の担当は、"
+              "**生成器のあるパス**で宣言します", file=sys.stderr)
+        return 1
     if not ghosts and not no_reason:
         print(f"担当の宣言: {n} 件、すべて実体を指しています"
               + (f"（これから作る {len(coming)} 件は理由つきで宣言済み）" if coming else ""))
@@ -634,7 +682,51 @@ def do_check_paths(conf, root, conf_path='', machine=None):
     return 1
 
 
-def do_check(machine, conf, root, conf_path=''):
+def deleted_files(root):
+    """**この変更で消えたパス**（#118・2026-09-12 PlantTalk）。
+
+    自分の担当のディレクトリを消すと、`--check` と `--check-paths` が
+    **同じコミットの中で両立しません**でした。
+
+    | | `--check` | `--check-paths` |
+    |---|---|---|
+    | 宣言を残す | 通る（削除は担当内） | **落ちる**（実体が無い＝幽霊） |
+    | 宣言を消す | **落ちる**（担当なし扱い） | 通る |
+
+    **削除は担当内の変更なのに、削除後は宣言が幽霊になる**ので出口がありません。
+    `$これから作る`（まだ無いものを通す口）の裏返しが無かった、というのが根です。
+
+    **消えたパスは「担当なし」に数えません。** もう存在しないので、
+    これから誰かが黙って触る心配がありません（担当なしを見る理由は
+    「他の機体が勝手に変えても誰の検査にも当たらない」ことでした・#122）。
+    **他の機体の担当のファイルを消した場合は、これまでどおり担当外で落ちます。**
+    """
+    gone = set()
+
+    def git(*args):
+        try:
+            r = subprocess.run(["git", "-C", str(root), *args], capture_output=True,
+                               text=True, encoding="utf-8", errors="replace", timeout=30)
+            return r.stdout if r.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    status = git("status", "--porcelain", "-uall")
+    for line in (status or "").splitlines():
+        code, name = line[:2], line[3:].strip().strip('"')
+        if "D" in code and name:
+            gone.add(name)
+    base = _base_ref(git)
+    if base:
+        diff = git("diff", "--name-only", "--diff-filter=D", f"{base}...HEAD")
+        for name in (diff or "").splitlines():
+            if name.strip():
+                gone.add(name.strip())
+    # **消したあとに作り直したものは「消えた」ではない**
+    return {g for g in gone if not (Path(root) / g).exists()}
+
+
+def do_check(machine, conf, root, conf_path='', strict_unclaimed=False):
     files = changed_files(root)
     if files is None:
         print(f"git の状態が読めません: {root}\n"
@@ -647,13 +739,19 @@ def do_check(machine, conf, root, conf_path=''):
         print(f"これから作るパスの宣言: {len(coming)} 件"
               + "".join(f"\n  {k}（{v}）" for k, v in sorted(coming.items())))
 
-    mine, others, unowned = [], [], []
+    gone = deleted_files(root)
+    mine, others, unowned, gone_unowned = [], [], [], []
     for f in sorted(files):
         # **判定は owner_of だけ。** 以前はここで `is_shared()` を別に呼んでおり、
         # `owner_of` が SHARED を返すもの（生成物）を「担当: （共有）」と表示しながら
         # **担当外に数える**という食い違いが出た（2026-09-06。#29 と同じ形の再発）。
         holder = owner_of(f, conf, root)
         if holder == SHARED:
+            continue
+        if holder is None and f in gone:
+            # 消えたパスは「担当なし」に数えない（#118）。宣言を同じ変更で
+            # 消しているので、残すと `--check-paths` が幽霊として落とす
+            gone_unowned.append(f)
             continue
         if holder is None:
             unowned.append(f)
@@ -663,7 +761,11 @@ def do_check(machine, conf, root, conf_path=''):
             others.append((f, holder))
 
     print(f"機体の担当: **{machine}** / 変更 {len(files)}件"
-          f"（担当内 {len(mine)} / 担当外 {len(others)} / 担当なし {len(unowned)}）")
+          f"（担当内 {len(mine)} / 担当外 {len(others)} / 担当なし {len(unowned)}"
+          + (f" / 消した {len(gone_unowned)}" if gone_unowned else "") + "）")
+    if gone_unowned:
+        print(f"  宣言ごと消したパス（{len(gone_unowned)}件・担当なしには数えません）: "
+              + " / ".join(gone_unowned[:4]) + (" …" if len(gone_unowned) > 4 else ""))
     if ghosts or no_reason:
         # ここでは落とさない（担当外の変更を見る段の判定を変えない）。
         # **落とすのは独立した段**（`--check-paths`）。段にすると stage_check から見え、
@@ -672,13 +774,28 @@ def do_check(machine, conf, root, conf_path=''):
               f"（`--check-paths` が落とします）: "
               + " / ".join(x for _, x in ghosts[:4]) + (" …" if len(ghosts) > 4 else ""))
 
+    # **担当なしは「担当外」と同じくらい困る**（#122・2026-09-12 PlantTalk で実測）。
+    # 宣言の無いパスは「担当外を変更していないか」の網から**外れる**ので、
+    # 他の機体が勝手に変えても誰の検査にも当たらない。`--check-paths`（宣言が
+    # あるのに実体が無い）とちょうど裏返しで、**片側しか落ちない非対称**だった。
+    #
+    # **既定では落とさない。** 実測（2026-09-15）: FlashEnglish は追跡 3,224 件のうち
+    # **2,740 件が担当なし**。既定で落とすと移行中のリポジトリが直せない関門になる。
+    # 落とすかどうかは案件が決める（`--strict-unclaimed` か `担当なしを許すか: false`）
+    strict_unclaimed = (strict_unclaimed
+                        or conf.get("strict")
+                        or conf.get("担当なしを許すか") is False)
     if unowned:
         print(f"  担当の宣言が無いパス（{len(unowned)}件）: "
               + " / ".join(unowned[:6]) + (" …" if len(unowned) > 6 else ""))
-        if conf.get("strict"):
-            print("\n担当の宣言が無いパスを変更しています（strict）:", file=sys.stderr)
+        if strict_unclaimed:
+            print("\n担当の宣言が無いパスを変更しています:", file=sys.stderr)
             for f in unowned:
                 print(f"  - {f}", file=sys.stderr)
+            print("  **その失敗を起こせる機体に結び直してください。**\n"
+                  "  machine-scope.json の担当に足すか、共有なら `shared` に入れます\n"
+                  "  （**担当の表を書き換えてよいのは司令塔だけ**です。"
+                  "足してほしい機体は受信箱に依頼を書いてください）", file=sys.stderr)
             return 1
     if others:
         print(f"\n担当外のパスを変更しています（{machine}）:", file=sys.stderr)
@@ -696,6 +813,14 @@ def do_check(machine, conf, root, conf_path=''):
               f"  **`git push --no-verify` は使いません。**"
               f"中身を検査せずに送れてしまうためです。", file=sys.stderr)
         return 1
+    if unowned:
+        # **見たいこと（担当なしがある）と違う話で締めない**（#122）。
+        # `OK: 担当外のパスは変更していません。` だけで終わると、読んだ人は
+        # 「全部問題なし」と受け取る
+        print(f"  担当外のパスは変更していません。ただし**担当なしが "
+              f"{len(unowned)} 件**あります（落としていません。"
+              f"落とすなら `--strict-unclaimed`）。")
+        return 0
     print("  OK: 担当外のパスは変更していません。")
     return 0
 
@@ -1074,6 +1199,101 @@ def self_test():
         cfgp.write_text(json.dumps(cs), encoding="utf-8")
         rc = main(CS)
         check(rc == 0, f"strict でないのに担当なしのパスで落ちた（{rc}）")
+
+        # ─── #122: 担当なしを落とす口と、最後の行の嘘 ──────────────────
+        # 2026-09-12 PlantTalk: 新しいテストが担当なしになったが `--check` は
+        # exit 0 で、最後の行が `OK: 担当外のパスは変更していません。` だったため
+        # **読んでも通ったように見えた**。担当なしのファイルは「担当外を変更して
+        # いないか」の網から外れるので、他の機体が勝手に変えても誰にも当たらない
+        import contextlib, io
+
+        def run_check(extra=None):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                rc = main(CS + (extra or []))
+            return rc, buf.getvalue()
+
+        rc, out = run_check()
+        check(rc == 0, f"既定で担当なしを落とした（{rc}）。移行中の案件が全部赤になる")
+        check("担当なしが 1 件" in out,
+              f"**最後の行が担当なしに触れていない**（読み違える）: {out[-160:]}")
+        check(not out.rstrip().endswith("OK: 担当外のパスは変更していません。"),
+              "担当なしがあるのに `OK:` だけで締めている")
+
+        rc, out = run_check(["--strict-unclaimed"])
+        check(rc == 1, f"--strict-unclaimed なのに担当なしを通した（{rc}）")
+        check("結び直してください" in out, "担当なしの直し方を出していない")
+
+        # 設定でも落とせる（案件の verify.sh に旗を書かなくてよい口）
+        cs["担当なしを許すか"] = False
+        cfgp.write_text(json.dumps(cs, ensure_ascii=False), encoding="utf-8")
+        rc, _ = run_check()
+        check(rc == 1, f"`担当なしを許すか: false` なのに通した（{rc}）")
+        cs["担当なしを許すか"] = True
+        cfgp.write_text(json.dumps(cs, ensure_ascii=False), encoding="utf-8")
+        rc, _ = run_check()
+        check(rc == 0, f"`担当なしを許すか: true` なのに落ちた（{rc}）")
+        del cs["担当なしを許すか"]
+        cfgp.write_text(json.dumps(cs, ensure_ascii=False), encoding="utf-8")
+
+        # 担当なしが無いときは、これまでどおり `OK:` で締める
+        (root / "NOBODY.md").unlink()
+        rc, out = run_check()
+        check(rc == 0 and "OK: 担当外のパスは変更していません。" in out,
+              f"担当なしが無いのに OK で締めていない（{rc}）: {out[-160:]}")
+
+        # ─── #118: 自分の担当を消したとき、--check と --check-paths が両立する ──
+        # 2026-09-12 PlantTalk。宣言を残せば `--check-paths` が幽霊で落ち、
+        # 消せば `--check` が担当なしで落ちる。**どちらに倒しても落ちた**
+        for git_a in (["add", "-A"], ["commit", "-qm", "base"]):
+            subprocess.run(["git", "-C", str(root), *git_a],
+                           capture_output=True,
+                           env=dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t",
+                                    GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t"))
+        (root / "lib" / "a.dart").unlink()          # 担当のファイルを消す
+        cs["machines"]["A"] = []                    # 宣言も同じ変更で消す
+        cs["strict"] = True                         # 担当なしを落とす設定でも
+        cfgp.write_text(json.dumps(cs, ensure_ascii=False), encoding="utf-8")
+        rc, out = run_check()
+        check(rc == 0, f"**宣言ごと消したのに担当なしで落ちた**（{rc}）\n   {out[-220:]}")
+        check("宣言ごと消したパス" in out, "消したパスを別扱いにしたことを出していない")
+        # 他の機体の担当を消した場合は、これまでどおり落ちる
+        cs["machines"] = {"A": [], "B": ["lib/"]}
+        cfgp.write_text(json.dumps(cs, ensure_ascii=False), encoding="utf-8")
+        rc, _ = run_check()
+        check(rc == 1, f"**他の機体の担当を消したのに通した**（{rc}）")
+
+    # ─── #117: 追跡されていないパスの宣言は「効かない宣言」──────────────
+    # 2026-09-11 PlantTalk。ひな形の Windows に `build/` が入っており、
+    # 差分に出ないので `--check` には当たらないのに、`--check-paths` は
+    # 実体を見るので**ビルドした機体でだけ通る**（機体で結果が変わる）
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "r"; (root / "lib").mkdir(parents=True)
+        (root / "build").mkdir()
+        (root / "lib" / "a.dart").write_text("1\n", encoding="utf-8")
+        (root / "build" / "out.txt").write_text("x\n", encoding="utf-8")
+        (root / ".gitignore").write_text("build/\n", encoding="utf-8")
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t")
+        for a in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-qm", "x"]):
+            subprocess.run(["git", "-C", str(root), *a], capture_output=True, env=env)
+        cfgp = Path(td) / "c.json"
+
+        def paths_check(machines):
+            import contextlib, io
+            cfgp.write_text(json.dumps({"machines": machines}, ensure_ascii=False),
+                            encoding="utf-8")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                rc = main(["--config", str(cfgp), "--root", str(root),
+                           "--machine", "A", "--check-paths"])
+            return rc, buf.getvalue()
+
+        rc, out = paths_check({"A": ["lib/"], "B": ["build/"]})
+        check(rc == 1, f"**追跡されていない `build/` の宣言を通した**（{rc}）")
+        check("追跡 0 件" in out, f"効かない宣言だと言っていない: {out[-200:]}")
+        rc, out = paths_check({"A": ["lib/"]})
+        check(rc == 0, f"追跡されている宣言だけなのに落ちた（{rc}）\n   {out[-200:]}")
 
     # ─── #13: 担当外の変更を申し送りとして切り出す ─────────────────
     import contextlib as _ctx
