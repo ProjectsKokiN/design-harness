@@ -319,6 +319,14 @@ step "握りつぶし（溜めた指摘を捨てる帰り道が無いか）" \
   "$PY" "$HARNESS/tools/swallow_check.py" --root design/gen
 # 依頼の対象（#71）。ビルドの依頼には「どの commit に対するものか」が要り、受け取った機体の HEAD が
 # それより古ければ落とす（直す前の版が 2 回配られた）。受信箱が無い案件は stages.json に不在を宣言する
+# 引き継ぎの記録（セッションログ）が、いまの作業から離れていないか（#114）。
+# **次のマシンが読むのはこのファイル**で、先頭のエントリが古いとそこから
+# 間違いが始まる。aub の実害: 先頭が「12段・149件」のまま **64 コミット**
+# 入っていなかった（実際は 26 段・604 件）。
+# それまで**この検査はハーネスに無く、案件ごとに実装がバラバラ**だった
+# （aub は Python・FlashEnglish は Dart・PlantTalk は無し）。書式は案件が宣言する
+step "引き継ぎの記録（セッションログが離れていないか）" \
+  "$PY" "$HARNESS/tools/handoff_check.py" --config design/handoff.json --root .
 step "依頼の対象（ビルドの依頼に対象の commit があり、手元がそれより古くないか）" \
   "$PY" "$HARNESS/tools/inbox_tool.py" --check-target --require-for "ビルド|APK|TestFlight|IPA|配布"
 step "段の健全性（落ちるところを見た道具か）" \

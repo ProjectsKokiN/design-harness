@@ -206,13 +206,24 @@ def do_add(path, root, to, title, body, date, with_target, target_repo=None):
 
 
 def do_complete(path, archive, query):
+    """節を `[完了]` にしてアーカイブへ移す。
+
+    **`[完了]` と書かれている節も動かせます**（#115・2026-09-11 PlantTalk）。
+    それまでは `[未対応]` だけを対象にしていたので、すでに `[完了]` の節を渡すと
+    「完了にする節が 0 件当たりました」と出て**何もしませんでした**。
+    書式外の `[参考]` を `[完了]` に直した2件が受信箱に残り、**道具では動かせず**、
+    結局スクリプトを書いて手で移すことになりました。これは
+    **受信箱の出し入れは道具で行う（regex を手で書かない）**という決まりに反します。
+    """
     text = path.read_text(encoding="utf-8")
-    hits = [s for s in sections(text) if s[4] == "未対応" and (query in s[5] or query in f"{s[2]} 宛先: {s[3]}")]
+    hits = [s for s in sections(text)
+            if s[4] in ("未対応", "完了")
+            and (query in s[5] or query in f"{s[2]} 宛先: {s[3]}")]
     if len(hits) != 1:
         print(f"完了にする節が {len(hits)} 件当たりました（1 件に絞ってください）: {query!r}\n"
               + "\n".join(f"  - {s[2]} 宛先: {s[3]} — {s[5]}" for s in hits), file=sys.stderr)
         return 1 if hits else 2
-    s, e, date, to, _, title = hits[0]
+    s, e, date, to, s_state, title = hits[0]
     block = text[s:e].replace("[未対応]", "[完了]", 1).rstrip("\n") + "\n\n"
     text = text[:s] + text[e:]
     # 索引の行を消す（日付と宛先で当てる。要件は書き換わることがある）
@@ -223,7 +234,7 @@ def do_complete(path, archive, query):
             removed += 1
             continue
         keep.append(ln)
-    if removed != 1:
+    if removed != 1 and s_state == "未対応":
         print(f"注意: 索引の行が {removed} 件消えました（1 件のはず）。索引を目で確かめてください")
     path.write_text("".join(keep), encoding="utf-8")
     if archive.exists():
@@ -276,7 +287,32 @@ def malformed_heads(text):
     return out
 
 
-def do_check_target(path, root, require_for):
+def duplicated_sections(path, archive):
+    """**受信箱とアーカイブの両方に在る節**を返す（#116・2026-09-11 PlantTalk）。
+
+    受信箱とアーカイブは別ファイルで、検査は受信箱の中だけを見ていました。
+    実害: MacBook Air が1件を完了にしてアーカイブへ移した直後、Windows が古い版から
+    編集を重ねて push し、**同じ節が両方のファイルに在る状態**になりました
+    （受信箱では `[未対応]`、アーカイブでは `[完了]`）。索引も 8 行 対 実体 5 件まで
+    ずれましたが、**検査は両方とも素通りしました**（索引の数が合っていた瞬間があり、
+    二重は元々見ていない）。**2台が同時に受信箱を触れば必ず起きます。**
+
+    完了したはずの依頼が生き返るので、**受け取った機体は終わった仕事をやり直します。**
+
+    同じ節かどうかは `日付 / 宛先 / 要件` で見ます（状態は違っていて当然）。
+    """
+    if not archive or not Path(archive).exists():
+        return []
+    try:
+        a_text = Path(archive).read_text(encoding="utf-8")
+    except OSError:
+        return []
+    inbox = {(s[2], s[3], s[5]) for s in sections(path.read_text(encoding="utf-8"))}
+    arch = {(s[2], s[3], s[5]) for s in sections(a_text)}
+    return sorted(inbox & arch)
+
+
+def do_check_target(path, root, require_for, archive=None):
     text = path.read_text(encoding="utf-8")
     # **数える前に、読めているかを見る。** 書式から外れた見出しは `HEAD_RX` に
     # 当たらず、**「未対応 0 件」と「読めていない」が区別できません**（2026-09-11）
@@ -289,6 +325,19 @@ def do_check_target(path, root, require_for):
             print(f"  {line}", file=sys.stderr)
         print("  形: `## YYYY-MM-DD 宛先: <宛先> [未対応|完了] — 要件`"
               "（**角括弧まで**）", file=sys.stderr)
+        return 1
+    # **受信箱とアーカイブの二重**（#116）。数える前に見る
+    dup = duplicated_sections(path, archive)
+    if dup:
+        print(f"**同じ節が受信箱とアーカイブの両方に在ります**（{len(dup)}件）。\n"
+              f"  完了した依頼が生き返っています。**受け取った機体は"
+              f"終わった仕事をやり直します。**\n"
+              f"  2台が同時に受信箱を触ると起きます（古い版から編集を重ねて push）:",
+              file=sys.stderr)
+        for date, to, title in dup:
+            print(f"  {date} 宛先: {to} — {title}", file=sys.stderr)
+        print("  → **受信箱の側を消してください**（アーカイブが正です）。"
+              "`--complete` で移し直すか、受信箱の節を落としてください", file=sys.stderr)
         return 1
     secs = [s for s in sections(text) if s[4] == "未対応"]
     if not secs:
@@ -387,7 +436,8 @@ def main(argv=None):
     if args.complete:
         return do_complete(args.file, args.archive, args.complete)
     if args.check_target:
-        return do_check_target(args.file, args.root, args.require_for)
+        return do_check_target(args.file, args.root, args.require_for,
+                               archive=args.archive)
     ap.print_help()
     return 2
 
@@ -641,6 +691,40 @@ def self_test():
         check(rc == 0 and "## 未対応の依頼\n\n- 2026-09-05 宛先: Windows — **短い見出しの索引**" in t3
               or rc == 0 and "- 2026-09-05 宛先: Windows — **短い見出しの索引**" in t3,
               f"短い索引の見出しに足せない（{rc}）")
+        # ─── #115: `[完了]` 済みの節も道具で動かせる ────────────────────
+        # PlantTalk（2026-09-11）: 書式外の `[参考]` を `[完了]` に直した2件が
+        # 受信箱に残り、`--complete` は「0 件当たりました」で**何もしなかった**。
+        # 結局スクリプトを書いて手で移すことになり、**受信箱の出し入れは道具で
+        # 行う（regex を手で書かない）**という決まりに反した
+        inbox.write_text(t.replace("## 2026-09-01 宛先: Windows [未対応] — 既存の依頼",
+                                   "## 2026-09-01 宛先: Windows [完了] — 既存の依頼"),
+                         encoding="utf-8")
+        before = archive.read_text(encoding="utf-8") if archive.exists() else ""
+        rc, out = run("--complete", "既存の依頼")
+        check(rc == 0, f"**`[完了]` 済みの節を動かせない**（{rc}）: {out[:160]}")
+        check("既存の依頼" not in inbox.read_text(encoding="utf-8"),
+              "`[完了]` 済みの節が受信箱に残っている")
+        check("既存の依頼" in archive.read_text(encoding="utf-8"),
+              "`[完了]` 済みの節がアーカイブへ移っていない")
+        inbox.write_text(t, encoding="utf-8")
+        archive.write_text(before, encoding="utf-8")
+
+        # ─── #116: 受信箱とアーカイブの二重 ─────────────────────────────
+        # PlantTalk（2026-09-11）: 完了してアーカイブへ移した直後に、別の機体が
+        # 古い版から編集を重ねて push し、**同じ節が両方のファイルに在る**状態に
+        # なった。**検査は両方とも素通りした。** 完了した依頼が生き返るので、
+        # 受け取った機体は終わった仕事をやり直す
+        archive.write_text(
+            "# マシン間の申し送り（完了ぶんの保管）\n\n"
+            "## 2026-09-01 宛先: Windows [完了] — 既存の依頼\n\n本文A\n",
+            encoding="utf-8")
+        rc, out = run("--check-target")
+        check(rc == 1, f"**受信箱とアーカイブの二重を素通りした**（{rc}）")
+        check("生き返って" in out, f"何が起きるかを言っていない: {out[:200]}")
+        archive.write_text(before, encoding="utf-8")
+        rc, _ = run("--check-target")
+        check(rc == 0, f"二重が無いのに落ちた（{rc}）")
+
         # 索引の節が無い受信箱には足せない（削られた形）
         inbox.write_text(t.replace(INDEX_HEAD, "## 索引ではない"), encoding="utf-8")
         rc, _ = run("--add", "--to", "Windows", "--title", "x", "--body", str(body2), "--no-target")
