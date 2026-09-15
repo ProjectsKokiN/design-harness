@@ -174,6 +174,14 @@ def main(argv=None):
     for name, info in now.items():
         old = rec.get(name, {})
         merged[name] = {**info, "確認": old.get("確認")}
+        # **機械が見た範囲**を引き継ぐ（#123・2026-09-15）。
+        #
+        # 状況の一部を機械の検査に落としたら、**人が見る範囲はその分だけ狭くなる**。
+        # ただし「実機で見ること」は**消さない**——widget test の文字倍率は
+        # Flutter の `TextScaler` で測るもので、実機の OS のフォント設定とは違う。
+        # 消すと「機械が見ているから大丈夫」になり、実機でしか出ないものが通る。
+        if old.get("機械が見た範囲"):
+            merged[name]["機械が見た範囲"] = old["機械が見た範囲"]
     gone = sorted(set(rec) - set(now))
 
     if args.confirm:
