@@ -77,9 +77,18 @@ def _git(root, *args):
         return None
 
 
-def head_entry(text):
-    """先頭のエントリ（最初の `## ` から次の `## ` まで）。"""
-    m = list(re.finditer(r"^## ", text, re.M))
+#: エントリの見出し。**日付で始まるものだけ**をエントリとみなす。
+#: `SESSION_LOG.md` の先頭には「書き方の決まり」「エントリの型」といった
+#: **文書自身の見出し**が並ぶことがあり、素朴に「最初の `## `」を取ると
+#: そこを先頭のエントリと取り違えて、**必ず「節がありません」になる**
+#: （2026-09-15 に FlashEnglish で実際にそうなった）
+ENTRY_RX = re.compile(r"^## (\d{4}-\d{2}-\d{2})\b", re.M)
+
+
+def head_entry(text, pattern=None):
+    """先頭のエントリ（日付で始まる最初の見出しから、次のエントリまで）。"""
+    rx = re.compile(pattern, re.M) if pattern else ENTRY_RX
+    m = list(rx.finditer(text))
     if not m:
         return None
     end = m[1].start() if len(m) > 1 else len(text)
@@ -94,7 +103,7 @@ def check(conf, root):
     text = log.read_text(encoding="utf-8")
 
     ng = []
-    head = head_entry(text)
+    head = head_entry(text, conf.get("エントリの見出し"))
     if head is None:
         ng.append("エントリが1つもありません")
         head = ""
@@ -220,9 +229,16 @@ def self_test():
         chk(rc == 1 and "途中・引き継ぎ" in out, f"節の欠けを見逃した（{rc}）")
 
         # **2番目のエントリに在っても駄目**（見るのは先頭だけ）
-        log.write_text("## 新しい\n\n中身だけ\n\n" + GOOD, encoding="utf-8")
+        log.write_text("## 2026-09-16 新しい\n\n中身だけ\n\n" + GOOD, encoding="utf-8")
         rc, out = run()
         chk(rc == 1, f"先頭ではなく後ろのエントリで通した（{rc}）")
+
+        # **文書自身の見出しをエントリと取り違えない**（2026-09-15 に踏んだ）。
+        # `SESSION_LOG.md` の先頭には「書き方の決まり」などが並ぶことがある
+        log.write_text("# ログ\n\n## 書き方の決まり\n\n決まり\n\n"
+                       "## エントリの型\n\n型\n\n" + GOOD, encoding="utf-8")
+        rc, out = run()
+        chk(rc == 0, f"**文書の見出しを先頭のエントリと取り違えた**（{rc}）: {out[:200]}")
 
         # 数の断りが無ければ落ちる
         log.write_text(GOOD.replace("いまの数は回して見てください。", "いまの数は 30 件です。"),

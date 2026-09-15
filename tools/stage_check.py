@@ -439,6 +439,23 @@ def self_test_stages():
               f"**代わりを書いていないのに通した**（exit {rc}）")
         rc, out = with_history(TWO, TWO)
         check(rc == 0, f"何も外していないのに落ちた（exit {rc}）\n   {out[:300]}")
+        # **改名は「外した」ではない**（道具の呼び出しが今も在る）。
+        # 見出しだけで判定すると、改名のたびに宣言を求めることになる
+        RENAMED = ('step "段A（名前を変えた）" "$PY" "$HARNESS/tools/seed_check.py" --config a.json\n'
+                   'step "段B（条件8: 発火するか）" "$PY" "$HARNESS/tools/seed_check.py" --config b.json\n')
+        rc, out = with_history(TWO, RENAMED)
+        check(rc == 0, f"**見出しを変えただけなのに「外した」と言った**（exit {rc}）\n"
+                       f"   {out[:300]}")
+        # **道具ごと入れ替えたら「外した」**（仕事の中身が変わっている）。
+        # 段Aが**別の道具**を呼んでいた形から始める（TWO は両方 seed_check なので、
+        # 旗まで同じで**改名と区別が付かない**——それは #112 の家族の話）
+        WAS = ('step "段A（消したい段）" "$PY" "$HARNESS/tools/portable_check.py" --style\n'
+               'step "段B（条件8: 発火するか）" "$PY" "$HARNESS/tools/seed_check.py" --config b.json\n')
+        NOW = ('step "段A（別の道具に）" "$PY" "$HARNESS/tools/seed_check.py" --config b.json\n'
+               'step "段B（条件8: 発火するか）" "$PY" "$HARNESS/tools/seed_check.py" --config b.json\n')
+        rc, out = with_history(WAS, NOW)
+        check(rc == 1 and "外しています" in out,
+              f"**道具ごと入れ替えたのに素通りした**（exit {rc}）\n   {out[:260]}")
 
         case("見出しだけ変えた案件は、これまでどおり走っているとみなす", 0,
              sh='step "見出しを変えた段" "$PY" "$HARNESS/tools/seed_check.py" --config a.json\n'
@@ -938,7 +955,42 @@ def removed_stages(verify_path):
         logical_text(verify_path.read_text(encoding="utf-8")))
         if (m := STEP_RX.match(line))}
     now_n = {_norm_label(x) for x in now}
-    return {x for x in was if _norm_label(x) not in now_n}
+
+    # **改名は「外した」ではない**（2026-09-15・aub で実物に当てて分かった）。
+    # 見出しを変えただけで道具の呼び出しが今も在るなら、仕事は続いている。
+    # 見出しだけで判定すると、改名のたびに宣言を求めることになる。
+    #
+    # **呼び出しが読めない段（`{{flutter test}}` のような案件固有のコマンド）は
+    # 判定できないので、そのまま「外した」として報告する。**
+    # 「分からないから通す」にはしない（0件は見ていない、の系）。
+    def invs(text):
+        out, label, buf = {}, None, []
+        ls = logical_lines(logical_text(text))
+        for line in ls + [None]:
+            m = STEP_RX.match(line) if line is not None else None
+            if m or line is None:
+                if label is not None:
+                    out[label] = invocations("\n".join(buf))
+                if line is None:
+                    break
+                label, buf = m.group(1), [m.group(2)]
+            elif label is not None:
+                buf.append(line)
+        return out
+
+    was_inv = invs(before)
+    now_inv = set()
+    for v in invs(verify_path.read_text(encoding="utf-8")).values():
+        now_inv |= set(v)
+    gone = set()
+    for x in was:
+        if _norm_label(x) in now_n:
+            continue
+        had = set(was_inv.get(x) or ())
+        if had and had <= now_inv:
+            continue                     # 見出しを変えただけ（道具は今も走る）
+        gone.add(x)
+    return gone
 
 
 def project_stages(verify_path, ci_dir):
