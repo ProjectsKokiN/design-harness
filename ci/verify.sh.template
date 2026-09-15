@@ -333,10 +333,19 @@ step "見なかったもの（条件8: gap_report）" \
   "$PY" "$HARNESS/tools/gap_report.py" --config design/gaps.json
 
 # --- 案件固有の段（{{ }} を具体化して足す）----------------------------------
-# step "静的解析"        {{flutter analyze / npx tsc --noEmit}}
+#
+# **この2段は `step` で包んでください**（#119・2026-09-12）。素の行で書くと
+# 終了コードが最後のコマンドのものになり、**手前の失敗が飲み込まれます**。
+# 中身は案件ごとに違ってよいので、`stage_check --stages` は**見出しだけ**を見ます。
+#
+# PlantTalk の実害: ゴールデンの段を外したあと代わりを入れず、**関門が走らせる
+# テストが 0 本**になりました。`verify.sh` は 21 段すべて緑のまま、
+# **アプリが起動して即座に壊れている状態**を2回通しました
+# （どちらもユーザーが実機で見つけました）。
+step "静的解析"        {{flutter analyze / npx tsc --noEmit}}
 step "生成物のべき等（生成し直して差分が出ないか）" \
   "$PY" "$HARNESS/tools/gen_verify.py"
-# step "テスト"          {{flutter test / npm test}}
+step "テスト"          {{flutter test / npm test}}
 
 if [ "$FAILED" -ne 0 ]; then
   echo "検証に失敗しました。上の NG を直してから再実行してください。"

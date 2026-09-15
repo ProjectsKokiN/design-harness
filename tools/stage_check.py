@@ -317,6 +317,12 @@ def self_test_stages():
                 rc = check_stages(tpl, verify, ci_dir if ci else None, waivers, gate)
             return rc, buf.getvalue()
 
+        def check(cond, msg):
+            nonlocal ok
+            if not cond:
+                print(f"self-test NG: {msg}")
+                ok = False
+
         def case(name, want, needle=None, **kw):
             nonlocal ok
             rc, out = run(**kw)
@@ -338,6 +344,106 @@ def self_test_stages():
         case("理由の無い宣言は通さない", 1, "why",
              sh=full.replace("python3 $HARNESS/tools/portable_check.py --style\n", ""),
              waiver={"移植性（Windows でだけ落ちる書き方）": {"reviewBy": "2099-01-01"}})
+
+        # ─── #112: 同じ道具を呼ぶ段どうしを取り違えない ────────────────────
+        # PlantTalk（2026-09-11）で**1日に4回**踏んだ。`verify.sh` から道具の参照を
+        # grep で 0 件にしても「走っているのに不在と宣言されています。宣言のほうが
+        # 古くなっています。消してください」と出る。指示どおり宣言を消すと、
+        # **実際には走っていないのに宣言も無い**状態になり、取り違えた分だけ穴になる
+        # **条件の札は付けない。** 付けると「条件を誰も測っていない」という
+        # 別の（正しい）検査が先に落ちて、#112 の直しを測れない
+        TWO = ('step "段A（消したい段）" "$PY" "$HARNESS/tools/seed_check.py" --config a.json\n'
+               'step "段B（条件8: 発火するか）" "$PY" "$HARNESS/tools/seed_check.py" --config b.json\n')
+        ONLY_B = 'step "段B（条件8: 発火するか）" "$PY" "$HARNESS/tools/seed_check.py" --config b.json\n'
+        G2 = {"生きている条件": {"8": {"見出し": "じょうけん8"}}}
+        case("**同じ道具を呼ぶ段を取り違えない**（消した段の宣言が受理される）", 0,
+             sh=ONLY_B, tpl_text=TWO, gate_data=G2,
+             waiver={"段A（消したい段）": {"why": "この案件には当てはまらない",
+                                           "reviewBy": "2099-01-01"}})
+        case("**戻したら宣言が古いと言う**（取り違えの直しで逆側を壊さない）", 1,
+             "宣言のほうが古くなっています", sh=TWO, tpl_text=TWO, gate_data=G2,
+             waiver={"段A（消したい段）": {"why": "この案件には当てはまらない",
+                                           "reviewBy": "2099-01-01"}})
+        # ─── #119: ひな形のテストの段が、案件に無ければ落ちる ──────────────
+        # PlantTalk（2026-09-12）: 関門が走らせるテストが 0 本になっても
+        # 「21段すべて緑」。**中身は案件ごとに違ってよいので見出しだけ見る**
+        TPLT = TWO + 'step "テスト"          {{flutter test / npm test}}\n'
+        case("**テストの段が無ければ落ちる**（ひな形が要求する）", 1,
+             "見出しだけ合わせてください", sh=TWO, tpl_text=TPLT, gate_data=G2)
+        case("見出しを合わせれば、中身は案件の自由", 0,
+             sh=TWO + 'step "テスト"   flutter test --concurrency=1\n',
+             tpl_text=TPLT, gate_data=G2)
+        case("走らせないなら理由と期限つきで宣言できる", 0,
+             sh=TWO, tpl_text=TPLT, gate_data=G2,
+             waiver={"テスト": {"why": "この案件はまだテストを書いていない",
+                                "reviewBy": "2099-01-01"}})
+        case("理由の無い宣言では通さない", 1, "reviewBy",
+             sh=TWO, tpl_text=TPLT, gate_data=G2,
+             waiver={"テスト": {"why": "まだ"}})
+        case("走っているのに不在と宣言していたら落ちる", 1, "宣言のほうが古く",
+             sh=TWO + 'step "テスト"   flutter test\n', tpl_text=TPLT, gate_data=G2,
+             waiver={"テスト": {"why": "x", "reviewBy": "2099-01-01"}})
+
+        # ─── #120: 外した段が穴として残る（git から導く）────────────────
+        # PlantTalk（2026-09-12）: 案件が独自に足した段（ゴールデン）を外したが
+        # ひな形に無いので「元から無い」扱いになり、**穴として残らなかった**。
+        # 同じ日に4段外して、代わりが1つも要求されなかった
+        import os as _os
+        _env = dict(_os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t",
+                    GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t")
+
+        def with_history(before_sh, after_sh, waiver_all=None):
+            """`origin/main` に before を置き、作業ツリーを after にして測る。"""
+            with tempfile.TemporaryDirectory() as td2:
+                up = Path(td2) / "up"; up.mkdir()
+                for a in (["init", "-q", "-b", "main", "--bare"],):
+                    subprocess.run(["git", *a, str(up)], capture_output=True, env=_env)
+                wk = Path(td2) / "wk"; (wk / "design").mkdir(parents=True)
+                for a in (["init", "-q", "-b", "main"],
+                          ["remote", "add", "origin", str(up)]):
+                    subprocess.run(["git", "-C", str(wk), *a], capture_output=True, env=_env)
+                v2 = wk / "design" / "verify.sh"
+                w2 = wk / "design" / "stages.json"
+                t2 = wk / "template.sh"; g2 = wk / "gate.json"
+                t2.write_text(TWO, encoding="utf-8")
+                g2.write_text(json.dumps(G2, ensure_ascii=False), encoding="utf-8")
+                v2.write_text(before_sh, encoding="utf-8")
+                w2.write_text(json.dumps({"notHere": {}}, ensure_ascii=False), encoding="utf-8")
+                for a in (["add", "-A"], ["commit", "-qm", "base"],
+                          ["push", "-q", "origin", "main"]):
+                    subprocess.run(["git", "-C", str(wk), *a], capture_output=True, env=_env)
+                v2.write_text(after_sh, encoding="utf-8")
+                if waiver_all is not None:
+                    w2.write_text(json.dumps(waiver_all, ensure_ascii=False), encoding="utf-8")
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                    rc = check_stages(t2, v2, None, w2, g2)
+                return rc, buf.getvalue()
+
+        EXTRA = TWO + 'step "ゴールデン（見た目の回帰）"   flutter test --tags golden\n'
+        rc, out = with_history(EXTRA, TWO)
+        check(rc == 1 and "外しています" in out,
+              f"**段を外したのに穴として残らない**（exit {rc}）\n   {out[:300]}")
+        check("かわりに" in out, "代わりに何が守るかを求めていない")
+        rc, out = with_history(EXTRA, TWO, waiver_all={
+            "notHere": {},
+            "外した": {"ゴールデン（見た目の回帰）": {
+                "why": "デザインを作り直すので値ごと捨てた",
+                "かわりに": "穴のまま。作り直したあとに入れ直す",
+                "reviewBy": "2099-01-01"}}})
+        check(rc == 0, f"理由・代わり・期限を書いたのに落ちた（exit {rc}）\n   {out[:300]}")
+        rc, out = with_history(EXTRA, TWO, waiver_all={
+            "notHere": {},
+            "外した": {"ゴールデン（見た目の回帰）": {"why": "x", "reviewBy": "2099-01-01"}}})
+        check(rc == 1 and "かわりに" in out,
+              f"**代わりを書いていないのに通した**（exit {rc}）")
+        rc, out = with_history(TWO, TWO)
+        check(rc == 0, f"何も外していないのに落ちた（exit {rc}）\n   {out[:300]}")
+
+        case("見出しだけ変えた案件は、これまでどおり走っているとみなす", 0,
+             sh='step "見出しを変えた段" "$PY" "$HARNESS/tools/seed_check.py" --config a.json\n'
+                + ONLY_B,
+             tpl_text=TWO, gate_data=G2)
         case("棚卸しの期限が切れた宣言は通さない", 1, "期限",
              sh=full.replace("python3 $HARNESS/tools/portable_check.py --style\n", ""),
              waiver={"移植性（Windows でだけ落ちる書き方）":
@@ -765,6 +871,134 @@ def project_tools(verify_path, ci_dir):
     return seen, where
 
 
+#: 外した段の宣言に要る欄（#120）。**「代わりは無い（穴のまま）」も通してよいが、
+#: 期限つきで明示的に書かせる**。黙って減るのを止めるのが目的
+DROPPED_KEYS = ("why", "かわりに", "reviewBy")
+
+
+def _dropped_decls(waivers_path):
+    """`stages.json` の `外した` を読む（#120）。"""
+    if not waivers_path or not Path(waivers_path).exists():
+        return {}
+    try:
+        d = json.loads(Path(waivers_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    out = d.get("外した")
+    return out if isinstance(out, dict) else {}
+
+
+def removed_stages(verify_path):
+    """**この変更で `verify.sh` から消えた段の見出し**を返す（#120・2026-09-12）。
+
+    `notHere` は「ひな形にあって案件に無い段」を宣言させますが、**案件が独自に
+    足した段を外したとき**は、ひな形に無いので「元から無い」扱いになり、
+    **穴として残りません。**
+
+    実害（PlantTalk・2026-09-12）: デザインを作り直す決定に伴って「ゴールデン
+    （見た目の回帰）」の段を外し、**代わりを入れませんでした。** その時点で関門が
+    走らせるテストは 0 本になりましたが、`verify.sh` は「21段すべて緑」と
+    報告し続けました。**同じ日に4段を外して、代わりが1つも要求されませんでした。**
+
+    **宣言に頼らず git から導きます。** 「外した」を人が覚えて書く形にすると、
+    忘れた分がそのまま穴になります（`$これから作る` の裏返しが無かったのが根）。
+    比べる先は**既定ブランチとの分岐点**です（自分の作業で消したものだけを見る）。
+    """
+    root = verify_path.resolve().parent.parent
+
+    def git(*args):
+        try:
+            r = subprocess.run(["git", "-C", str(root), *args], capture_output=True,
+                               text=True, encoding="utf-8", errors="replace", timeout=30)
+            return r.stdout if r.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    head = None
+    for ref in ("origin/HEAD", "origin/main", "origin/master"):
+        if git("rev-parse", "--verify", "-q", ref):
+            head = git("merge-base", ref, "HEAD")
+            break
+    if not head:
+        return None                      # **数えられないときは言わない**（断定しない）
+    base = head.strip()
+    try:
+        rel = verify_path.resolve().relative_to(root).as_posix()
+    except ValueError:
+        return None
+    before = git("show", f"{base}:{rel}")
+    if before is None:
+        return None                      # そのとき無かった（新設）
+    was = set()
+    for line in logical_lines(logical_text(before)):
+        m = STEP_RX.match(line)
+        if m:
+            was.add(m.group(1))
+    now = {m.group(1) for line in logical_lines(
+        logical_text(verify_path.read_text(encoding="utf-8")))
+        if (m := STEP_RX.match(line))}
+    now_n = {_norm_label(x) for x in now}
+    return {x for x in was if _norm_label(x) not in now_n}
+
+
+def project_stages(verify_path, ci_dir):
+    """**この案件の段を「見出し → 走らせるファイル名」で返す**（#112・2026-09-11）。
+
+    それまで案件側は `project_tools` で**ファイル名の集合**しか持っておらず、
+    段の同定が「走らせるファイル名が在るか」だけでした。そのため
+    **同じ道具を呼ぶ段どうしを取り違えます。**
+
+    実害（PlantTalk・2026-09-11 に1日で4回）: `verify.sh` から道具の参照を
+    grep で 0 件にしても「走っているのに `stages.json` で不在と宣言されています。
+    宣言のほうが古くなっています。消してください」と出る。指示どおり宣言を消すと、
+    **実際には走っていないのに宣言も無い**状態になり、
+    「元ファイルにあってこの案件に無い段」を拾う仕組みが取り違えた分だけ穴になる。
+    **黙って落ちた段と区別が付かなくなる。**
+
+    CI の YAML は `- name: <見出し>` を段の見出しとして読みます。
+    """
+    out = {}
+
+    def eat_sh(text):
+        label, buf = None, []
+        lines = logical_lines(logical_text(text))
+        for line in lines + [None]:
+            m = STEP_RX.match(line) if line is not None else None
+            if m or line is None:
+                if label is not None:
+                    out.setdefault(label, set()).update(invocations("\n".join(buf)))
+                if line is None:
+                    break
+                label, buf = m.group(1), [m.group(2)]
+            elif label is not None:
+                buf.append(line)
+
+    def eat_yaml(text):
+        label, buf = None, []
+        for line in text.split("\n") + [None]:
+            m = re.match(r"^\s*-?\s*name:\s*(.+?)\s*$", line) if line is not None else None
+            if m or line is None:
+                if label is not None:
+                    out.setdefault(label, set()).update(invocations("\n".join(buf)))
+                if line is None:
+                    break
+                label, buf = m.group(1).strip("\"'"), []
+            elif label is not None:
+                buf.append(line)
+
+    if verify_path.exists():
+        eat_sh(verify_path.read_text(encoding="utf-8"))
+    if ci_dir and ci_dir.exists():
+        for y in sorted(ci_dir.glob("*.yml")) + sorted(ci_dir.glob("*.yaml")):
+            eat_yaml(y.read_text(encoding="utf-8", errors="ignore"))
+    return out
+
+
+def _norm_label(s):
+    """見出しの揺れを吸収する（全角括弧・空白・記号を落として比べる）。"""
+    return re.sub(r"[\s（）()・:：/／、。.*`\"']+", "", str(s or ""))
+
+
 def _conditions_of(label):
     """段の見出しから関門の条件番号を拾う。「参考:」と書いてあれば札ではない。"""
     if COND_SKIP in label:
@@ -1108,6 +1342,11 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
         print(f"元ファイルから段を読めませんでした: {template}", file=sys.stderr)
         return 2
     have, where = project_tools(verify, ci_dir)
+    # **見出しでも突き合わせる**（#112）。ファイル名だけだと、同じ道具を呼ぶ
+    # 段どうしを取り違える
+    proj = project_stages(verify, ci_dir)
+    proj_labels = {_norm_label(x) for x in proj}
+    tpl_labels = {_norm_label(x) for x in stages}
 
     live = {}
     if gate_path and gate_path.exists():
@@ -1132,6 +1371,9 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
             print(f"段の宣言が読めません: {waivers_path}: {e}", file=sys.stderr)
             return 2
 
+    # **外した段を穴として残す**（#120）。宣言に頼らず git から導く
+    dropped = _dropped_decls(waivers_path)
+    gone_stages = removed_stages(verify)
     dist = distinguishing(stages)
     errs, waived, ran, ci_only, mismatched = [], [], [], [], []
     covered = set()          # この案件で実際に測っている関門の条件
@@ -1142,10 +1384,54 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
         claimed |= conds
         if not tools:
             # 走らせるファイルが読めない段（案件固有のコマンド）。
-            # **分母から外す**（`flutter test` などは案件ごとに形が違う）
+            # **見出しで突き合わせる**（#119・2026-09-12）。
+            #
+            # それまでは**分母から外していました**（`flutter test` は案件ごとに
+            # 形が違うため）。その結果、**ひな形のテストの段が誰にも要求されず**、
+            # PlantTalk では関門が走らせるテストが 0 本になっても
+            # 「21段すべて緑」と報告し続けました。アプリが起動して即座に壊れている
+            # 状態を2回通し、**どちらもユーザーが実機で見つけました**。
+            #
+            # 中身（どのコマンドか）は案件の自由。**在るかどうかだけ**を見ます。
+            if _norm_label(label) in proj_labels:
+                ran.append(label)
+                covered |= conds
+                if label in waivers:
+                    errs.append(f"  「{label}」は走っているのに、"
+                                f"{waivers_path.name} で不在と宣言されています。\n"
+                                f"    宣言のほうが古くなっています。消してください。")
+                continue
+            w = waivers.get(label)
+            if not isinstance(w, dict):
+                errs.append(
+                    f"  「{label}」が この案件にありません（宣言もありません）。\n"
+                    f"    元ファイル: {template}\n"
+                    f"    **中身は案件ごとに違ってよいので、見出しだけ合わせてください**"
+                    f"（例: `step \"{label}\"  flutter test`）。\n"
+                    f"    走らせないなら {waivers_path.name} に理由と期限を"
+                    f"書いてください。**黙って落ちた段と区別が付きません。**")
+                continue
+            missing = [k for k in WAIVER_KEYS if not str(w.get(k, "")).strip()]
+            if missing:
+                errs.append(f"  「{label}」の宣言に {' / '.join(missing)} が"
+                            f"ありません（理由と棚卸しの期限は必須）。")
+                continue
+            waived.append(label)
             continue
         want = {key_of(n, f, dist) for n, f in tools}
         hit = [k for k in have if key_of(*k, dist) in want]
+        # **見出しが案件に在れば、それがいちばん強い証拠**（#112）
+        label_here = _norm_label(label) in proj_labels
+        if hit and not label_here:
+            # 見出しが無いのに道具だけ当たった。**その道具を呼んでいる案件の段が、
+            # 元ファイルの別の段の見出しを名乗っているなら、これは取り違え**。
+            # 案件が見出しを変えただけの場合（元ファイルのどの段にも当たらない
+            # 見出しから呼ばれている）は、これまでどおり「走っている」とみなす
+            owners = {pl for pl, invs in proj.items()
+                      if any(key_of(*k, dist) in want
+                             for k in invs if isinstance(k, tuple))}
+            if owners and all(_norm_label(o) in tpl_labels for o in owners):
+                hit = []
         if not hit:
             # 名前は合うのに旗が合わない＝**同じ道具を別の引数で呼んでいる**。
             # 段が抜けているのか、同じ目的の別表現なのかを人が見分けられるよう名指しする
@@ -1300,6 +1586,26 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
                         f"`stages.json` の `条件の適用外` に理由と期限を書いてください:\n"
                         f'      "条件の適用外": {{"{c}": {{"why": "…", '
                         f'"かわりに": "…", "reviewBy": "YYYY-MM-DD"}}}}')
+
+    if gone_stages:
+        for s in sorted(gone_stages):
+            w = dropped.get(s)
+            if not isinstance(w, dict):
+                errs.append(
+                    f"  **段「{s}」を外しています**（`verify.sh` から消えました）。\n"
+                    f"    外した判断そのものは正しいことがあります。"
+                    f"**問題は、外してできた穴が誰にも見えないことです。**\n"
+                    f"    `{waivers_path.name if waivers_path else 'stages.json'}` の "
+                    f"`外した` に書いてください:\n"
+                    f'      "外した": {{"{s}": {{"why": "外した理由", '
+                    f'"かわりに": "代わりに何が守るか（**無いなら「穴のまま」と書く**）", '
+                    f'"reviewBy": "YYYY-MM-DD"}}}}')
+                continue
+            lack = [k for k in DROPPED_KEYS if not str(w.get(k, "")).strip()]
+            if lack:
+                errs.append(f"  段「{s}」を外した宣言に {' / '.join(lack)} が"
+                            f"ありません（**代わりに何が守るかは必須**。"
+                            f"無いなら「穴のまま」と書いてください）。")
 
     if errs:
         print("元ファイルの段が、この案件から落ちています:", file=sys.stderr)
