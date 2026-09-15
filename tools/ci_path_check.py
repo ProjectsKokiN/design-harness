@@ -350,7 +350,11 @@ def main(argv=None):
             # 中からは通せない（自分を呼び直すと入れ子になる）。2026-09-11 に
             # 仕込み（`self_test` の頭でわざと例外を起こす）で、最終行に
             # 「例外 RuntimeError: … / File …, line …」が出ることを確かめた
-            return 1  # mutation-ok: self-test 自身の例外の帰り道。中からは通せない
+            # **2 を返す**（1 ではない）。例外は「確かめて違反」ではなく
+            # **「確かめられなかった」**で、試験が最後まで走っていない。
+            # 2026-09-15 に CI で後片付けの競合が出たとき、1 だと
+            # 「検査が違反を見つけた」と読めてしまうことが分かった
+            return 2  # mutation-ok: self-test 自身の例外の帰り道。中からは通せない
 
     if args.links:
         allow = args.links_allow
@@ -606,7 +610,16 @@ def self_test():
             _ngs.append(m.replace("self-test NG: ", "").replace("*", ""))
         _out(*a, **k)
 
-    with tempfile.TemporaryDirectory() as td:
+    # **後片付けの失敗で試験を落とさない。** 2026-09-15、CI（Linux）で
+    # `OSError: [Errno 39] Directory not empty: .../linkrepo/.git/objects` が出た。
+    # 中で作る試験用リポジトリに git がまだ書いている最中で、`shutil.rmtree` の
+    # 走査と競合する。**検査の中身とは関係が無いのに赤くなる**（Mac では出ない）。
+    # `ignore_cleanup_errors` は Python 3.10 から。古い版でも動くように包む
+    try:
+        _tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+    except TypeError:                     # Python 3.9 以下
+        _tmp = tempfile.TemporaryDirectory()
+    with _tmp as td:
         root = Path(td)
         wf = root / ".github/workflows"
         wf.mkdir(parents=True)
@@ -765,7 +778,9 @@ def self_test():
 
         def git(*a):
             r = subprocess.run(
-                ["git", "-c", "init.defaultBranch=main",
+                # `gc.auto=0` で git の自動整理を止める。**これが裏で走ると、
+            # 一時ディレクトリの後片付けと競合する**（2026-09-15 に CI で踏んだ）
+            ["git", "-c", "init.defaultBranch=main", "-c", "gc.auto=0",
                  "-c", f"safe.directory={lr}", "-C", str(lr), *a],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", env=git_env)
             if r.returncode != 0:
