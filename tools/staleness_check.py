@@ -104,6 +104,10 @@ def main(argv=None):
     ap.add_argument("--generators", type=Path, metavar="generators.json",
                     help="生成器の台帳から対（figma/<in> → <out>）を導く。手で pairs を書かない")
     ap.add_argument("--figma", type=Path, help="書き出しの置き場（既定 design/figma。台帳の root 基準）")
+    ap.add_argument("--only", nargs="+", metavar="接頭辞",
+                    help="この接頭辞で始まる対だけを見る（#113）。"
+                         "台帳が全デザインシステム共通のとき、**他の案件の鮮度で"
+                         "自分の push が止まる**のを避ける")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
@@ -122,6 +126,35 @@ def main(argv=None):
             return 2
         base = args.config.resolve().parent
         pairs = list(conf.get("pairs", []))
+        if args.only:
+            # **他の案件の鮮度で自分の push を止めない**（#113・2026-09-11）。
+            #
+            # 台帳（`design-systems/staleness.json`）は全デザインシステム共通で、
+            # 対を絞る口がありませんでした。その結果 PlantTalk の `verify.sh` が
+            # 毎回 414（FlashEnglish のデザインシステム）のミラーを読みに行き、
+            # **414 が1日古いだけで PlantTalk の push が止まりました。**
+            # PlantTalk 側では直しようがありません。
+            #
+            # 回避として段ごと外す案件が出ましたが、**それでは鮮度差そのものを
+            # 誰も見なくなります。** だから「見ない」ではなく「自分の分だけ見る」。
+            keep, dropped = [], []
+            for pr in pairs:
+                up = str(pr.get("up", ""))
+                if any(up.startswith(x) for x in args.only):
+                    keep.append(pr)
+                else:
+                    dropped.append(up)
+            if not keep:
+                print(f"`--only {' '.join(args.only)}` に当たる対が1つもありません"
+                      f"（台帳の対 {len(pairs)} 件）。\n"
+                      f"  **0 件は「鮮度差なし」ではなく「見ていない」です。**\n"
+                      f"  接頭辞が台帳の `up` の書き方と合っているか確かめてください",
+                      file=sys.stderr)
+                return 2
+            pairs = keep
+            if dropped:
+                print(f"`--only` で {len(dropped)} 件の対を外しました"
+                      f"（他の案件の分）。見るのは {len(pairs)} 件です。")
 
     # **対を手で書かない。台帳から導く**（#73）。aub の staleness.json は3組で、
     # 書き出し35件のうち pairs に現れるのは2件だった。残り33件の鮮度差は誰も見ていなかった。
@@ -233,6 +266,38 @@ def self_test():
         # pairs が空 → 落ちる（空振りを通さない）
         if main(cfg([])) != 2:
             print("self-test NG: pairs が空なのに落ちなかった"); ok = False
+
+        # ─── #113: 自分の対だけを見る ───────────────────────────────────
+        # 台帳が全デザインシステム共通で対を絞る口が無く、PlantTalk の verify.sh が
+        # 毎回 414 のミラーを読みに行って、**414 が1日古いだけで PlantTalk の
+        # push が止まった**（PlantTalk 側では直しようがない）
+        import os as _os
+        _os.makedirs(base / "mine", exist_ok=True)
+        _os.makedirs(base / "other", exist_ok=True)
+        w("mine/up.json", "2026-08-01"); w("mine/down.json", "2026-08-05")
+        w("other/up.json", "2026-08-01"); w("other/down.json", "2026-07-01")  # 古い
+        BOTH = [{"up": "mine/up.json", "down": "mine/down.json"},
+                {"up": "other/up.json", "down": "other/down.json"}]
+        if main(cfg(BOTH)) != 1:
+            print("self-test NG: 他の案件の対が古いのに落ちなかった"); ok = False
+        rc = main(cfg(BOTH) + ["--only", "mine/"])
+        if rc != 0:
+            print(f"self-test NG: **--only で自分の対だけを見られない**（{rc}）"); ok = False
+        rc = main(cfg(BOTH) + ["--only", "other/"])
+        if rc != 1:
+            print(f"self-test NG: --only で指した側の古さを見逃した（{rc}）"); ok = False
+        # **当たらない接頭辞は 2**（0 件を「鮮度差なし」と読ませない）。
+        # 終了コードだけ見ると、`pairs` が空のときの既存の検査が同じ 2 を返すので
+        # **この分岐が測られません**。文言まで見て、接頭辞の話だと分かることを確かめる
+        import contextlib as _c, io as _io
+        _b = _io.StringIO()
+        with _c.redirect_stdout(_b), _c.redirect_stderr(_b):
+            rc = main(cfg(BOTH) + ["--only", "nowhere/"])
+        if rc != 2:
+            print(f"self-test NG: 当たらない接頭辞で {rc} を返した（2 であるべき）"); ok = False
+        if "接頭辞" not in _b.getvalue():
+            print("self-test NG: **接頭辞が当たらなかったことを言っていない**"
+                  f"（`pairs` が空のときと同じ文言）: {_b.getvalue()[:120]}"); ok = False
 
     # 台帳から対を導く（#73）。+ で束ねた in も割れる
     import tempfile as _tf, io as _io, contextlib as _ctx
