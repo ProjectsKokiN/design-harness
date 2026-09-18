@@ -111,6 +111,14 @@ step "禁止パターン（全量・条件1）"   "$PY" design/design_check.py -
 #  手元 70 ファイル・11 ルール、CI は走査 0 ファイル。入れた日から一度も緑が無かった）
 step "ルールの鎖（extends が CI から解決できるか）" \
   "$PY" "$HARNESS/tools/ci_path_check.py" --rules design/rules.json
+# **ルールが本当に当たるか**（2026-09-18 追加）。ルールは正規表現なので、
+# 書いた時点では「当たらないルール」と「違反が無いコード」が見分けられない。
+# 各ルールに同梱した bad/good を当てて確かめる。**当たらないルールを配ると、
+# 「違反0件」が「見ていない」と区別できなくなる。**
+# `--follow-extends` で参照先も見る（FlashEnglish は自分のファイルに1件しか持たず、
+# 残り10件はレジストリ側にある。辿らないと「1件確かめた」で通る）。
+step "ルールの仕込み（書いたルールが本当に当たるか）" \
+  "$PY" "$HARNESS/tools/rules_selftest.py" --follow-extends design/rules.json
 # md の相対リンクの先が実在するか（#110）。`python3 <path>` の形の案内は
 # 上流の段が見ていたが、`[表示](path)` は誰も見ていなかった。
 # 分母は `git ls-files` から導く（追跡外に他所の md があっても巻き込まない）
