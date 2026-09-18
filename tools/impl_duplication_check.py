@@ -60,6 +60,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+# **案件の拡張子を rules.json から導く**（tools/_source_ext.py）。
+# 道具に *.dart を直書きすると、Swift の案件で「0 件」のまま通る
+from _source_ext import rglob_sources, is_generated  # noqa: E402
 
 #: トークンの参照。`AppSpace.gapM` / `AppColor.frameNeutralDefault`
 TOKEN_RX = re.compile(r"\bApp[A-Z]\w*\.[a-zA-Z_]\w*")
@@ -126,8 +129,8 @@ def impl_files(map_path, base):
         f = base.parent / path if not (base / path).exists() else base / path
         if f.exists():
             out[cls] = f
-    for f in sorted(base.rglob("*.dart")):
-        if f.name.endswith(".g.dart") or ".dart_tool" in f.parts:
+    for f in rglob_sources(base):
+        if is_generated(f) or ".dart_tool" in f.parts:
             continue
         text = f.read_text(encoding="utf-8", errors="ignore")
         for n in names:
@@ -185,8 +188,8 @@ def main(argv=None):
         runs = token_runs(cf.read_text(encoding="utf-8", errors="ignore"), size)
         if not runs:
             continue
-        for f in sorted(lib.rglob("*.dart")):
-            if f == cf or f.name.endswith(".g.dart"):
+        for f in rglob_sources(lib):
+            if f == cf or is_generated(f):
                 continue
             text = f.read_text(encoding="utf-8", errors="ignore")
             if re.search(r"\b" + re.escape(name) + r"\s*\(", text):

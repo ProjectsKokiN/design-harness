@@ -106,7 +106,8 @@ def main(argv=None):
         return 1
 
     on_disk = {p.name for p in here.glob("gen_*.py")} | {p.name for p in here.glob("gen_*.dart")} \
-        | {p.name for p in here.glob("gen_*.mjs")} | {p.name for p in here.glob("gen_*.js")}
+        | {p.name for p in here.glob("gen_*.mjs")} | {p.name for p in here.glob("gen_*.js")} \
+        | {p.name for p in here.glob("gen_*.swift")}
     listed = {g["file"] for g in gens}
     if on_disk - listed:
         print(f"[NG] 台帳に載っていない生成器があります: {sorted(on_disk - listed)}\n"
@@ -122,13 +123,13 @@ def main(argv=None):
         for name in missing:
             if (here / name).exists():
                 hint = (f"\n  **{name} は実在します。** ただしこの道具が探すのは"
-                        f" `gen_*.py` / `gen_*.dart` / `gen_*.mjs` / `gen_*.js` で、"
+                        f" `gen_*.py` / `gen_*.dart` / `gen_*.swift` / `gen_*.mjs` / `gen_*.js` で、"
                         f"\n  **アンダースコアで始まる名前**だけです"
                         f"（`gen-tokens.py` のようなハイフンは拾いません）。"
                         f"\n  生成器の名前を `gen_` で始めてください。")
                 break
         print(f"[NG] 台帳にあるのに実在しない生成器: {missing}\n"
-              f"  この道具が探す形: `gen_*.py` / `gen_*.dart` / `gen_*.mjs` /"
+              f"  この道具が探す形: `gen_*.py` / `gen_*.dart` / `gen_*.swift` / `gen_*.mjs` /"
               f" `gen_*.js`（{here} の中）{hint}", file=sys.stderr)
         return 1
 
@@ -195,6 +196,9 @@ def _command(path):
         return [sys.executable, str(path)]
     if path.suffix == ".dart":
         return ["dart", "run", str(path)]
+    if path.suffix == ".swift":
+        # **`swift <ファイル>` で走る**（Xcode は要らない。Command Line Tools で足りる）
+        return ["swift", str(path)]
     if path.suffix in (".mjs", ".js"):
         return ["node", str(path)]
     return [str(path)]

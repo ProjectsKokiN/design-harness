@@ -44,6 +44,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+# **案件の拡張子を rules.json から導く**（tools/_source_ext.py）。
+# 道具に *.dart を直書きすると、Swift の案件で「0 件」のまま通る
+from _source_ext import rglob_sources, is_generated  # noqa: E402
 
 #: 起点。ここから辿る。
 START = '/'
@@ -60,9 +63,9 @@ def collect(lib: Path):
     """
     defined, elsewhere = {}, set()
     _ALL_SRC[str(lib)] = "\n".join(
-        f.read_text(encoding='utf-8', errors='ignore') for f in lib.rglob('*.dart')
+        f.read_text(encoding='utf-8', errors='ignore') for f in rglob_sources(lib)
         if 'catalog' not in f.parts)
-    for f in sorted(lib.rglob('*.dart')):
+    for f in rglob_sources(lib):
         if 'catalog' in f.parts:
             continue
         src = f.read_text(encoding='utf-8')

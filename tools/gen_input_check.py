@@ -80,7 +80,7 @@ def main(argv=None):
     ap.add_argument("--root", type=Path, default=Path("."))
     ap.add_argument("--claims", nargs="*",
                     default=["lib/**/*.dart", "lib/**/*.ts", "src/**/*.ts",
-                             "src/**/*.css"],
+                             "src/**/*.css", "Sources/**/*.swift"],
                     help="「自動生成」を名乗るファイルを探す範囲")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)

@@ -62,6 +62,9 @@ from figma_names import to_identifier   # noqa: E402  規則の唯一の正
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+# **案件の拡張子を rules.json から導く**（tools/_source_ext.py）。
+# 道具に *.dart を直書きすると、Swift の案件で「0 件」のまま通る
+from _source_ext import rglob_sources, is_generated  # noqa: E402
 
 
 def figma_names(export_paths):
@@ -189,7 +192,7 @@ def check_impl_targets(map_path, root, lib_dir="lib"):
     lib = Path(root) / lib_dir
     texts = {}
     if lib.exists():
-        for f in sorted(lib.rglob("*.dart")):
+        for f in rglob_sources(lib):
             try:
                 texts[f] = f.read_text(encoding="utf-8", errors="ignore")
             except OSError:
