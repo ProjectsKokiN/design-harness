@@ -220,6 +220,12 @@ def _closure_body(text, at):
 
 
 AUDIT_RX = re.compile(r"performAccessibilityAudit\b")
+# **記録モード。** 記録している間は比べないので、**見た目が変わっても全部通ります。**
+# 基準を取り直すときに立てて、戻し忘れる形が典型です（2026-09-18 追加）。
+RECORD_RX = re.compile(
+    r"\bisRecording\s*=\s*true\b|"
+    r"withSnapshotTesting\s*\([^)]*record\s*:\s*\.(?:all|failed|missing)\b|"
+    r"\brecord\s*:\s*true\b")
 KEEP_RX = re.compile(r"\.append\(|=\s*issue\b|issues\b\s*\+=|XCTFail|XCTAssert")
 EXPECT_FAILURE_RX = re.compile(r"\bXCTExpectFailure\s*\(")
 
@@ -252,6 +258,14 @@ def check_swallowed_swift(tests, base):
             out.append((f.relative_to(base), at,
                         "performAccessibilityAudit の指摘を握って**どこにも残していません**。"
                         "この画面の読み上げ・文字拡大・コントラストは**永久に見えません**"))
+        for m in RECORD_RX.finditer(text):
+            at = text[:m.start()].count("\n") + 1
+            if ignored(lines, at):
+                continue
+            out.append((f.relative_to(base), at,
+                        "見た目の検査が**記録モード**になっています。"
+                        "記録している間は比べないので、**見た目が変わっても全部通ります**。"
+                        "基準を取り直したら戻すこと"))
         for m in EXPECT_FAILURE_RX.finditer(text):
             at = text[:m.start()].count("\n") + 1
             if ignored(lines, at):
@@ -808,14 +822,13 @@ def main(argv=None):
         findings = []
         for path, ln, why in check_swallowed_swift(tests, base):
             findings.append(f"  [握って捨てている] {path}:{ln} {why}")
-        print("注意: Swift では形1（指摘を握って捨てる）だけを見ています。"
-              "形3・4・5・7 の Swift 版はまだありません。")
+        print("注意: Swift では形1（指摘を握って捨てる／記録モードのまま）と\n  XCTExpectFailure を見ています。形3・4・5・7 の Swift 版はまだありません。")
         if findings:
             print(f"検査が回っているのに何も見ていない書き方があります"
                   f"（検査 {len(tests)} ファイル・swift）:", file=sys.stderr)
             print("\n".join(findings), file=sys.stderr)
             return 1
-        print(f"空振りの書き方 0件（検査 {len(tests)} ファイル・swift / 見た形: 1）。")
+        print(f"空振りの書き方 0件（検査 {len(tests)} ファイル・swift / 見た形: 2）。")
         return 0
 
     if stack == "web":
@@ -1253,6 +1266,22 @@ def self_test():
                             "  func testA() { XCTExpectFailure(\"あとで\") }\n}\n")
         if rc != 1 or "XCTExpectFailure" not in out:
             print(f"self-test NG(swift): XCTExpectFailure を見逃しました rc={rc}"); ok = False
+
+        # **記録モードのまま**（2026-09-18）。比べないので全部通る
+        for src, why in (
+            ("  func testA() { isRecording = true }\n", "isRecording"),
+            ("  func testA() { withSnapshotTesting(record: .all) { } }\n", "record: .all"),
+        ):
+            rc, out = run_swift("import XCTest\nfinal class AppTests: XCTestCase {\n"
+                                + src + "}\n")
+            if rc != 1 or "記録モード" not in out:
+                print(f"self-test NG(swift): {why} を見逃しました rc={rc}"); ok = False
+
+        # **基準を取り直す正しい書き方は咎めない**（記録モードでない）
+        rc, out = run_swift("import XCTest\nfinal class AppTests: XCTestCase {\n"
+                            "  func testA() { assertSnapshot(of: v, as: .image) }\n}\n")
+        if rc != 0:
+            print(f"self-test NG(swift): 普通の snapshot を咎めました rc={rc}\n{out}"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
