@@ -350,10 +350,19 @@ step "見なかったもの（条件8: gap_report）" \
 # テストが 0 本**になりました。`verify.sh` は 21 段すべて緑のまま、
 # **アプリが起動して即座に壊れている状態**を2回通しました
 # （どちらもユーザーが実機で見つけました）。
-step "静的解析"        {{flutter analyze / npx tsc --noEmit}}
+step "静的解析"        {{flutter analyze / npx tsc --noEmit / swift build && swiftlint --strict}}
 step "生成物のべき等（生成し直して差分が出ないか）" \
   "$PY" "$HARNESS/tools/gen_verify.py"
-step "テスト"          {{flutter test / npm test}}
+step "テスト"          {{flutter test / npm test / xcodebuild test -scheme <名前> -destination <端末>}}
+
+# **SwiftUI の案件では、読み上げ・文字拡大・コントラストを XCTest の
+# `performAccessibilityAudit()` が見ます**（2026-09-18 追加）。
+# Flutter で自作していた2つの検査（押せるものの名前・文字拡大時の破綻）に当たります。
+# テンプレート: skills/mobile-harness-setup/references/templates/a11y-audit-test.swift.template
+#
+# **ガラスの面は描画の実測（snapshot）に向きません。** 後ろの内容で見た目が
+# 変わるので、同じ入力でも同じ画像になりません。外す場合は design/gaps.json に
+# 「かわりに何で見るか」を書いてください。
 
 if [ "$FAILED" -ne 0 ]; then
   echo "検証に失敗しました。上の NG を直してから再実行してください。"
