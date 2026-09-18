@@ -190,6 +190,78 @@ def dart_files(root):
             if ".dart_tool" not in f.parts and "build" not in f.parts]
 
 
+SWIFT_TEST_RX = re.compile(r"(?:Tests?|Spec)\.swift$")
+
+
+def swift_test_files(root):
+    """XCTest のファイル。`*Tests.swift` / `*Test.swift` / `*Spec.swift`。"""
+    if not root or not root.exists():
+        return []
+    return [f for f in sorted(root.rglob("*.swift"))
+            if SWIFT_TEST_RX.search(f.name)
+            and ".build" not in f.parts and "DerivedData" not in f.parts]
+
+
+def _closure_body(text, at):
+    """`at` の位置から始まる `{ ... }` の中身を返す（入れ子の波括弧を数える）。"""
+    i = text.find("{", at)
+    if i < 0:
+        return ""
+    depth, j = 0, i
+    while j < len(text):
+        if text[j] == "{":
+            depth += 1
+        elif text[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[i + 1:j]
+        j += 1
+    return ""
+
+
+AUDIT_RX = re.compile(r"performAccessibilityAudit\b")
+KEEP_RX = re.compile(r"\.append\(|=\s*issue\b|issues\b\s*\+=|XCTFail|XCTAssert")
+EXPECT_FAILURE_RX = re.compile(r"\bXCTExpectFailure\s*\(")
+
+
+def check_swallowed_swift(tests, base):
+    """形1 の Swift 版: **指摘を握って捨てている。**
+
+    `performAccessibilityAudit { _ in true }` は、**指摘を受け取ったと答えるだけで
+    どこにも残しません。** XCTest は失敗として記録しないので、
+    **その画面の読み上げ・文字拡大・コントラストは永久に見えません。**
+
+    2026-09-18、**この道具を書いた本人が同じ形を書きました**（Mac mini の実測で判明）。
+    握る形そのものは正しく、**握ったものを残さないこと**が空振りです。
+
+    `XCTExpectFailure` も見ます。**落ちることを期待する検査は落ちません。**
+    """
+    out = []
+    for f in tests:
+        text = f.read_text(encoding="utf-8", errors="ignore")
+        lines = text.splitlines()
+        for m in AUDIT_RX.finditer(text):
+            body = _closure_body(text, m.end())
+            if not body:
+                continue  # クロージャを渡していない＝握っていない
+            if KEEP_RX.search(body):
+                continue  # 残している
+            at = text[:m.start()].count("\n") + 1
+            if ignored(lines, at):
+                continue
+            out.append((f.relative_to(base), at,
+                        "performAccessibilityAudit の指摘を握って**どこにも残していません**。"
+                        "この画面の読み上げ・文字拡大・コントラストは**永久に見えません**"))
+        for m in EXPECT_FAILURE_RX.finditer(text):
+            at = text[:m.start()].count("\n") + 1
+            if ignored(lines, at):
+                continue
+            out.append((f.relative_to(base), at,
+                        "XCTExpectFailure は**落ちることを期待する**ので、"
+                        "この検査は落ちません。直すか、外すこと"))
+    return out
+
+
 WEB_TEST_RX = re.compile(r"\.(?:test|spec)\.(?:mjs|js|cjs|ts)$")
 
 
@@ -211,10 +283,12 @@ def detect_stack(conf, tests_dir):
     `*.dart` しか歩かれず「検査が1つもありません」で 2 を返していた。
     """
     st = str(conf.get("stack") or "").lower()
-    if st in ("web", "dart"):
+    if st in ("web", "dart", "swift"):
         return st
     if dart_files(tests_dir):
         return "dart"
+    if swift_test_files(tests_dir):
+        return "swift"
     if web_test_files(tests_dir):
         return "web"
     return "dart"
@@ -718,12 +792,31 @@ def main(argv=None):
     exports = [base / p for p in conf.get("exports", ["design"])]
 
     stack = detect_stack(conf, tests_dir)
-    tests = dart_files(tests_dir) if stack == "dart" else web_test_files(tests_dir)
+    tests = (dart_files(tests_dir) if stack == "dart"
+             else swift_test_files(tests_dir) if stack == "swift"
+             else web_test_files(tests_dir))
     if not tests:
         print(f"検査が1つもありません: {tests_dir}（{stack}）\n"
               f"  **この道具の「0件」は『見ていない』であって『綺麗』ではありません。**",
               file=sys.stderr)
         return 2
+
+    if stack == "swift":
+        # **Swift は形1（指摘を握って捨てる）だけを見ます**（2026-09-18）。
+        # 形3（`lib/` の識別子）・形4（緩い finder）・形7（文字幅）は Dart の書き方で、
+        # Swift に対応する形をまだ決めていない。**見ていないものは見ていないと出す**
+        findings = []
+        for path, ln, why in check_swallowed_swift(tests, base):
+            findings.append(f"  [握って捨てている] {path}:{ln} {why}")
+        print("注意: Swift では形1（指摘を握って捨てる）だけを見ています。"
+              "形3・4・5・7 の Swift 版はまだありません。")
+        if findings:
+            print(f"検査が回っているのに何も見ていない書き方があります"
+                  f"（検査 {len(tests)} ファイル・swift）:", file=sys.stderr)
+            print("\n".join(findings), file=sys.stderr)
+            return 1
+        print(f"空振りの書き方 0件（検査 {len(tests)} ファイル・swift / 見た形: 1）。")
+        return 0
 
     if stack == "web":
         # **Web は形4（緩い finder）だけを見ます**（#106）。形1（takeException）・
@@ -1111,6 +1204,55 @@ def self_test():
         ok &= _ck(top_level_alternation(r"(\.a|\.b):hover") is False, "括られた | を咎めた")
         ok &= _ck(top_level_alternation(r"[|]") is False, "文字クラスの中の | を咎めた")
         ok &= _ck(top_level_alternation(r"\|") is False, "エスケープされた | を咎めた")
+
+
+    # ---- Swift の場（2026-09-18）。**握って捨てる形を捕まえるか** ----
+    import contextlib as _ctx, io as _io, tempfile as _tmp
+    with _tmp.TemporaryDirectory() as td2:
+        r2 = Path(td2)
+        (r2 / "Tests").mkdir(); (r2 / "Sources").mkdir()
+        c2 = r2 / "hollow.json"
+        c2.write_text(json.dumps({"tests": "Tests", "lib": "Sources"}), encoding="utf-8")
+        tf = r2 / "Tests" / "AppTests.swift"
+
+        def run_swift(src):
+            tf.write_text(src, encoding="utf-8")
+            buf = _io.StringIO()
+            with _ctx.redirect_stdout(buf), _ctx.redirect_stderr(buf):
+                rc = main(["--config", str(c2), "--root", str(r2)])
+            return rc, buf.getvalue()
+
+        HELD = ("import XCTest\n"
+                "final class AppTests: XCTestCase {\n"
+                "  func testA() throws {\n"
+                "    try app.performAccessibilityAudit { _ in\n"
+                "      return true\n"
+                "    }\n"
+                "  }\n"
+                "}\n")
+        rc, out = run_swift(HELD)
+        if rc != 1 or "握って" not in out:
+            print(f"self-test NG(swift): 握って捨てる形を捕まえませんでした rc={rc}"); ok = False
+
+        KEPT = ("import XCTest\n"
+                "final class AppTests: XCTestCase {\n"
+                "  func testA() throws {\n"
+                "    var issues: [XCUIAccessibilityAuditIssue] = []\n"
+                "    try app.performAccessibilityAudit { issue in\n"
+                "      issues.append(issue)\n"
+                "      return true\n"
+                "    }\n"
+                "    XCTAssertTrue(issues.isEmpty)\n"
+                "  }\n"
+                "}\n")
+        rc, out = run_swift(KEPT)
+        if rc != 0:
+            print(f"self-test NG(swift): 残している書き方を咎めました rc={rc}\n{out}"); ok = False
+
+        rc, out = run_swift("import XCTest\nfinal class AppTests: XCTestCase {\n"
+                            "  func testA() { XCTExpectFailure(\"あとで\") }\n}\n")
+        if rc != 1 or "XCTExpectFailure" not in out:
+            print(f"self-test NG(swift): XCTExpectFailure を見逃しました rc={rc}"); ok = False
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
