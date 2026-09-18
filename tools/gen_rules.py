@@ -77,6 +77,19 @@ def alts(values):
     return "|".join(fmt(v) for v in sorted(set(values), key=float, reverse=True))
 
 
+def offscale(values, lo=1, hi=10000):
+    """**段に無い値**を1つ導く。仕込み（必ず当たる例）に使う。
+
+    段の中から選ぶと「当たらないのが正しい」ので、外にある値が要ります。
+    **手で書くと段が変わったときに置き去りになる**ので、段から導きます。
+    """
+    have = {float(v) for v in values}
+    for n in range(lo, hi):
+        if float(n) not in have:
+            return n
+    raise ValueError("段に無い値が見つかりません")  # mutation-ok: 段が 1..hi を埋め尽くす場合
+
+
 @builder("flutter", "radius")
 def _radius(values, src, severity):
     return {
@@ -88,6 +101,11 @@ def _radius(values, src, severity):
         "instead": f"角丸トークンの段を使う（{src} の段: {', '.join(fmt(v) for v in sorted(set(values), key=float))}）。"
                    "必要な段が無ければ実装せず token-missing で報告する",
         "generatedFrom": src,
+        "_selftest": {
+            "bad": [f"BorderRadius.circular({offscale(values)})"],
+            "good": [f"BorderRadius.circular({fmt(v)})".replace("\\.", ".")
+                     for v in sorted(set(values), key=float)],
+        },
     }
 
 
@@ -103,6 +121,12 @@ def _weight(values, src, severity):
         "instead": f"ウェイトの段を使う（{src} の段: {', '.join(fmt(v) for v in sorted(set(values), key=float))}）。"
                    "FontWeight.bold は段が曖昧なので使わない",
         "generatedFrom": src,
+        "_selftest": {
+            "bad": ["FontWeight.bold",
+                    f"FontWeight.w{offscale(values, lo=100)}"],
+            "good": [f"FontWeight.w{fmt(v)}".replace("\\.", ".")
+                     for v in sorted(set(values), key=float)],
+        },
     }
 
 
