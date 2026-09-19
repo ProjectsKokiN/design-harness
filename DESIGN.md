@@ -33,7 +33,7 @@ git -C design/harness pull origin main
 原則・品質フロア・検証の段・語彙・モデルの使い分けは**このファイルが正本**なので、
 案件側に写さないでください（写しがあると `design_md_check.py` が落ちます）。
 
-`## スタック` には `flutter` / `web` のどちらかを書きます。
+`## スタック` には `flutter` / `swift` / `web` のどれかを書きます。
 下の品質フロアは、この宣言で適用範囲が決まります。
 
 ---
@@ -276,6 +276,27 @@ aub-familywalk の実測（2026-09-03）: カタログの鮮度のハッシュ�
 - テキストスケール **1.3 倍**でもレイアウトが崩れない（端末の文字サイズ設定）
 - タップ領域は最小 **48dp**（iOS の 44pt を満たす値として 48 に統一）
 - 画面回転・分割ビューで破綻しない（対応しない場合は明示的に固定する）
+
+### スタック: swift（iOS アプリ）
+
+**2026-09-19 追加。** PlantTalk iOS が `swift` と宣言して `design_md_check.py` が
+落ちたため足しました（**嘘の `flutter` を書かせないため**）。
+
+- SafeArea / ノッチ対応（`flutter` と同じ）
+- **タップ領域は最小 44pt**（HIG の値。`flutter` 節が 48dp なのは Android と揃えるため。
+  iOS 単独なら 44 が素直です）
+- **文字の大きさは倍率ではなく Dynamic Type の段で見る。**
+  受け入れ条件は `XCUIApplication.performAccessibilityAudit(.dynamicType)` が通ること。
+  **固定サイズ（`.system(size:)`）を使わない**——使うと段に載らず、この検査も成立しません
+- **文字・区切り線・背景は Apple のセマンティックカラーを名前で参照する**
+  （`.primary` / `Color(.label)` / `Color(.separator)`）。**値で書かない。**
+  iOS 26 以降のガラスは背面の内容で明るさが変わるので、固定した色は読めなくなります。
+  `rules-swift.json` の `no-apple-color-by-value` と対です
+- 画面回転・分割ビューで破綻しない（対応しない場合は明示的に固定する）
+
+**確信度 中。** 44pt と Dynamic Type は HIG と XCTest の仕様から導いた値で、
+**実機で確かめたのは読み上げの検査だけ**です（2026-09-18・Mac mini）。
+実機で合わない点が出たら、ここを直してください。
 
 ### スタック: web
 
