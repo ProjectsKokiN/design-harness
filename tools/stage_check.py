@@ -73,6 +73,10 @@ import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf
 
 HERE = Path(__file__).resolve().parent
 STEP_RX = re.compile(r'^\s*(?:step|note)\s+"([^"]+)"\s+(.*)$')
+#: **段の終わり。**ここから先は後始末で、段ではない（2026-09-19）。
+#: 入れないと、末尾で呼ぶ道具（not_yet_check.py など）が**最後の段の一部**として
+#: 読まれ、その段の照合が狂う。実際に `テスト` が `flutter test` と一致しなくなった
+TAIL_RX = re.compile(r'^\s*if\s+\[\s+"\$FAILED"\s+-ne\s+0\s+\]')
 TOOL_RX = re.compile(r'(?:\$HARNESS|harness)/tools/([a-z_]+)\.py')
 #: 段が走らせるファイルの名前（パスは落とす）。案件シム経由でも同じ名前になる
 FILE_RX = re.compile(r"(?:^|[\s/\"'])([a-z_][a-z0-9_]*\.(?:py|sh))\b")
@@ -784,6 +788,8 @@ def template_stages(path):
     out, label, buf = {}, None, []
     lines = logical_lines(logical_text(path.read_text(encoding="utf-8")))
     for line in lines + [None]:
+        if line is not None and TAIL_RX.match(line):
+            line = None                  # **ここから先は後始末。段ではない**
         m = STEP_RX.match(line) if line is not None else None
         if m or line is None:
             if label is not None:
@@ -967,6 +973,8 @@ def removed_stages(verify_path):
         out, label, buf = {}, None, []
         ls = logical_lines(logical_text(text))
         for line in ls + [None]:
+            if line is not None and TAIL_RX.match(line):
+                line = None              # **ここから先は後始末。段ではない**
             m = STEP_RX.match(line) if line is not None else None
             if m or line is None:
                 if label is not None:
