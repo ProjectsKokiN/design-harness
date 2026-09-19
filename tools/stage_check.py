@@ -62,10 +62,16 @@
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import time
 from datetime import date
+
+#: self-test 1 本あたりの上限（秒）。**時間切れは 2（確かめられなかった）**として扱う。
+#: 遅い機体・CI では HARNESS_SELFTEST_TIMEOUT に秒を入れて伸ばせる。
+SELFTEST_TIMEOUT = int(os.environ.get("HARNESS_SELFTEST_TIMEOUT", "300"))
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -1844,6 +1850,7 @@ def main(argv=None):
 
     exceptions = documented_exceptions(args.readme)
     problems, foreign, checked = [], [], []
+    slow, slow_note = [], []
 
     _src = args.verify.read_text(encoding="utf-8")
 
@@ -1885,13 +1892,34 @@ def main(argv=None):
             if not args.run:
                 checked.append(name)
                 continue
-            r = subprocess.run([sys.executable, str(path), "--self-test"],
-                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+            # **時間切れは「違反」ではなく「確かめられなかった」**（2026-09-20 追加）。
+            # それまでは TimeoutExpired がそのまま上がり、traceback で段が NG に
+            # なっていた。**落ちるかどうかが機体の速さで決まる関門は、関門ではない。**
+            #
+            # 実測（PlantTalk・MacBook Air・2026-09-20）: 同じ machine_scope.py の
+            # self-test が、あるときは 12 秒、あるときは 180 秒で時間切れ。
+            # 原因はこの道具ではなく**機体側**で、`git --version` 1 回に 1.4 秒
+            # かかっていた（`/bin/echo` は 0.19 秒）。self-test は git を 100 回
+            # 近く呼ぶので、そのまま分単位になる。
+            t0 = time.time()
+            try:
+                r = subprocess.run([sys.executable, str(path), "--self-test"],
+                                   capture_output=True, text=True, encoding="utf-8",
+                                   errors="replace", timeout=SELFTEST_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                slow.append(f"「{label}」の {name}.py の self-test が "
+                            f"{SELFTEST_TIMEOUT} 秒で終わりませんでした。"
+                            f"**落ちたのではなく、確かめられていません。**")
+                continue
             if r.returncode != 0:
                 problems.append(f"「{label}」の {name}.py の self-test が落ちました:\n"
                                 f"      {r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr.strip()[:150]}")
             else:
                 checked.append(name)
+                took = time.time() - t0
+                if took > SELFTEST_TIMEOUT / 3:
+                    slow_note.append(f"  {name}: {took:.0f} 秒"
+                                     f"（上限 {SELFTEST_TIMEOUT} 秒の 1/3 を超えました）")
 
     # 空振り検知: 中身があるのに1つも拾えていないなら、読み方が合っていない
     meaningful = [l for l in lines
@@ -1966,6 +1994,24 @@ def main(argv=None):
                 + "\n    **持っているだけでは何も証明していません。**"
                   "落ちるケースを足してください")
 
+    if slow_note:
+        print("**self-test に時間がかかっています**（機体が遅いと時間切れになります）:")
+        for n in slow_note:
+            print(n)
+    if slow and not problems:
+        # **違反ではない。**確かめられなかったので 2。1 に混ぜると「落ちた」と
+        # 読めてしまい、宣言で覆う話になる。**落ちるかどうかが機体の速さで
+        # 決まる関門は、関門ではない。**
+        print("self-test を確かめられませんでした（**落ちたのではありません**）:",
+              file=sys.stderr)
+        for n in slow:
+            print(f"  - {n}", file=sys.stderr)
+        print(f"  上限は HARNESS_SELFTEST_TIMEOUT で伸ばせます（いま {SELFTEST_TIMEOUT} 秒）。\n"
+              f"  **機体が遅いだけのことがあります。**PlantTalk の実測（2026-09-20）では "
+              f"`git --version` 1 回に 1.4 秒かかっていました（`/bin/echo` は 0.19 秒）",
+              file=sys.stderr)
+        return 2
+    problems.extend(slow)
     if problems:
         print("\n落ちるところを見ていない段があります:", file=sys.stderr)
         for p in problems:
@@ -2020,6 +2066,32 @@ def self_test():
         if run('step "よい段" "$PY" "$HARNESS/tools/good.py"\n',
                with_stages=False) != 1:
             print("self-test NG: **段の数を見る段が無いのに通した**（#99）"); ok = False
+
+        # ─── **時間切れは 2（確かめられなかった）**（2026-09-20）─────────
+        # それまでは TimeoutExpired がそのまま上がり、traceback で段が NG に
+        # なっていた。**落ちるかどうかが機体の速さで決まる関門は、関門ではない。**
+        # 実測（PlantTalk・MacBook Air）: 同じ self-test が 12 秒のときと
+        # 180 秒で時間切れのときがあり、原因は道具ではなく機体だった
+        # （`git --version` 1 回に 1.4 秒）。
+        (tools / "slow.py").write_text(
+            "import sys, time\ndef self_test():\n    time.sleep(5)\n    return 0\n"
+            "if __name__ == '__main__':\n    sys.exit(self_test())\n", encoding="utf-8")
+        g = globals()
+        keep_to = g["SELFTEST_TIMEOUT"]
+        g["SELFTEST_TIMEOUT"] = 1
+        rc_slow = run('step "遅い段" "$PY" "$HARNESS/tools/slow.py"\n')
+        g["SELFTEST_TIMEOUT"] = keep_to
+        if rc_slow != 2:
+            print(f"self-test NG: **時間切れを 2 で返していません**（返り値 {rc_slow}）"); ok = False
+
+        # **時間切れと本当の違反が混ざったら 1。**「確かめられなかった」で
+        # 覆い隠さない
+        g["SELFTEST_TIMEOUT"] = 1
+        rc_mix = run('step "遅い段" "$PY" "$HARNESS/tools/slow.py"\n'
+                     'step "落ちる段" "$PY" "$HARNESS/tools/failing.py"\n')
+        g["SELFTEST_TIMEOUT"] = keep_to
+        if rc_mix != 1:
+            print(f"self-test NG: **違反が混ざっているのに 1 を返していません**（{rc_mix}）"); ok = False
 
         if run('step "よい段" "$PY" "$HARNESS/tools/good.py"\n') != 0:
             print("self-test NG: self-test のある道具で落ちた"); ok = False
