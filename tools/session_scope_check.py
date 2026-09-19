@@ -72,14 +72,33 @@ def owner_of(path, owners, shared):
 
 
 def commits_to_check(root):
-    """押そうとしているコミット。上流が無ければ HEAD 1 件。"""
+    """押そうとしているコミットと、そのときの状態を返す。
+
+    返す状態は 3 つです。**「押すものが無い」と「確かめられない」を分けます。**
+
+        "ある"       … 押すコミットがある。中身を見る
+        "押すもの無し" … 上流と同じ。**判断する対象が無いだけで、異常ではない**
+        "履歴無し"    … コミットが 1 つも無い。**確かめられない**
+
+    2026-09-20 に PlantTalk から指摘されて分けました。それまでは
+    「押すものが無い」も 0 件として `2` を返しており、**押し切った直後は必ず
+    落ちました。**何も悪いことをしていない状態で、次に押す人が自分と関係のない
+    NG を 1 件抱えて始めることになります。
+
+    **「0 件は綺麗ではなく見ていない」は、見るべきものが在るときの話です。**
+    押すコミットが無いときは、見るべきものが無いだけです。
+    """
+    rc3, head = git(root, "rev-parse", "HEAD")
+    if rc3 != 0 or not head:
+        return [], "履歴無し"
     rc, up = git(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
     if rc == 0 and up:
         rc2, out = git(root, "rev-list", f"{up}..HEAD")
         if rc2 == 0:
-            return [c for c in out.splitlines() if c]
-    rc3, head = git(root, "rev-parse", "HEAD")
-    return [head] if rc3 == 0 and head else []
+            shas = [c for c in out.splitlines() if c]
+            return (shas, "ある") if shas else ([], "押すもの無し")
+    # 上流が無い（枝を切った直後など）。HEAD だけ見る
+    return [head], "ある"
 
 
 def files_of(root, sha):
@@ -108,10 +127,12 @@ def main(argv=None) -> int:
         print("担当が 2 つ未満です。**分けるものが無いなら、この段は要りません。**", file=sys.stderr)
         return 2
 
-    shas = commits_to_check(root)
-    if not shas:
-        print("見るコミットが 1 件もありません。**0 件は『綺麗』ではなく『見ていない』です。**",
-              file=sys.stderr)
+    shas, state = commits_to_check(root)
+    if state == "押すもの無し":
+        print("担当の混ざり: **押すコミットがありません**（上流と同じです）。見るものがありません")
+        return 0
+    if state == "履歴無し":
+        print("コミットが 1 つもありません。**確かめられません。**", file=sys.stderr)
         return 2
 
     bad = []
@@ -229,7 +250,17 @@ def self_test() -> int:
             print("self-test NG: 担当 1 つで 2 を返しませんでした"); ok = False
         write()
 
-        # **見るコミットが 0 件なら 2**（`0 件は「綺麗」ではなく「見ていない」`）
+        # **押すものが無いときは 0。**（2026-09-20・PlantTalk の指摘）
+        # 押し切った直後は必ずこの状態になる。**何も悪いことをしていないのに
+        # 落ちると、次に押す人が自分と関係のない NG を抱えて始める。**
+        git(root, "remote", "add", "origin", str(root))
+        git(root, "update-ref", "refs/remotes/origin/master", "HEAD")
+        git(root, "branch", "--set-upstream-to=origin/master")
+        if run() != 0:
+            print("self-test NG: **押すものが無いのに落ちました**"); ok = False
+        git(root, "branch", "--unset-upstream")
+
+        # **コミットが 1 つも無ければ 2**
         with tempfile.TemporaryDirectory() as td2:
             empty = Path(td2)
             (empty / "design").mkdir()
@@ -239,7 +270,7 @@ def self_test() -> int:
             ecfg = empty / "design" / "session-scope.json"
             ecfg.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
             if main(["--config", str(ecfg), "--root", str(empty)]) != 2:
-                print("self-test NG: **コミット 0 件を通しました**（見ていないのに緑）"); ok = False
+                print("self-test NG: **履歴が無いのに通しました**（確かめられないのに緑）"); ok = False
 
         # **宣言が無ければ 2**
         cfgp.unlink()
