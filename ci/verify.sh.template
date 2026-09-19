@@ -24,6 +24,21 @@ FAILED=0
 FAILED_LIST="$(mktemp -t harness_failed.XXXXXX)"
 trap 'rm -f "$FAILED_LIST"' EXIT
 
+# --- 秘密を、検査の中で読む（2026-09-19・PlantTalk で踏んだ）-----------------
+# **pre-push フックと CI には対話セッションの環境変数が届きません。**
+# 鮮度の段（条件4）はそこで毎回「トークンが無い」で止まり、**その理由で
+# 保留され続けます。**手元では `source ~/.claude/.env` を打てば測れるので、
+# 「環境の問題」という理由が正しいのは**フックと CI だけ**です。
+# 検査自身が読めば、手元とフックの両方で本当に測れます。
+#
+# **値は出しません。**`set -a` で export し、`set +a` で戻すだけです。
+# 無い機体（Windows・CI）では静かに飛ばし、段のほうが 2 で止まります。
+if [ -z "${FIGMA_TOKEN:-}" ] && [ -f "$HOME/.claude/.env" ]; then
+  set -a
+  . "$HOME/.claude/.env" 2>/dev/null || true
+  set +a
+fi
+
 # --- python の版を先に見る（design-harness #128）------------------------------
 # **道具は 3.10 以上を前提にしています。** macOS 既定の /usr/bin/python3 は 3.9 で、
 # `write_text() got an unexpected keyword argument 'newline'` のような
