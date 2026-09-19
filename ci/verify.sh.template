@@ -197,6 +197,14 @@ step "鮮度（条件4: Figma 本体 → 書き出し。design/ の担当機の�
 # 受信箱が枝に取り残される）。ネットワークも認証も要らない
 step "共有されているか（衝突・レジストリ・受信箱）" \
   "$PY" "$HARNESS/tools/shared_check.py" --conflict \
+# **上流管理の submodule に、行き場のない変更が当たっていないか**（2026-09-19 追加）。
+# submodule の中身は上流のものなので、こちらからは commit も push もできません。
+# **`git submodule update` を打つと黙って消えます。**
+# 実害: `~/.claude` の `skills/frontend-slides`（CLAUDE.md が「ここで直接改変しません」と
+# 宣言している）に +17 行が当たったままでした。**誰がいつ当てたかの記録はありません。**
+step "上流の submodule（行き場のない変更が無いか）" \
+  "$PY" "$HARNESS/tools/shared_check.py" --submodules
+
     --shared design/machine-scope.json --registry "$HOME/dev/design-systems"
 # **複数ファイル・複数担当に散る1つの値**（表示名など）。
 # FlashEnglish では3通りが2日以上混在し、誰も気づかなかった

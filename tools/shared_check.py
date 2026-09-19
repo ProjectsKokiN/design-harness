@@ -138,6 +138,51 @@ def check_registry(path):
 INBOX = ("MACHINE_TASKS.md", "SESSION_LOG.md", "MACHINE_TASKS_ARCHIVE.md")
 
 
+def check_submodules(root):
+    """**上流管理の submodule に、行き場のない変更が当たっていないか**（2026-09-19 新設）。
+
+    submodule の中身は**上流のリポジトリのもの**です。こちらからは commit も
+    push もできないので、作業ツリーに当てた変更は**どこにも共有されません。**
+
+    さらに悪いことに、**`git submodule update` を打つと黙って消えます。**
+    落ちる合図が出ないまま、人の書いたものが失われます。
+
+    実害（2026-09-19・`~/.claude`）: `skills/frontend-slides`（CLAUDE.md が
+    「ここで直接改変しません」と宣言している上流管理の submodule）の `SKILL.md` に
+    +17 行の変更が当たったままでした。**誰がいつ当てたかの記録はありません。**
+    `machine_scope` は担当の外を見て、`shared_check --registry` は隣のクローンを
+    見ていましたが、**submodule の中は誰も見ていませんでした。**
+    """
+    r = run("submodule", "status", "--recursive", cwd=root)
+    if r.returncode != 0:
+        return []
+    errs = []
+    for line in r.stdout.splitlines():
+        line = line.rstrip()
+        if not line:
+            continue
+        # 先頭の印: " " 一致 / "+" ピンとずれている / "-" 未取得 / "U" 衝突
+        mark, rest = line[0], line[1:].strip()
+        parts = rest.split()
+        if len(parts) < 2:
+            continue
+        sha, path = parts[0], parts[1]
+        sub = root / path
+        if mark == "-":
+            errs.append(f"  **submodule が取得されていません**: {path}\n"
+                        f"    `git submodule update --init` を打つまで中身がありません。")
+            continue
+        dirty = run("status", "--porcelain", cwd=sub).stdout.strip()
+        if dirty:
+            n = len(dirty.splitlines())
+            errs.append(
+                f"  **上流管理の submodule に未コミットが {n} 件あります**: {path}\n"
+                f"    中身は上流のものなので、**こちらからは commit も push もできません。**\n"
+                f"    **`git submodule update` を打つと黙って消えます。**\n"
+                + "\n".join(f"      {l}" for l in dirty.splitlines()[:6]))
+    return errs
+
+
 def check_shared(root, conf_path, inbox=INBOX):
     """3台の受信箱が、既定ブランチにあるか（#42）。
 
@@ -285,6 +330,8 @@ def main(argv=None):
     ap.add_argument("--registry", type=Path, help="#51 隣接クローンの置き場")
     ap.add_argument("--shared", type=Path, help="#42 machine-scope.json")
     ap.add_argument("--claims", type=Path, help="#56 入っているはずの宣言")
+    ap.add_argument("--submodules", action="store_true",
+                    help="上流管理の submodule に行き場のない変更が無いか")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
@@ -306,6 +353,9 @@ def main(argv=None):
     if args.registry:
         ran.append("レジストリ")
         errs += check_registry(args.registry)
+    if args.submodules:
+        ran.append("submodule")
+        errs += check_submodules(root)
     if args.shared:
         ran.append("受信箱")
         errs += check_shared(root, args.shared)
@@ -492,6 +542,39 @@ def self_test():
         rc, out = call()
         if rc != 2 or "何も見ていません" not in out:
             print(f"self-test NG: 面の指定なしで通した（{rc}）"); ok = False
+
+    # ---- 上流管理の submodule（2026-09-19）。**落ちることを仕込みで確かめる** ----
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+        base = Path(td)
+        up = repo(base / "upstream")
+        (up / "SKILL.md").write_text("上流の中身\n", encoding="utf-8")
+        g("add", "-A", cwd=up); g("commit", "-qm", "init", cwd=up)
+
+        main_r = repo(base / "main")
+        (main_r / "README.md").write_text("親\n", encoding="utf-8")
+        g("add", "-A", cwd=main_r); g("commit", "-qm", "init", cwd=main_r)
+        r = g("-c", "protocol.file.allow=always", "submodule", "add", "-q",
+              str(up), "sub", cwd=main_r)
+        if r.returncode != 0:
+            print("self-test 情報: submodule を作れないので submodule の場は飛ばします")
+        else:
+            g("commit", "-qm", "add sub", cwd=main_r)
+
+            # **綺麗なら通す**
+            if check_submodules(main_r):
+                print("self-test NG(submodule): 綺麗なのに咎めました"); ok = False
+
+            # **汚したら捕まえる**
+            (main_r / "sub" / "SKILL.md").write_text("手で書き換えた\n", encoding="utf-8")
+            errs = check_submodules(main_r)
+            if not errs or "未コミット" not in "".join(errs):
+                print(f"self-test NG(submodule): 汚れを捕まえませんでした: {errs}"); ok = False
+
+            # **戻したら通す**（偽の赤を出さない）
+            (main_r / "sub" / "SKILL.md").write_text("上流の中身\n", encoding="utf-8")
+            if check_submodules(main_r):
+                print("self-test NG(submodule): 戻したのに咎めました"); ok = False
+
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
 
