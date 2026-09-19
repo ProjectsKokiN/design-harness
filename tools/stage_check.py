@@ -2073,23 +2073,33 @@ def self_test():
         # 実測（PlantTalk・MacBook Air）: 同じ self-test が 12 秒のときと
         # 180 秒で時間切れのときがあり、原因は道具ではなく機体だった
         # （`git --version` 1 回に 1.4 秒）。
-        (tools / "slow.py").write_text(
+        # **遅い道具は専用のディレクトリに置きます。**共通の `tools` に置くと、
+        # **この後ろの全ケースが毎回その sleep を払います**（2026-09-20 に実測:
+        # stage_check 自身の self-test が 4 秒 → 60 秒、CI の段が 191 秒）。
+        slow_tools = base / "tools_slow"; slow_tools.mkdir()
+        for _n in ("stage_check", "failing"):
+            (slow_tools / f"{_n}.py").write_text((tools / f"{_n}.py").read_text(encoding="utf-8"),
+                                                 encoding="utf-8")
+        (slow_tools / "slow.py").write_text(
             "import sys, time\ndef self_test():\n    time.sleep(5)\n    return 0\n"
             "if __name__ == '__main__':\n    sys.exit(self_test())\n", encoding="utf-8")
+        slow_v = base / "verify_slow.sh"
+
+        def run_slow(body):
+            slow_v.write_text(body + _STAGES_LINE, encoding="utf-8")
+            return main(["--verify", str(slow_v), "--tools", str(slow_tools),
+                         "--readme", str(readme)])
+
         g = globals()
         keep_to = g["SELFTEST_TIMEOUT"]
         g["SELFTEST_TIMEOUT"] = 1
-        rc_slow = run('step "遅い段" "$PY" "$HARNESS/tools/slow.py"\n')
+        rc_slow = run_slow('step "遅い段" "$PY" "$HARNESS/tools/slow.py"\n')
+        # **時間切れと本当の違反が混ざったら 1。**「確かめられなかった」で覆い隠さない
+        rc_mix = run_slow('step "遅い段" "$PY" "$HARNESS/tools/slow.py"\n'
+                          'step "落ちる段" "$PY" "$HARNESS/tools/failing.py"\n')
         g["SELFTEST_TIMEOUT"] = keep_to
         if rc_slow != 2:
             print(f"self-test NG: **時間切れを 2 で返していません**（返り値 {rc_slow}）"); ok = False
-
-        # **時間切れと本当の違反が混ざったら 1。**「確かめられなかった」で
-        # 覆い隠さない
-        g["SELFTEST_TIMEOUT"] = 1
-        rc_mix = run('step "遅い段" "$PY" "$HARNESS/tools/slow.py"\n'
-                     'step "落ちる段" "$PY" "$HARNESS/tools/failing.py"\n')
-        g["SELFTEST_TIMEOUT"] = keep_to
         if rc_mix != 1:
             print(f"self-test NG: **違反が混ざっているのに 1 を返していません**（{rc_mix}）"); ok = False
 
