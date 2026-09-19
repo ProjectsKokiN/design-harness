@@ -72,6 +72,9 @@ EXPORT = ROOT / '{{書き出しのパス。例: ../design-systems/<名前>/figma
 FILE_KEY = '{{Figma の fileKey}}'
 #: 参照しないページ（書き出しと同じ。同名の component set を拾わないため）。
 #: **PAGE_SCOPE があればそちらが優先。** 除外方式は残しているが弱い（下記）
+#: 1 回の通信の上限（秒）。**上限が無いと、詰まった日に関門が帰ってこない**
+NET_TIMEOUT = int(os.environ.get('HARNESS_NET_TIMEOUT', '30'))
+
 SKIP_PAGES = ['{{下書きページ名}}', '{{AI出力ページ名}}']
 
 #: 参照してよいページの宣言（`design/figma/page-scope.json` の `allowed`）。
@@ -117,7 +120,18 @@ def get(url: str) -> dict:
               file=sys.stderr)
         raise SystemExit(2)
     req = urllib.request.Request(url, headers={'X-Figma-Token': token})
-    return json.load(urllib.request.urlopen(req))
+    # **待ち時間の上限を必ず付ける。**（2026-09-20）
+    # 付けていなかったため、通信が詰まった日に **`verify.sh` が止まったまま
+    # 帰ってきませんでした**。押す前の関門がここに居るので、**押せなくなります。**
+    # 落ちるのは構いません（2 で「確かめられなかった」と言えます）が、
+    # **返ってこないのは関門として最悪**です。誰も何も判断できません。
+    try:
+        return json.load(urllib.request.urlopen(req, timeout=NET_TIMEOUT))
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        print(f'Figma に繋がりません（{NET_TIMEOUT} 秒で諦めました）: {e}', file=sys.stderr)
+        print('  **鮮度を確かめられませんでした。**回線が戻ってから回し直してください。',
+              file=sys.stderr)
+        raise SystemExit(2)
 
 
 def node_digest(n: dict, names: dict | None = None) -> str:
@@ -382,6 +396,46 @@ def self_test() -> int:
     import os
     import tempfile
     cases = []
+
+    # ── **通信が詰まったら 2 で諦める**（2026-09-20）──────────────────
+    # 上限を付けていなかったため、通信が詰まった日に `verify.sh` が止まったまま
+    # 帰ってきませんでした。**押す前の関門がここに居るので、押せなくなります。**
+    # 落ちるのは構いません（「確かめられなかった」と言えます）が、
+    # **返ってこないのは関門として最悪**です。誰も何も判断できません。
+    _keep_tok = os.environ.get('FIGMA_TOKEN')
+    _keep_open = urllib.request.urlopen
+    # **FILE_KEY も埋める。**埋めないと `get()` の先頭の「未設定なら 2」が先に返り、
+    # `urlopen` まで届きません（2026-09-20 に踏みました。SystemExit の値が 2 で
+    # 同じなので、**通ったように見えます**）
+    _keep_key = globals()['FILE_KEY']
+    globals()['FILE_KEY'] = 'K'
+    os.environ['FIGMA_TOKEN'] = 'x'
+
+    _seen = {}
+
+    def _stuck(*a, **kw):
+        # **上限が渡されたかも見る。**例外の扱いだけ見ていると、
+        # `timeout=` を外しても試験が通ります（2026-09-20 に自分で踏みました）
+        _seen['timeout'] = kw.get('timeout')
+        raise TimeoutError('timed out')
+
+    urllib.request.urlopen = _stuck
+    try:
+        get('https://example.invalid/x')
+        _rc = 0
+    except SystemExit as e:
+        _rc = e.code
+    except Exception:
+        _rc = 'そのまま上がった'
+    finally:
+        urllib.request.urlopen = _keep_open
+        globals()['FILE_KEY'] = _keep_key
+        if _keep_tok is None:
+            os.environ.pop('FIGMA_TOKEN', None)
+        else:
+            os.environ['FIGMA_TOKEN'] = _keep_tok
+    cases.append(('通信が詰まったら 2 で諦める（帰ってこないのが最悪）', _rc == 2))
+    cases.append(('urlopen に待ち時間の上限を渡している', _seen.get('timeout') == NET_TIMEOUT))
 
     # 本題の退行: 名前がずれていても値のずれを隠さない
     r = compare(
