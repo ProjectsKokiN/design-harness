@@ -770,6 +770,30 @@ COND_SKIP = "参考"
 WAIVER_KEYS = ("why", "reviewBy")
 
 
+#: `mktemp -t <雛形>` に `XXXXXX` が無い形。**GNU の mktemp（Linux・CI）で落ちます**
+MKTEMP_RX = re.compile(r"mktemp\s+(?:-[^\s-]*\s+)*-t\s+([^\s\"\')|;&]+)")
+
+
+def bad_mktemp(path):
+    """`mktemp -t` の雛形に `XXXXXX` が無いものを挙げる（2026-09-19）。
+
+    **macOS では通り、Linux では落ちます。**GNU の mktemp は `-t` の雛形に
+    `XXXXXX` を要求し、無いと `too few X's in template` で失敗します。
+
+    実害（2026-09-19・planttalk の CI）: `FAILED_LIST` が作れず、
+    **「まだ測れない」の宣言が黙って効かなくなっていました。**
+    手元（macOS）では通るので、**押すまで気づけません。**私が書いた行でした。
+    """
+    out = []
+    for i, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines()):
+        if line.lstrip().startswith("#"):
+            continue
+        m = MKTEMP_RX.search(line)
+        if m and "XXX" not in m.group(1):
+            out.append((i + 1, m.group(1), line.strip()[:70]))
+    return out
+
+
 def broken_continuations(path):
     """**行継続（`\\`）が注釈や空行で断ち切られていないか**（design-harness #129）。
 
@@ -1440,9 +1464,17 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
                             f"      次の行: {nxt}\n"
                             f"      前の段が引数を黙って失い、宙に浮いた行で止まります"
                             f"（`bash -n` は通ります）")
+    # **`mktemp -t` の雛形に XXXXXX が無いか**（2026-09-19）。macOS では通り Linux で落ちる
+    for f in (template, verify):
+        if f and f.exists():
+            for ln, tpl, src in bad_mktemp(f):
+                cont.append(f"  {f.name}:{ln} **`mktemp -t {tpl}` に `XXXXXX` がありません**\n"
+                            f"      {src}\n"
+                            f"      GNU の mktemp（Linux・CI）は `too few X's in template` で"
+                            f"落ちます。**macOS では通るので手元で気づけません**")
     if cont:
         print("\n".join(cont), file=sys.stderr)
-        print(f"NG: 行継続が {len(cont)} か所で断ち切られています", file=sys.stderr)
+        print(f"NG: shell の書き方が {len(cont)} か所おかしいです", file=sys.stderr)
         return 1
     have, where = project_tools(verify, ci_dir)
     # **見出しでも突き合わせる**（#112）。ファイル名だけだと、同じ道具を呼ぶ

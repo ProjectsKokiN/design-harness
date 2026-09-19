@@ -18,7 +18,10 @@ export PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 FAILED=0
 # **落ちた段の名前を控えます**（design-harness #124）。末尾で「まだ測れない」の
 # 宣言と突き合わせます。**表示は落ちたままにし、関門だけを通します。**
-FAILED_LIST="$(mktemp -t harness_failed)"
+# **`-t` の雛形には `XXXXXX` が要ります。**GNU の mktemp（Linux・CI）は
+# 無いと `too few X's in template` で失敗します。macOS では通るので、
+# **手元で気づけません**（2026-09-19、CI で実際に踏みました）。
+FAILED_LIST="$(mktemp -t harness_failed.XXXXXX)"
 trap 'rm -f "$FAILED_LIST"' EXIT
 
 # --- python の版を先に見る（design-harness #128）------------------------------
