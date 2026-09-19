@@ -52,6 +52,7 @@
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -105,9 +106,36 @@ def check_conflict(root):
             + f"    先に {ref} を取り込んで解いてください。"]
 
 
+def _from_shell(path):
+    """シェルから渡ったパスを、この機体の Path に直す（2026-09-19 Windows）。
+
+    **Git Bash の `$HOME` は `/c/Users/...`** です。Windows の Python はこれを
+    ドライブ文字の無いパスとして読むので、**実在しません**。`verify.sh` は
+    `--registry "$HOME/dev/design-systems"` と渡しているため、Windows では
+    この段が**いつも「git リポジトリではありません」で落ちて**いました。
+
+    同じ日に `~/dev/design-systems` が **21 コミット遅れて**おり、そのせいで
+    別の段（`rules_selftest`）が「_selftest が無い」で落ちていました。
+    **原因と症状が2段離れて見えます。** この段は遅れを見ていなかったので
+    （枝・未コミット・push 前だけ）、遅れを見る分をあわせて足しました。
+
+    macOS と Linux では何もしません（`/c` が実在しうるため、実在する側を優先）。
+    """
+    s = str(path)
+    if os.name == "nt":
+        # **区切りをそろえてから見ます。** `--registry` は argparse の
+        # `type=Path` を通るので、ここに届く時点で `/c/Users/...` は
+        # すでに `\c\Users\...` になっています（2026-09-19 実測）。
+        u = s.replace("\\", "/")
+        m = re.fullmatch(r"/([A-Za-z])(/.*)?", u)
+        if m and not Path(s).exists():
+            s = m.group(1) + ":" + (m.group(2) or "/")
+    return Path(s).expanduser()
+
+
 def check_registry(path):
     """隣接クローンが既定ブランチに居て、未コミットが無いか（#51）。"""
-    p = Path(path).expanduser()
+    p = _from_shell(path)
     if not (p / ".git").exists():
         return [f"  レジストリが git リポジトリではありません: {p}"]
     ref = default_ref(p)
@@ -131,6 +159,17 @@ def check_registry(path):
     if ahead.isdigit() and int(ahead) > 0:
         errs.append(f"  **レジストリが {ahead} コミット先に居ます**（push 前）: {p}\n"
                     f"    push するまで他の機体には届きません。")
+    # **遅れも見ます**（2026-09-19 Windows）。先に居る分だけ見ていたので、
+    # **取り込んでいないだけの機体は緑**でした。実害: `~/dev/design-systems` が
+    # 21 コミット遅れていたため、レジストリのルールに `_selftest` が無い版を読み、
+    # **別の段（`rules_selftest`）が「確かめられない」で落ちて**いました。
+    # 原因はレジストリなのに、症状は2段離れたところに出ます。
+    # `git fetch` はしません（手元の `origin/main` で見ます）。
+    behind = run("rev-list", "--count", f"HEAD..{ref}", cwd=p).stdout.strip()
+    if behind.isdigit() and int(behind) > 0:
+        errs.append(f"  **レジストリが {behind} コミット遅れています**: {p}\n"
+                    f"    古いデザインの書き出しを読んでいます。\n"
+                    f"    `git -C {p} pull --ff-only` で取り込んでください。")
     return errs
 
 
@@ -513,6 +552,23 @@ def self_test():
         if rc != 1 or "しかありません" not in out:
             print(f"self-test NG: 存在しない grep の主張を通した（{rc}）"); ok = False
 
+        # ── シェルから渡るパス（Git Bash の $HOME）──────────────
+        # **Windows でだけ壊れる形**なので、そこでだけ変換を見る
+        if os.name == 'nt':
+            # **argparse を通った形**（これが実際に届く形）
+            got = str(_from_shell(Path('/c/Users')))
+            if not got.lower().startswith('c:'):
+                print(f'self-test NG: Path を通った /c/... を直せなかった（{got}）')
+                ok = False
+            got = str(_from_shell('/c/Users'))
+            if not got.lower().startswith('c:'):
+                print(f'self-test NG: /c/... をドライブに直せなかった（{got}）')
+                ok = False
+        same = base / 'reg-plain'
+        same.mkdir(exist_ok=True)
+        if _from_shell(str(same)) != Path(str(same)):
+            print('self-test NG: 実在するパスを変えてしまった'); ok = False
+
         # ── #51 レジストリ ────────────────────────────────────
         reg_up = repo(base / "regup")
         (reg_up / "t.json").write_text("{}\n", encoding="utf-8")
@@ -537,6 +593,20 @@ def self_test():
         rc, out = call("--registry", str(reg))
         if rc != 1 or "コミット先に居ます" not in out:
             print(f"self-test NG: push 前のレジストリを通した（{rc}）"); ok = False
+
+        # **遅れているレジストリ**（取り込んでいないだけの機体）
+        reg2 = base / "reg2"
+        g("clone", "-q", str(reg_up), str(reg2), cwd=base)
+        g("config", "user.email", "t@t", cwd=reg2); g("config", "user.name", "t", cwd=reg2)
+        rc, out = call("--registry", str(reg2))
+        if rc != 0:
+            print(f"self-test NG: 取り込み済みのレジストリで落ちた（{rc}）"); ok = False
+        (reg_up / "t2.json").write_text("{}\n", encoding="utf-8")
+        g("add", "-A", cwd=reg_up); g("commit", "-qm", "3", cwd=reg_up)
+        g("fetch", "-q", "origin", cwd=reg2)
+        rc, out = call("--registry", str(reg2))
+        if rc != 1 or "コミット遅れています" not in out:
+            print(f"self-test NG: 遅れているレジストリを通した（{rc}）"); ok = False
 
         # 面を指定しなければ落ちる（**何も見ていない**）
         rc, out = call()
