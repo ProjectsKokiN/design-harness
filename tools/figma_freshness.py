@@ -105,6 +105,9 @@ DIGEST_FIELDS = [
 
 
 def get(url: str) -> dict:
+    # **ここで見る。**FILE_KEY は URL を組むときにしか使わないので、
+    # 通信しない経路（self-test は get を差し替える）では不足していてよい
+    require_configured('FILE_KEY')
     token = os.environ.get('FIGMA_TOKEN')
     if not token:
         print('FIGMA_TOKEN がありません。`source ~/.claude/.env` を先に実行してください。\n'
@@ -533,6 +536,37 @@ def self_test() -> int:
                 'componentSets': {'Buttons': {}, 'Header': {}}}
         cases.append(('main: Figma と書き出しが同じなら 0', run_main(base) == 0))
 
+        # **未設定は 2（確かめられなかった）で止まる**（2026-09-19 追加）。
+        # それまでは `{{書き出しのパス…}}` という名前のファイルを開こうとして
+        # FileNotFoundError の traceback になった。traceback は「確かめたうえで
+        # 違反」にも「確かめられなかった」にも読めない。
+        g5 = globals()
+        keep5 = g5['EXPORT']
+        g5['EXPORT'] = Path('{{書き出しのパス。例: ../design-systems/<名前>/figma/components.json}}')
+        rc5 = None
+        keep_argv = sys.argv
+        sys.argv = ['x']          # --selftest が残っていると自分を呼び戻す
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                main()
+        except SystemExit as e:
+            rc5 = e.code
+        except FileNotFoundError:
+            rc5 = 'traceback'
+        finally:
+            sys.argv = keep_argv
+        g5['EXPORT'] = keep5
+        cases.append(('未設定の EXPORT は traceback ではなく 2 で止まる', rc5 == 2))
+
+        # **使わない設定の不足では落ちない**（同日）。self-test は get を
+        # 差し替えるので FILE_KEY を使わない。一律に見る確認だと、ここが落ちた
+        g6 = globals()
+        keep6 = g6['FILE_KEY']
+        g6['FILE_KEY'] = '{{Figma の fileKey}}'
+        ok6 = run_main(base) == 0
+        g6['FILE_KEY'] = keep6
+        cases.append(('通信しない経路では FILE_KEY が雛形のままでも通る', ok6))
+
         # **単体 component を書き出し側に数える**（2026-09-02 に aub から回収）。
         # componentSets だけを見ていたため、書き出しにある Header が
         # 「Figma にしか無い」と報告されていた
@@ -844,7 +878,7 @@ def load_config(path) -> None:
     require_configured()
 
 
-def require_configured() -> None:
+def require_configured(*names: str) -> None:
     """**テンプレートのままなら 2 で止める**（2026-09-19・PlantTalk で踏んだ）。
 
     実害: `--config` を渡さずに呼ぶと、この確認を通らずに
@@ -857,9 +891,18 @@ def require_configured() -> None:
     そのうえ、この段は「FIGMA_TOKEN が環境に無い」という**事実と違う理由**で
     保留されていた。トークンはあり、未設定だったのは道具のほうだった。
     設定漏れが設定漏れとして出ないと、理由が別のものにすり替わる。
+
+    **使う変数だけを見る。**最初は一律に両方見たが、それだと self-test が
+    落ちた（56/56 パス → 2）。self-test は `get` を差し替えるので
+    `FILE_KEY` を使わず、雛形のまま `main()` を呼ぶのが正しい。
+    一律に見る確認は、**使わない設定の不足で落ちる**。
+    EXPORT は読む直前、FILE_KEY は実際に通信する `get()` で見る。
     """
     g = globals()
-    for var, label in (('EXPORT', 'export'), ('FILE_KEY', 'fileKey')):
+    pairs = (('EXPORT', 'export'), ('FILE_KEY', 'fileKey'))
+    if names:
+        pairs = tuple(x for x in pairs if x[0] in names)
+    for var, label in pairs:
         v = str(g[var])
         if '{{' in v:
             print(f'設定に {label} がありません（テンプレートのままです）: {v}',
@@ -976,7 +1019,7 @@ def main() -> int:
     if '--config' in sys.argv:
         load_config(sys.argv[sys.argv.index('--config') + 1])
     update = '--update' in sys.argv
-    require_configured()
+    require_configured('EXPORT')
     doc = json.loads(EXPORT.read_text(encoding='utf-8'))
     saved = (doc['$meta'].get('restDigests') or {})
     now = read_sets()
