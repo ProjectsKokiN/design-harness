@@ -71,6 +71,35 @@ def owner_of(path, owners, shared):
     return hit
 
 
+
+def working_tree_owners(root, owners, shared):
+    """**いま作業ツリーに変更があるのは、どの担当か**を返す。
+
+    2 つ以上あれば、**2 つのセッションが同時に作業しています**。
+    PlantTalk では「順番に作業する」と決めました（2026-09-20 ユーザー確定）。
+
+    なぜ並行をやめたか: **宣言は実装から導かれる**ので、実装が動けば `design/` も
+    動きます。直近 30 コミットのうち **15 回**、実装と `design/` が同じコミットに
+    入っていました（`screen-map.json`・`gaps.json`・`rules.json` の `expected_targets`
+    など）。結合が構造的なので、並行作業は同じファイルの衝突を日常的に生みます。
+
+    **誰が作業しているかは分かりません。**「2 人ぶんある」ことだけが分かります。
+    それで十分です——名乗らせないための設計です。
+    """
+    rc, out = git(root, "status", "--porcelain")
+    if rc != 0:
+        return None
+    who = {}
+    for line in out.splitlines():
+        path = line[3:].strip().strip('"')
+        if " -> " in path:                      # 改名は行き先で見る
+            path = path.split(" -> ", 1)[1]
+        o = owner_of(path, owners, shared)
+        if o:
+            who.setdefault(o, []).append(path)
+    return who
+
+
 def commits_to_check(root):
     """押そうとしているコミットと、そのときの状態を返す。
 
@@ -126,6 +155,22 @@ def main(argv=None) -> int:
     if len(owners) < 2:
         print("担当が 2 つ未満です。**分けるものが無いなら、この段は要りません。**", file=sys.stderr)
         return 2
+
+    # **2 つのセッションが同時に作業していないか**（2026-09-20 追加）
+    if cfg.get("順番に作業する"):
+        wt = working_tree_owners(root, owners, shared)
+        if wt is None:
+            print("作業ツリーが読めません（git status）。**確かめられません。**", file=sys.stderr)
+            return 2
+        if len(wt) > 1:
+            print("**2 つの担当の変更が、同時に作業ツリーにあります。**", file=sys.stderr)
+            for name, fs in wt.items():
+                print(f"  {name}: {', '.join(fs[:4])}"
+                      + (f" ほか {len(fs) - 4} 件" if len(fs) > 4 else ""), file=sys.stderr)
+            print("  **順番に作業する取り決めです**（design/session-scope.json）。", file=sys.stderr)
+            print("  相手が作業中です。終わって commit されるまで待つか、"
+                  "受信箱で渡してください。", file=sys.stderr)
+            return 1
 
     shas, state = commits_to_check(root)
     if state == "押すもの無し":
@@ -248,6 +293,25 @@ def self_test() -> int:
         write(c4)
         if run() != 2:
             print("self-test NG: 担当 1 つで 2 を返しませんでした"); ok = False
+        write()
+
+        # ── **順番に作業する**の検知（2026-09-20）──────────────────
+        # 2 つの担当の変更が同時に作業ツリーにある＝並行作業。
+        # **誰が作業しているかは見ません。**「2 人ぶんある」ことだけを見ます
+        c_seq = dict(cfg); c_seq["順番に作業する"] = True
+        write(c_seq)
+        (root / "design" / "wip.txt").write_text("dev の作業中\n", encoding="utf-8")
+        if run() != 0:
+            print("self-test NG: **1 担当だけの作業中で落ちました**"); ok = False
+        (root / "ui" / "wip.txt").write_text("app の作業中\n", encoding="utf-8")
+        if run() != 1:
+            print("self-test NG: **2 担当が同時に作業中なのに通しました**"); ok = False
+        # **shared だけが増えても落ちない**
+        (root / "ui" / "wip.txt").unlink()
+        (root / "LOG.md").write_text("記録\n", encoding="utf-8")
+        if run() != 0:
+            print("self-test NG: shared を並行作業として数えました"); ok = False
+        (root / "design" / "wip.txt").unlink(); (root / "LOG.md").unlink()
         write()
 
         # **押すものが無いときは 0。**（2026-09-20・PlantTalk の指摘）
