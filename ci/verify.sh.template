@@ -17,6 +17,31 @@ PY="${PYTHON:-python3}"
 export PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 FAILED=0
 
+# --- python の版を先に見る（design-harness #128）------------------------------
+# **道具は 3.10 以上を前提にしています。** macOS 既定の /usr/bin/python3 は 3.9 で、
+# `write_text() got an unexpected keyword argument 'newline'` のような
+# **検査の失敗に見えるエラー**で落ちます。**環境の問題だと分かる文言で止めます。**
+# PATH の先頭に /usr/bin がある機体で実際に起きました（2026-09-18・planttalk）。
+need_py() { "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>/dev/null; }
+if ! need_py "$PY"; then
+  found=""
+  for c in python3.13 python3.12 python3.11 python3.10 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+    if command -v "$c" >/dev/null 2>&1 && need_py "$c"; then found="$c"; break; fi
+  done
+  if [ -n "$found" ]; then
+    echo "注意: $PY は 3.10 未満です。$found を使います（design-harness #128）"
+    PY="$found"
+  else
+    cur=$("$PY" -c 'import sys;print(".".join(map(str,sys.version_info[:3])))' 2>/dev/null || echo 不明)
+    echo "=== python の版 ==="
+    echo "**これは検査の失敗ではありません。環境の問題です。**"
+    echo "  いまの $PY は $cur ですが、道具は 3.10 以上が要ります。"
+    echo "  3.10 以上の python3 が見つかりませんでした。"
+    echo "  直し方: Homebrew の python を入れて PATH を通すか、PYTHON=/path/to/python3 を付けて回してください。"
+    exit 2
+  fi
+fi
+
 step() {  # step <名前> <コマンド...>
   echo "=== $1 ==="
   shift

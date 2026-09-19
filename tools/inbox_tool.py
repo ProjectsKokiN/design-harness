@@ -312,6 +312,69 @@ def duplicated_sections(path, archive):
     return sorted(inbox & arch)
 
 
+def do_set_target(path, root, query, sha=None, target_repo=None):
+    """依頼の「対象の commit」を、**いまの HEAD** に書き換える（#127）。
+
+    **依頼を書いた commit 自身のハッシュは、書く時点では分かりません。**
+    書いた時点の HEAD を入れて commit すると、`--check-target` が
+    「いまの HEAD は依頼の対象より古い」で止まります（自分自身より古い）。
+    `--amend` で直そうとするとハッシュがまた変わるので、堂々巡りになります。
+
+    **だから、commit したあとにこれを打ちます。**依頼の節を1つだけ書き換えるので、
+    もう1つ commit が増えますが、**そこで止まります**（対象がその1つ前の commit＝
+    依頼を含む commit を指すため）。
+
+    2026-09-18 に planttalk と planttalk-ios で同じ順番で踏みました。
+    """
+    text = path.read_text(encoding="utf-8", errors="replace")
+    # sections() は (start, end, date, to, state, title)
+    hits = [x for x in sections(text) if query in x[5]]
+    if not hits:
+        print(f"当たる依頼がありません: {query!r}")
+        return 2
+    if len(hits) > 1:
+        print(f"{len(hits)} 件当たりました。要件をもっと絞ってください:")
+        for x in hits:
+            print(f"  {x[2]} 宛先: {x[3]} — {x[5][:70]}")
+        return 2
+    start, end, _d, _to, _st, head = hits[0]
+
+    if not sha:
+        rc, out = git(root, "rev-parse", "--short=12", "HEAD")
+        if rc != 0 or not out:
+            print("HEAD が読めません")
+            return 2
+        sha = out
+    sha = sha[:40]
+
+    sec = text[start:end]
+    # **いまその依頼がどちらの書式で書かれているかを見て合わせる。**
+    # 横断の受信箱は `対象: <リポジトリ名>@<sha>`、案件の受信箱は
+    # `対象の commit: <ブランチ>@<sha>`。書式を取り違えると黙って当たらない
+    cross = CROSS_RX.search(sec)
+    if target_repo or cross:
+        repo = target_repo or cross.group(1)
+        new_line = f"対象: {repo}@{sha}"
+        rx = CROSS_RX
+    else:
+        rc, out = git(root, "rev-parse", "--abbrev-ref", "HEAD")
+        branch = (out or "main") if rc == 0 else "main"
+        new_line = f"対象の commit: {branch}@{sha}"
+        rx = TARGET_RX
+    if not rx.search(sec):
+        print(f"この依頼に対象の行がありません（`--no-target` で作った依頼です）: {head[:70]}")
+        return 2
+    sec2 = rx.sub(new_line, sec, count=1)
+    if sec2 == sec:
+        print(f"すでに同じ値です: {new_line}")
+        return 0
+    path.write_text(text[:start] + sec2 + text[end:], encoding="utf-8")
+    print(f"書き換えました: {new_line}")
+    print("**この書き換え自体を commit してください。**"
+          "対象はその1つ前（依頼を含む commit）を指すので、これで止まります。")
+    return 0
+
+
 def do_check_target(path, root, require_for, archive=None):
     text = path.read_text(encoding="utf-8")
     # **数える前に、読めているかを見る。** 書式から外れた見出しは `HEAD_RX` に
@@ -413,6 +476,9 @@ def main(argv=None):
     ap.add_argument("--target-repo", metavar="リポジトリ名",
                     help="横断の受信箱で `対象: <リポジトリ名>@<sha>` に書く対象（例: design-harness）")
     ap.add_argument("--complete", metavar="要件の一部", help="節を [完了] にしてアーカイブへ移す")
+    ap.add_argument("--set-target", metavar="要件の一部",
+                    help="その依頼の対象の commit を、いまの HEAD に書き換える（#127）")
+    ap.add_argument("--sha", help="--set-target で使う値（既定は HEAD）")
     ap.add_argument("--check-target", action="store_true", help="HEAD が依頼の対象より古くないか")
     ap.add_argument("--require-for", metavar="正規表現",
                     help="--check-target で、要件がこれに当たる依頼には対象の commit を必須にする")
@@ -433,6 +499,9 @@ def main(argv=None):
         return do_add(args.file, args.root, args.to, args.title,
                       args.body.read_text(encoding="utf-8"), args.date, not args.no_target,
                       args.target_repo)
+    if args.set_target:
+        return do_set_target(args.file, args.root, args.set_target,
+                             args.sha, args.target_repo)
     if args.complete:
         return do_complete(args.file, args.archive, args.complete)
     if args.check_target:
@@ -752,6 +821,28 @@ def self_test():
             "## 見出しの書式\n\n    ## YYYY-MM-DD 宛先: <宛先> [未対応|完了] — 要件\n"
             ) == [], "書式の見本を誤検出した")
         inbox.write_text(t, encoding="utf-8")
+
+
+        # ---- --set-target（#127）。**依頼を含む commit 自身を対象にできる** ----
+        run("--add", "--to", "Mac mini", "--title", "対象を直す試験",
+            "--body", str(body))
+        before = TARGET_RX.search(inbox.read_text(encoding="utf-8")).group(2)
+        (root / "a.txt").write_text("2\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "-A"], capture_output=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "2"], capture_output=True)
+        rc, _out = run("--set-target", "対象を直す試験")
+        check(rc == 0, f"--set-target が落ちた: rc={rc}")
+        after = TARGET_RX.search(inbox.read_text(encoding="utf-8")).group(2)
+        check(after != before, "--set-target が書き換えていない")
+        head_now = subprocess.run(["git", "-C", str(root), "rev-parse", "--short=12", "HEAD"],
+                                  capture_output=True, text=True).stdout.strip()
+        check(after == head_now, f"いまの HEAD になっていない: {after} != {head_now}")
+
+        # **当たらない要件では書き換えない**
+        t_before = inbox.read_text(encoding="utf-8")
+        rc, _out = run("--set-target", "存在しない要件ZZZ")
+        check(rc == 2, f"当たらないのに 2 を返さなかった: rc={rc}")
+        check(inbox.read_text(encoding="utf-8") == t_before, "当たらないのに書き換えた")
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
