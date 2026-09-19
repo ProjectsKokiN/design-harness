@@ -32,17 +32,43 @@ def source_exts(start: Path | str | None = None) -> list[str]:
             f = d / rel
             if not f.is_file():
                 continue
-            try:
-                data = json.loads(f.read_text(encoding="utf-8", errors="replace"))
-            except Exception:
-                continue  # mutation-ok: 壊れた rules.json は別の道具が咎める
-            exts = data.get("file_extensions")
-            if isinstance(exts, list) and exts:
-                out = [e if e.startswith(".") else "." + e
-                       for e in exts if isinstance(e, str)]
-                if out:
-                    return out
+            out = _exts_of(f, set())
+            if out:
+                return out
     return list(FALLBACK)
+
+
+def _exts_of(path: Path, seen: set) -> list[str]:
+    """`file_extensions` を、**`extends` を辿って**探す（design-harness #131）。
+
+    二重管理を避けるため、案件の `rules.json` は `extends` だけを持ち、
+    `file_extensions` はレジストリ側にあることがあります。**辿らないと `.dart` に
+    倒れて、Swift の案件でファイルが 0 件になります。**
+
+    実害（2026-09-19・planttalk-ios）: 実装網羅が「Sources/ が無いので実在を
+    見ていません」と出ました。`design_check.py` の本体は `extends` を辿るので、
+    **同じ `rules.json` を見ているのに道具によって見え方が違っていました。**
+    """
+    path = path.resolve()
+    if path in seen or not path.is_file():
+        return []
+    seen.add(path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return []  # mutation-ok: 壊れた rules.json は別の道具が咎める
+    exts = data.get("file_extensions")
+    if isinstance(exts, list) and exts:
+        out = [e if e.startswith(".") else "." + e for e in exts if isinstance(e, str)]
+        if out:
+            return out
+    for rel in data.get("extends") or []:
+        if not isinstance(rel, str):
+            continue
+        got = _exts_of(path.parent / rel, seen)
+        if got:
+            return got
+    return []
 
 
 GENERATED_SUFFIXES = (".g.dart", ".generated.swift", ".generated.ts", ".g.ts")
@@ -117,6 +143,24 @@ def self_test() -> int:
         # 6. **深いところから呼んでも見つかる**（上へ辿る）
         case("上へ辿る", source_exts(src), [".swift"])
 
+        # 6-3. **`extends` を辿る**（#131）。案件側が参照だけを持つ形
+        reg = root / "registry"
+        reg.mkdir()
+        (reg / "swift.json").write_text(
+            json.dumps({"file_extensions": [".swift"]}), encoding="utf-8")
+        (root / "design/rules.json").write_text(
+            json.dumps({"extends": ["../registry/swift.json"]}), encoding="utf-8")
+        case("extends を辿る", source_exts(root), [".swift"])
+
+        # **辿れないときは .dart に倒す**（既存の案件を壊さない）
+        (root / "design/rules.json").write_text(
+            json.dumps({"extends": ["../無い.json"]}), encoding="utf-8")
+        case("辿れないときは Dart", source_exts(root), [".dart"])
+
+        # 元に戻す
+        (root / "design/rules.json").write_text(
+            json.dumps({"file_extensions": [".swift"]}), encoding="utf-8")
+
         # 6-2. **案件の外から呼んでも 0 件にならない**（2026-09-18 に実際に踏んだ）
         import os
         keep = os.getcwd()
@@ -137,7 +181,7 @@ def self_test() -> int:
             print(b)
         print(f"NG: 自己検査が {len(bad)} 件落ちました")
         return 1
-    print("OK: 自己検査 10 件とも期待どおりでした")
+    print("OK: 自己検査 12 件とも期待どおりでした")
     return 0
 
 

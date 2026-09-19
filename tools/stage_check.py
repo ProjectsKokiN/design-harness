@@ -770,6 +770,33 @@ COND_SKIP = "参考"
 WAIVER_KEYS = ("why", "reviewBy")
 
 
+def broken_continuations(path):
+    """**行継続（`\\`）が注釈や空行で断ち切られていないか**（design-harness #129）。
+
+    `bash -n` は通ります。**構文としては正しい**からです。しかし実行すると、
+
+    - 前の段は**続きの引数を黙って失い**、別の検査になります
+    - 宙に浮いた続きの行を shell が**コマンドとして実行**し、`set -e` で止まります
+
+    実害（2026-09-19）: `ac0d8d1` で足した段が「共有されているか」の
+    `--conflict \\` の直後に入り、その段が `--shared` と `--registry` を失い、
+    宙に浮いた行が `--shared: command not found` で 127 になりました。
+    **以降の段が1つも走りません。**
+
+    **私がこれを作り、`bash -n` で確かめて通したつもりになっていました。**
+    """
+    out = []
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    for i, line in enumerate(lines):
+        code = line.split("#", 1)[0] if not line.lstrip().startswith("#") else ""
+        if not code.rstrip().endswith("\\"):
+            continue
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        if nxt.lstrip().startswith("#") or not nxt.strip():
+            out.append((i + 1, line.strip()[:70], nxt.strip()[:50] or "(空行)"))
+    return out
+
+
 def template_stages(path):
     """元ファイルに並んでいる段を「見出し → 走らせるファイル名の集合」で返す。
 
@@ -1401,6 +1428,22 @@ def check_stages(template, verify, ci_dir, waivers_path, gate_path, prepush=None
     if not stages:
         print(f"元ファイルから段を読めませんでした: {template}", file=sys.stderr)
         return 2
+
+    # **行継続が注釈や空行で断ち切られていないか**（#129）。
+    # `bash -n` は通るのに、実行すると前の段が引数を失い、宙に浮いた行で止まります
+    cont = []
+    for f in (template, verify):
+        if f and f.exists():
+            for ln, cur, nxt in broken_continuations(f):
+                cont.append(f"  {f.name}:{ln} **行継続が断ち切られています**\n"
+                            f"      この行: {cur}\n"
+                            f"      次の行: {nxt}\n"
+                            f"      前の段が引数を黙って失い、宙に浮いた行で止まります"
+                            f"（`bash -n` は通ります）")
+    if cont:
+        print("\n".join(cont), file=sys.stderr)
+        print(f"NG: 行継続が {len(cont)} か所で断ち切られています", file=sys.stderr)
+        return 1
     have, where = project_tools(verify, ci_dir)
     # **見出しでも突き合わせる**（#112）。ファイル名だけだと、同じ道具を呼ぶ
     # 段どうしを取り違える
