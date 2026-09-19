@@ -16,6 +16,10 @@ HARNESS="design/harness"
 PY="${PYTHON:-python3}"
 export PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 FAILED=0
+# **落ちた段の名前を控えます**（design-harness #124）。末尾で「まだ測れない」の
+# 宣言と突き合わせます。**表示は落ちたままにし、関門だけを通します。**
+FAILED_LIST="$(mktemp -t harness_failed)"
+trap 'rm -f "$FAILED_LIST"' EXIT
 
 # --- python の版を先に見る（design-harness #128）------------------------------
 # **道具は 3.10 以上を前提にしています。** macOS 既定の /usr/bin/python3 は 3.9 で、
@@ -44,6 +48,7 @@ fi
 
 step() {  # step <名前> <コマンド...>
   echo "=== $1 ==="
+  _name="$1"
   shift
   # **終了コードを3つに分けて読む**（規約22・2026-09-07）。
   #   0 … 確かめて合格   1 … 確かめて違反   2 … **確かめられなかった**
@@ -54,8 +59,8 @@ step() {  # step <名前> <コマンド...>
   set +e; "$@"; _rc=$?; set -e
   case "$_rc" in
     0) echo "OK" ;;
-    2) echo "NG（確かめられなかった）"; FAILED=1 ;;
-    *) echo "NG"; FAILED=1 ;;
+    2) echo "NG（確かめられなかった）"; FAILED=1; printf '%s\n' "$_name" >> "$FAILED_LIST" ;;
+    *) echo "NG"; FAILED=1; printf '%s\n' "$_name" >> "$FAILED_LIST" ;;
   esac
   echo
 }
@@ -407,6 +412,21 @@ step "テスト"          {{flutter test / npm test / xcodebuild test -scheme <�
 
 if [ "$FAILED" -ne 0 ]; then
   echo "検証に失敗しました。上の NG を直してから再実行してください。"
+  # **まだ測れない段の宣言**（design-harness #124）。立ち上げたばかりの案件では、
+  # 正直に緑にする道が無い段があります（部品の実装前・アイコンの絵が未着手など）。
+  # **宣言が理由と期限つきで全部の段を覆っているときだけ**、関門を通します。
+  # **上の NG はそのまま出ています。嘘の緑にはしません。**
+  if [ -s "$FAILED_LIST" ] && [ -f design/stages.json ]; then
+    echo
+    echo "=== まだ測れない段の宣言 ==="
+    if "$PY" "$HARNESS/tools/not_yet_check.py" \
+         --stages-file "$FAILED_LIST" --config design/stages.json; then
+      echo
+      echo "**落ちたままですが、宣言が覆っているので関門は通します。**"
+      echo "  期限が来たら落ちます。直すか、期限を延ばす理由を書いてください。"
+      exit 0
+    fi
+  fi
   exit 1
 fi
 echo "すべての検証を通過しました。"
