@@ -2,7 +2,12 @@
 """Figma が書き出しより新しくなっていないかを見る（鮮度の検査・テンプレート）。
 
 【テンプレートについて】FlashEnglish の実運用版のコピー（2026-08-28 回収）。
-「案件ごとに埋める」の3定数だけを具体化して <プロジェクト>/design/figma_freshness.py に置く（3定数を埋めるためコピーが要る唯一の道具）。
+**コピーしないこと。**案件ごとの3定数は `--config <案件>/design/figma-freshness.json`
+で外から渡す（`load_config`）。以前は「コピーが要る唯一の道具」と書いてあったが、
+**コピーは本体の修正が案件へ届かない**。PlantTalk では、案件側にコピーが無いのに
+verify.sh が `design/figma_freshness.py` を呼んでおり、しかも呼ばれる前に
+FIGMA_TOKEN 不在で止まっていたため、**存在しないパスであることが2週間分からなかった**
+（2026-09-19）。
 本番リリースの合格条件4（鮮度）はこれで測る（references/production-gate.md）。
 figma-fullexport.md が「Figma を触る作業の前に必ず回す」と書いていながら、
 テンプレが無く新規案件に配られていなかった（2026-08-28 の監査での是正）。
@@ -12,8 +17,8 @@ figma-fullexport.md が「Figma を触る作業の前に必ず回す」と書い
 まま生成していて、指摘されるまで分かりませんでした。
 
     source ~/.claude/.env            # FIGMA_TOKEN を読む
-    python3 design/figma_freshness.py           # 変わったセットを名指しする
-    python3 design/figma_freshness.py --update  # 書き出しを取り直した後にハッシュを更新
+    python3 design/harness/tools/figma_freshness.py --config design/figma-freshness.json  # 変わったセットを名指しする
+    python3 design/harness/tools/figma_freshness.py --config design/figma-freshness.json --update  # 書き出しを取り直した後にハッシュを更新
 
 ## 仕組み
 
@@ -836,11 +841,31 @@ def load_config(path) -> None:
                      ('descsExport', 'DESCS_EXPORT'), ('framesExport', 'FRAMES_EXPORT')):
         if conf.get(key):
             g[var] = (base / conf[key]).resolve()
+    require_configured()
+
+
+def require_configured() -> None:
+    """**テンプレートのままなら 2 で止める**（2026-09-19・PlantTalk で踏んだ）。
+
+    実害: `--config` を渡さずに呼ぶと、この確認を通らずに
+    `EXPORT.read_text()` へ進み、`{{書き出しのパス…}}` という名前の
+    ファイルを開こうとして **FileNotFoundError の traceback** になった。
+
+    traceback は「確かめたうえで違反」にも「確かめられなかった」にも
+    読めない。**未設定は 2（確かめられなかった）**であって、1 ではない。
+
+    そのうえ、この段は「FIGMA_TOKEN が環境に無い」という**事実と違う理由**で
+    保留されていた。トークンはあり、未設定だったのは道具のほうだった。
+    設定漏れが設定漏れとして出ないと、理由が別のものにすり替わる。
+    """
+    g = globals()
     for var, label in (('EXPORT', 'export'), ('FILE_KEY', 'fileKey')):
         v = str(g[var])
         if '{{' in v:
             print(f'設定に {label} がありません（テンプレートのままです）: {v}',
                   file=sys.stderr)
+            print('  案件の設定ファイルを --config で渡してください。'
+                  '例: --config design/figma-freshness.json', file=sys.stderr)
             raise SystemExit(2)
 
 
@@ -951,6 +976,7 @@ def main() -> int:
     if '--config' in sys.argv:
         load_config(sys.argv[sys.argv.index('--config') + 1])
     update = '--update' in sys.argv
+    require_configured()
     doc = json.loads(EXPORT.read_text(encoding='utf-8'))
     saved = (doc['$meta'].get('restDigests') or {})
     now = read_sets()
@@ -1110,7 +1136,7 @@ def main() -> int:
     print()
     print('取り直し方: ~/.claude/skills/mobile-harness-setup/references/'
           'figma-fullexport.md の手順で書き出し直し、')
-    print('            そのあと python3 design/figma_freshness.py --update')
+    print('            そのあと python3 design/harness/tools/figma_freshness.py --config design/figma-freshness.json --update')
     return 1
 
 
