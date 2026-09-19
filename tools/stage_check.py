@@ -771,7 +771,7 @@ WAIVER_KEYS = ("why", "reviewBy")
 
 
 #: `mktemp -t <雛形>` に `XXXXXX` が無い形。**GNU の mktemp（Linux・CI）で落ちます**
-MKTEMP_RX = re.compile(r"mktemp\s+(?:-[^\s-]*\s+)*-t\s+([^\s\"\')|;&]+)")
+MKTEMP_RX = re.compile(r"mktemp\s+(?:-[^\s-]*\s+)*-t\s+([^\s\"')|;&`]+)")
 
 
 def bad_mktemp(path):
