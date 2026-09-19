@@ -835,7 +835,8 @@ def self_test():
         after = TARGET_RX.search(inbox.read_text(encoding="utf-8")).group(2)
         check(after != before, "--set-target が書き換えていない")
         head_now = subprocess.run(["git", "-C", str(root), "rev-parse", "--short=12", "HEAD"],
-                                  capture_output=True, text=True).stdout.strip()
+                                  capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace").stdout.strip()
         check(after == head_now, f"いまの HEAD になっていない: {after} != {head_now}")
 
         # **当たらない要件では書き換えない**

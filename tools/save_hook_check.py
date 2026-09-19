@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -156,6 +157,12 @@ def run(root: Path) -> int:
               "\n  **0件は「綺麗」ではなく「見ていない」です**")
         return 2
     body, ext, excl = seed
+    # **`bash` を名前のまま起動しない。** Windows では解決されないことがある
+    sh = shutil.which("bash") or shutil.which("sh")
+    if not sh:
+        print("シェルが見つかりません（bash も sh も）。"
+              "**フックを実際に走らせられないので、確かめられません**")
+        return 2
     d = probe_dir(root, excl)
     if d is None:
         print("仕込みを置ける場所がありません（どの候補も exclude_paths に当たります）")
@@ -171,7 +178,7 @@ def run(root: Path) -> int:
             payload = json.dumps({"tool_input": {"file_path": str(probe)}})
             env = dict(os.environ)
             env.setdefault("CLAUDE_PROJECT_DIR", str(root))
-            r = subprocess.run(["bash", "-lc", cmd], input=payload, cwd=root,
+            r = subprocess.run([sh, "-lc", cmd], input=payload, cwd=root,
                                capture_output=True, text=True, encoding="utf-8",
                                errors="replace", env=env, timeout=120)
             if r.returncode == 0:
