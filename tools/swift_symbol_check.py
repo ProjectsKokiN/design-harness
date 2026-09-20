@@ -47,7 +47,8 @@ iOS 専用の API を使うファイルは macOS SDK では通らないので、
     {
       "sources": ["Sources"],
       "外の型": {"Font": "SwiftUI", "UIScreen": "UIKit"},
-      "見ない名前": {"Self": "文脈で決まるので追えません"}
+      "見ない名前": {"Self": "文脈で決まるので追えません"},
+      "プロトコルが足すメンバ": {"CaseIterable": ["allCases"], "Identifiable": ["id"]}
     }
 """
 import json
@@ -109,10 +110,14 @@ def strip_code(src: str) -> str:
 
 
 def blocks(src: str):
-    """`型名 → その中身` を返す。**波括弧を数えて切ります**（行数で切らない）。
+    """`型名 → [(中身, 準拠している名前)]` を返す。**波括弧を数えて切ります**。
 
     `extension X { … }` も同じ型に足します。**別のファイルで足した static も
     拾うため**です。
+
+    **準拠も拾います。**`CaseIterable` の `allCases` のように、**プロトコルが
+    自動で足すメンバ**があるためです（2026-09-20 に `ChipTone.allCases` で
+    誤検知しました）。
     """
     found = {}
     for rx, grp in ((DECL_RX, 1), (EXT_RX, 1)):
@@ -121,6 +126,8 @@ def blocks(src: str):
             j = src.find("{", m.end())
             if j < 0:
                 continue
+            head = src[m.end():j]
+            conf = re.findall(r"\w+", head.split(":", 1)[1]) if ":" in head else []
             depth, k = 0, j
             while k < len(src):
                 if src[k] == "{":
@@ -130,13 +137,17 @@ def blocks(src: str):
                     if depth == 0:
                         break
                 k += 1
-            found.setdefault(name, []).append(src[j:k])
+            found.setdefault(name, []).append((src[j:k], conf))
     return found
 
 
-def members_of(bodies):
+def members_of(bodies, synth=None):
+    """その型が持つメンバ。**プロトコルが足すぶんも入れます。**"""
+    synth = synth or {}
     out = set()
-    for b in bodies:
+    for b, conf in bodies:
+        for c in conf:
+            out |= set(synth.get(c, []))
         out |= set(MEMBER_RX.findall(b))
         for cs in CASE_RX.findall(b):
             for c in cs.split(","):
@@ -175,7 +186,8 @@ def main(argv=None) -> int:
     for src in stripped.values():
         for name, bodies in blocks(src).items():
             types.setdefault(name, []).extend(bodies)
-    known = {n: members_of(b) for n, b in types.items()}
+    synth = cfg.get("プロトコルが足すメンバ") or {}
+    known = {n: members_of(b, synth) for n, b in types.items()}
     outside = cfg.get("外の型") or {}
     ignore = cfg.get("見ない名前") or {}
 
@@ -263,6 +275,18 @@ def self_test() -> int:
         write("enum Tone { case neutral, accent }\nlet a = Tone.neutral\n")
         if run() != 0:
             print("self-test NG: **enum の case を拾えていません**"); ok = False
+
+        # **プロトコルが足すメンバ**（2026-09-20）。`CaseIterable` の `allCases` は
+        # 型の中に書かれていないので、準拠を見ないと「無いメンバ」に見えます
+        # （実データで `ChipTone.allCases` を誤検知しました）
+        c_p = dict(cfg); c_p["プロトコルが足すメンバ"] = {"CaseIterable": ["allCases"]}
+        write("enum Tone: String, CaseIterable { case a, b }\nlet x = Tone.allCases\n", c_p)
+        if run() != 0:
+            print("self-test NG: **プロトコルが足すメンバを見ていません**"); ok = False
+        # **準拠していなければ落ちる**（何でも通してはいけない）
+        write("enum Tone: String { case a, b }\nlet x = Tone.allCases\n", c_p)
+        if run() != 1:
+            print("self-test NG: **準拠していないのに allCases を通しました**"); ok = False
 
         # **見ない名前は数えない**
         write("enum Space { static let m = 16.0 }\nlet a = Self.anything\n")
