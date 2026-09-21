@@ -369,6 +369,11 @@ def scan(content, config, path, project_root, soften=False):
     2026-08-28 ユーザー確定で全案件共通の仕様（違反は伝えるが、止めない）。
     """
     lines = content.splitlines()
+    # **コメントを潰した写しで当てる**（2026-09-21）。行と桁は保つので行番号はずれない。
+    # **`harness-ignore` と `ignore_for_file` は元の文（コメント）から読む。**
+    # 順番を逆にすると、除外の宣言そのものが消えます。
+    _scan = strip_comments(content, COMMENT_STYLE.get(path.suffix, ""))
+    _scan_lines = _scan.splitlines()
     errors, warns, observations = [], [], []
     reason_min = int(config.get("ignore_reason_min", 0))
     require_expiry = bool(config.get("ignore_requires_expiry", False))
@@ -441,14 +446,15 @@ def scan(content, config, path, project_root, soften=False):
                 trig_rx, req_rx = re.compile(trig), re.compile(req)
             except re.error:
                 continue
-            for i, line in enumerate(lines, start=1):
+            _src = lines if rule.get("コメントも見る") else _scan_lines
+            for i, line in enumerate(_src, start=1):
                 if not trig_rx.search(line):
                     continue
                 lo = max(0, i - 1 - within)
-                hi = min(len(lines), i + within)
-                if any(req_rx.search(l) for l in lines[lo:hi]):
+                hi = min(len(_src), i + within)
+                if any(req_rx.search(l) for l in _src[lo:hi]):
                     continue
-                hit(rule, i, line)
+                hit(rule, i, lines[i - 1] if i - 1 < len(lines) else line)
             continue
 
         pattern = rule.get("pattern")
@@ -459,18 +465,90 @@ def scan(content, config, path, project_root, soften=False):
                 rx = re.compile(pattern, re.DOTALL)
             except re.error:
                 continue
-            for m in rx.finditer(content):
-                lineno = content.count("\n", 0, m.start()) + 1
-                hit(rule, lineno, m.group(0).splitlines()[0])
+            _body = content if rule.get("コメントも見る") else _scan
+            for m in rx.finditer(_body):
+                lineno = _body.count("\n", 0, m.start()) + 1
+                hit(rule, lineno, lines[lineno - 1] if lineno - 1 < len(lines)
+                    else m.group(0).splitlines()[0])
         else:
             try:
                 rx = re.compile(pattern)
             except re.error:
                 continue
-            for i, line in enumerate(lines, start=1):
+            # **注記も見たいルールは宣言する。**既定はコードだけ
+            _src = lines if rule.get("コメントも見る") else _scan_lines
+            for i, line in enumerate(_src, start=1):
                 if rx.search(line):
-                    hit(rule, i, line)
+                    # **出すのは元の行。**潰した写しを出すと空白になります
+                    hit(rule, i, lines[i - 1] if i - 1 < len(lines) else line)
     return errors, warns, observations
+
+
+
+# --------------------------------------------------------------------------
+# コメントを潰す（2026-09-21 新設）
+# --------------------------------------------------------------------------
+#: 拡張子 → コメントの書き方。`#` 系と `//` `/* */` 系だけ。
+COMMENT_STYLE = {
+    ".swift": "c", ".dart": "c", ".kt": "c", ".kts": "c", ".java": "c",
+    ".js": "c", ".ts": "c", ".jsx": "c", ".tsx": "c", ".metal": "c",
+    ".c": "c", ".h": "c", ".cc": "c", ".cpp": "c", ".m": "c", ".mm": "c",
+    ".py": "hash", ".sh": "hash", ".bash": "hash", ".zsh": "hash",
+    ".yml": "hash", ".yaml": "hash", ".rb": "hash", ".toml": "hash",
+}
+
+
+def strip_comments(text, style):
+    """**コメントだけ**を空白に潰す。文字列は残す。行と桁は保つ。
+
+    なぜ要るか（2026-09-21・PlantTalk で実測）: 注記の中に書いた
+    `` `Prim.mbtiAnalysts20` `` が `no-primitive-in-ui` に当たりました。
+    **コードではなく、なぜ画面から Prim を使わないかの説明**です。
+    ルールの理由を注記に書こうとすると、その注記自体が違反になります。
+
+    **文字列は潰しません。**`Color(hex: "#34c759")` のように、
+    **文字列の中に値がある**書き方を捕まえるためです。
+    `_selftest` の `bad` にも文字列が入っています。
+
+    逆向きの実害も出ています（`layout_check.py`・2026-09-19）: コメントに書いた
+    書き出しの値を「実装の値」として数え、**実装を壊しても緑のまま**でした。
+    **コメントは、数えても数えなくても間違えます。どちらなのかを決めて書くこと。**
+    """
+    if style not in ("c", "hash"):
+        return text
+    out, i, n, depth = [], 0, len(text), 0
+    while i < n:
+        c = text[i]
+        if depth:                                   # /* … */ の中
+            if text.startswith("/*", i):
+                depth += 1; out.append("  "); i += 2; continue
+            if text.startswith("*/", i):
+                depth -= 1; out.append("  "); i += 2; continue
+            out.append("\n" if c == "\n" else " "); i += 1; continue
+        if c in "\"'":                               # 文字列は**そのまま**残す
+            q = c
+            if style == "c" and text.startswith('"""', i):
+                j = text.find('"""', i + 3); j = n if j < 0 else j + 3
+            else:
+                j = i + 1
+                while j < n and text[j] != q:
+                    if text[j] == "\\":
+                        j += 1
+                    if text[j:j + 1] == "\n":       # 行をまたぐ文字列は打ち切る
+                        break
+                    j += 1
+                j = min(j + 1, n)
+            out.append(text[i:j]); i = j; continue
+        if style == "hash" and c == "#":
+            j = text.find("\n", i); j = n if j < 0 else j
+            out.append(" " * (j - i)); i = j; continue
+        if style == "c" and text.startswith("//", i):
+            j = text.find("\n", i); j = n if j < 0 else j
+            out.append(" " * (j - i)); i = j; continue
+        if style == "c" and text.startswith("/*", i):
+            depth = 1; out.append("  "); i += 2; continue
+        out.append(c); i += 1
+    return "".join(out)
 
 
 # --------------------------------------------------------------------------
@@ -785,6 +863,77 @@ def run_single(file_path, config, rules_path, project_root, hooks, log_path):
     return 0
 
 
+
+def self_test() -> int:
+    """**落ちるところを見る。**（2026-09-21 新設）
+
+    それまでこのエンジンに self-test が無く、`段の健全性` は
+    「自己検査なし（外部の道具）: 禁止パターン」と毎回言っていました。
+    **コメントを潰す変更を入れたので、意味が変わったところを試験にします。**
+    """
+    import tempfile
+    ok = True
+    rule = {"id": "no-prim", "pattern": r"Prim\.", "severity": "error",
+            "forbidden": "画面から Prim を使わない", "instead": "Brand を使う"}
+    cfg = {"rules": [rule], "file_extensions": [".swift"]}
+
+    def run(code, r=None, name="A.swift"):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            f = root / name
+            f.write_text(code, encoding="utf-8")
+            c = dict(cfg)
+            c["rules"] = [r or rule]
+            e, w, _ = scan(code, c, f, root)
+            return e, w
+
+    cases = []
+
+    e, _ = run("let a = Prim.accent40\n")
+    cases.append(("コードの Prim. は捕まる", len(e) == 1))
+
+    e, _ = run("// `Prim.accent40` になると全部同じ色になります\nlet a = 1\n")
+    cases.append(("**注記の中の Prim. は捕まらない**", len(e) == 0))
+
+    e, _ = run("/* Prim.accent40 の説明 */\nlet a = 1\n")
+    cases.append(("**囲みコメントの中も捕まらない**", len(e) == 0))
+
+    e, _ = run('let a = "Prim.accent40"\n')
+    cases.append(("**文字列の中は捕まる**（潰してはいけない）", len(e) == 1))
+
+    # **文字列の中の `//` をコメントと読まない。**読むと、そこから行末までが消え、
+    # **その先の違反が見えなくなります**
+    e, _ = run('let u = "https://example.com"\nlet a = Prim.x\n')
+    cases.append(("文字列の中の `//` から後ろを消さない", len(e) == 1))
+    e, _ = run('let u = "https://x/Prim.accent40"\n')
+    cases.append(("**文字列の中の `//` の後ろも捕まる**", len(e) == 1))
+
+    e, _ = run("let a = 1\nlet b = 2\nlet c = Prim.x\n")
+    cases.append(("行番号がずれない", bool(e) and "行3" in e[0]))
+    # **該当として出すのは元の行。**潰した写しを出すと注記が消え、読む人に伝わらない。
+    # **注記が付いた行で試す**——付いていない行だと、潰しても同じ文になり差が出ない
+    e2, _ = run("let c = Prim.x  // 生成物からの引き写しです\n")
+    cases.append(("該当に元の行がそのまま出る（注記も残る）",
+                  bool(e2) and "生成物からの引き写し" in e2[0]))
+
+    e, _ = run("let a = Prim.x  // harness-ignore: 生成物なので許す\n")
+    cases.append(("**harness-ignore は注記から読む**（潰す前に読む）", len(e) == 0))
+
+    r2 = dict(rule); r2["コメントも見る"] = True
+    e, _ = run("// Prim.x のこと\n", r2)
+    cases.append(("宣言すれば注記も見る", len(e) == 1))
+
+    e, _ = run("# Prim.x のこと\nx = 1\n", name="a.py")
+    cases.append(("`#` のコメントも潰す", len(e) == 0))
+
+    for name, good in cases:
+        if not good:
+            print(f"self-test NG: {name}")
+            ok = False
+    print(f"[design_check] selftest {sum(1 for _, g in cases if g)}/{len(cases)} 件パス")
+    return 0 if ok else 1
+
+
 def main(argv=None, *, rules_path=None, hooks=None, log_path=None):
     """エンジンの入口。シムから rules_path と案件固有の hooks を渡して呼ぶ。
 
@@ -796,11 +945,16 @@ def main(argv=None, *, rules_path=None, hooks=None, log_path=None):
     """
     parser = argparse.ArgumentParser(
         description="デザインハーネスの禁止パターンを検査する")
+    parser.add_argument("--self-test", "--selftest", dest="self_test",
+                        action="store_true",
+                        help="落ちるところを見る（網にもファイルにも触らない）")
     parser.add_argument("--all", action="store_true",
                         help="プロジェクト内の対象ファイルをすべて検査する")
     parser.add_argument("--rules", type=Path, default=None,
                         help="rules.json の場所（シムが指定する）")
     args = parser.parse_args(argv)
+    if args.self_test:
+        return self_test()
 
     rules_path = args.rules or rules_path
     if rules_path is None:
