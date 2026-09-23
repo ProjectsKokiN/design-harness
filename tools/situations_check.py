@@ -107,7 +107,7 @@ def derive(lib: Path, extra=()):
             if pat.search(text):
                 hits.append(f)
         if hits:
-            found[name] = {"根拠": [str(p) for p in hits[:12]] + (["…"] if len(hits) > 12 else []),
+            found[name] = {"根拠": [p.as_posix() for p in hits[:12]] + (["…"] if len(hits) > 12 else []),
                            "関わるファイル": len(hits),
                            "実機で見ること": how,
                            "ハッシュ": fingerprint(hits)}
@@ -115,10 +115,25 @@ def derive(lib: Path, extra=()):
 
 
 def fingerprint(paths):
-    """関わるファイルの中身のハッシュ。動けば「もう一度見て」の合図。"""
+    """関わるファイルの中身のハッシュ。動けば「もう一度見て」の合図。
+
+    **道の区切りは `as_posix()` で `/` にそろえる**（2026-09-23）。
+    `str(Path)` は Windows で円記号を返すので、**同じファイル群でも機体ごとに
+    別のハッシュ**になる。実測（FlashEnglish・2026-09-23）:
+
+        文字倍率  Windows 2914e530c89969cc / Mac 5a7dc36a95449305
+
+    4 件とも別の値になり、**実装が何も変わっていないのに「確認が古い」が
+    出続ける**状態だった。生成物（`根拠`）の区切りも同じ理由でそろえる
+    （そちらは `verify.sh` の「生成物の可搬性」が止めてくれるが、
+    **ハッシュは誰も止めない**）。
+
+    同じ罠は3件目（`page_scope_check.py` の cp932・`build_manifest.py` の
+    `str(Path)`）。**上流の道具で `str(Path)` を書かない。**
+    """
     h = hashlib.sha256()
     for p in sorted(paths):
-        h.update(str(p).encode("utf-8"))
+        h.update(p.as_posix().encode("utf-8"))
         h.update(p.read_bytes())
     return h.hexdigest()[:16]
 
@@ -292,6 +307,14 @@ def self_test():
             print(f"self-test NG: カメラと入力欄から状況が導けない: {list(d['状況'])}"); ok = False
         if "cam.dart" not in " ".join(d["状況"]["許可を断られた"]["根拠"]):
             print("self-test NG: 根拠のファイルが書かれていない"); ok = False
+        # **道の区切りが機体で変わらない**（2026-09-23 に Windows で踏んだ）。
+        # 生成物に円記号が入ると `verify.sh` の「生成物の可搬性」で止まり、
+        # **ハッシュに入ると誰も止められない**（同じ実装なのに機体ごとに
+        # 別の値になり、「確認が古い」が出続ける）。
+        if "\\" in out.read_text(encoding="utf-8"):
+            print("self-test NG: 生成物に円記号の区切りが入っている"); ok = False
+        if any("\\" in r for r in d["状況"]["許可を断られた"]["根拠"]):
+            print("self-test NG: 根拠の道が `/` でそろっていない"); ok = False
         # 未確認なら --check は落ちる
         rc, txt = run("--check")
         if rc != 1 or "一度も実機で確かめていません" not in txt:
