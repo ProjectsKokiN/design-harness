@@ -161,6 +161,9 @@ def main(argv=None):
     ap.add_argument("--out", type=Path, default=Path("design/situations.json"))
     ap.add_argument("--check", action="store_true", help="未確認・古い確認があれば落とす")
     ap.add_argument("--confirm", metavar="状況", help="実機で確かめた状況を記録する")
+    ap.add_argument("--ng", metavar="理由",
+                    help="確かめたが**通らなかった**ときの理由。"
+                         "記録は残るが --check は落ち続ける")
     ap.add_argument("--by", default=socket.gethostname().split(".")[0],
                     help="確かめた機体（既定: このホスト名）")
     ap.add_argument("--self-test", action="store_true")
@@ -205,8 +208,14 @@ def main(argv=None):
                   f"{' / '.join(merged)}）", file=sys.stderr)
             return 2
         root = args.out.resolve().parent.parent
+        # **「確認した」と「通った」は別の事実**（2026-09-23・FlashEnglish）。
+        # それまでこの記録には合否の欄が無く、**崩れを報告しながら --confirm
+        # した記録が「済」として残りました**。関門は黙り、実機で壊れたまま
+        # 緑になります。既定は「通った」で、通らなかったときは --ng に理由を書く。
         merged[args.confirm]["確認"] = {"at": date.today().isoformat(), "by": args.by,
                                         "commit": head_sha(root),
+                                        "結果": "通らなかった" if args.ng else "通った",
+                                        **({"理由": args.ng} if args.ng else {}),
                                         "ハッシュ": merged[args.confirm]["ハッシュ"]}
         print(f"記録しました: {args.confirm}（{args.by}・{merged[args.confirm]['確認']['commit']}）")
 
@@ -241,7 +250,9 @@ def main(argv=None):
         n_ok = sum(1 for v in merged.values() if v.get("確認"))
         print(f"守る状況 {len(merged)} 件を導きました（確認済み {n_ok}）→ {args.out}")
         for name, v in merged.items():
-            mark = "済" if v.get("確認") else "**未確認**"
+            c = v.get("確認") or {}
+            mark = ("**通っていない**" if c.get("結果") == "通らなかった"
+                    else "済" if c else "**未確認**")
             print(f"  {mark} {name}（関わるファイル {v['関わるファイル']}）")
         return 0
 
@@ -263,6 +274,10 @@ def main(argv=None):
         if not c:
             errs.append(f"  {name}: **一度も実機で確かめていません。** "
                         f"見ること: {v['実機で見ること']}")
+        elif c.get("結果") == "通らなかった":
+            errs.append(f"  {name}: **実機で通っていません**"
+                        f"（{c.get('at')}・{c.get('by')}）: {c.get('理由') or '理由なし'}。"
+                        f"直してから、もう一度見て --confirm してください")
         elif (c.get("ハッシュ") or c.get("指紋")) != v["ハッシュ"]:
             errs.append(f"  {name}: 確認（{c.get('at')}・{c.get('by')}）のあとに"
                         f"**関わる実装が変わりました**（{v['関わるファイル']} ファイル）。"
@@ -325,6 +340,21 @@ def self_test():
         rc, txt = run("--check")
         if rc != 0:
             print(f"self-test NG: 全部確認したのに落ちた（{rc}）\n   {txt[:300]}"); ok = False
+        # **「確かめたが通らなかった」は落ち続ける**（2026-09-23）。
+        # それまで合否の欄が無く、**崩れを報告しながら --confirm した記録が
+        # 「済」として残り、関門が黙りました**（FlashEnglish の文字倍率）。
+        run("--confirm", "文字倍率", "--by", "試験機", "--ng", "下ナビが重なる")
+        rc, txt = run("--check")
+        if rc != 1 or "実機で通っていません" not in txt:
+            print(f"self-test NG: 通らなかったのに通した（{rc}）\n   {txt[:300]}"); ok = False
+        d = json.loads(out.read_text(encoding="utf-8"))
+        if d["状況"]["文字倍率"]["確認"].get("理由") != "下ナビが重なる":
+            print("self-test NG: 通らなかった理由が残っていない"); ok = False
+        # 直して確認し直したら通る
+        run("--confirm", "文字倍率", "--by", "試験機")
+        rc, _ = run("--check")
+        if rc != 0:
+            print(f"self-test NG: 直して確認し直したのに落ちた（{rc}）"); ok = False
         # **関わる実装が変わったら、その状況だけ古くなる**
         (lib / "cam.dart").write_text("final c = ImagePicker(); // 変えた\nfinal f = TextField();\n", encoding="utf-8")
         rc, txt = run("--check")
