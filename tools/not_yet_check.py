@@ -28,6 +28,28 @@ planttalk-ios（2026-09-19）では `実装網羅` `アプリアイコン` `生�
 
 **`why` と `reviewBy` の両方が要ります。**片方だけでは通しません。
 
+## 中核の段は「確かめて違反」を宣言で覆えない（design-harness #134・2026-09-24）
+
+planttalk（2026-09-19）で実害が出ました。**幾何は照合していない**と自分で書き、
+gaps.json にも宣言し、**それで verify.sh は 0 のまま通り、push もできました。**
+実機では Figma と全く違う画面が出ました。
+
+**穴を宣言することと、穴を埋めることは別**です。この仕組みは立ち上げ期に
+「測る対象がまだ無い段」のためのものでしたが、**中核の照合（Figma と合っているか）を
+免除するためにも使えて**いました。覆う範囲に上限がありませんでした。
+
+そこで**段が返した終了コードで分けます**（規約22）。
+
+    2 … 確かめられなかった   → 測る対象が無い。**宣言で覆える**（立ち上げ期はこちら）
+    1 … 確かめて違反         → 測れた。違反が出た。**中核の段なら、宣言では覆えない**
+
+中核の段とは、名前に「条件N」を持つ段です（関門の条件 1・4・5・7・8・9。
+`stage_check.py` と同じ見分け方）。
+
+**落ちた段の一覧は `<名前>\t<終了コード>` の形で受け取ります。**古い verify.sh は名前だけを
+書いてきます。そのときはコードが分からないので**この規則は当てず、そう言います**
+（黙って厳しくもしない・黙って緩めもしない）。
+
 ## 終了コード
 
   0 … 落ちた段が全部、期限内の宣言で覆われている（**関門を通してよい**）
@@ -55,6 +77,30 @@ def norm(s: str) -> str:
     return re.sub(r"[\s（）()・:：/／、。.*`\"'\-—]+", "", str(s or ""))
 
 
+import re as _re
+#: 中核の段（関門の条件）。**stage_check.py の COND_RX と同じ見分け方**
+COND_RX = _re.compile(r"条件(\d+)")
+
+
+def is_core(name: str) -> bool:
+    return bool(COND_RX.search(str(name or "")))
+
+
+def parse_failed(lines):
+    """`<名前>\t<終了コード>` を (名前, コード) に。コードが無ければ None。"""
+    out = []
+    for l in lines:
+        if "\t" in l:
+            name, rc = l.rsplit("\t", 1)
+            try:
+                out.append((name.strip(), int(rc.strip())))
+            except ValueError:
+                out.append((l.strip(), None))
+        else:
+            out.append((l.strip(), None))
+    return out
+
+
 def load(conf_path: Path):
     data = json.loads(conf_path.read_text(encoding="utf-8", errors="replace"))
     decl = data.get(KEY)
@@ -70,9 +116,9 @@ def run(stages_file: Path, conf_path: Path, today: dt.date | None = None) -> int
     if not stages_file.is_file():
         print(f"落ちた段の一覧がありません: {stages_file}")
         return 2
-    failed = [l.strip() for l in
+    failed = parse_failed([l for l in
               stages_file.read_text(encoding="utf-8", errors="replace").splitlines()
-              if l.strip()]
+              if l.strip()])
     if not failed:
         print("落ちた段がありません（この道具を呼ぶ必要がありません）")
         return 2
@@ -83,8 +129,19 @@ def run(stages_file: Path, conf_path: Path, today: dt.date | None = None) -> int
         return 2
 
     by_norm = {norm(k): (k, v) for k, v in decl.items()}
-    ok, bad = [], []
-    for name in failed:
+    ok, bad, core_refused, no_code = [], [], [], 0
+    for name, rc in failed:
+        if rc is None:
+            no_code += 1
+        # **中核の段が「確かめて違反」なら、宣言では覆えない**（#134）
+        if rc == 1 and is_core(name):
+            hit0 = by_norm.get(norm(name))
+            declared = "（宣言はありますが）" if hit0 else ""
+            core_refused.append(
+                f"  **中核の段が、確かめたうえで違反を出しています**{declared}: {name}\n"
+                f"    これは「まだ測れない」ではありません。**測れて、合っていません。**\n"
+                f"    宣言では覆えません。直すか、Figma の側を直してください")
+            continue
         hit = by_norm.get(norm(name))
         if not hit:
             bad.append(f"  **宣言がありません**: {name}\n"
@@ -111,13 +168,20 @@ def run(stages_file: Path, conf_path: Path, today: dt.date | None = None) -> int
             continue
         ok.append(f"  {key}（期限 {due}）— {v['why'][:70]}")
 
-    if bad:
+    if no_code:
+        print(f"注意: 落ちた段のうち {no_code} 件は終了コードが控えられていません"
+              f"（古い verify.sh）。**「確かめて違反」と「確かめられなかった」を区別できない**ので、"
+              f"中核の規則（#134）はその段には当てていません。雛形を取り込んでください")
+    if core_refused or bad:
         print("**関門は通しません。**")
+        for l in core_refused:
+            print(l)
         for l in bad:
             print(l)
         if ok:
             print(f"（期限内の宣言で覆われている段は {len(ok)} 件ありました）")
-        print(f"NG: 落ちた {len(failed)} 段のうち、覆えたのは {len(ok)} 段です")
+        print(f"NG: 落ちた {len(failed)} 段のうち、覆えたのは {len(ok)} 段です"
+              + (f"（**中核で覆えないもの {len(core_refused)} 件**）" if core_refused else ""))
         return 1
 
     print("**落ちた段は全部、期限内の宣言で覆われています。**"
@@ -151,6 +215,17 @@ def self_test() -> int:
             return rc, buf.getvalue()
 
         good = {"why": "部品の実装がまだ0件", "reviewBy": "2026-10-31"}
+
+        # ── **中核の段は、確かめて違反（1）なら宣言で覆えない**（#134）──────
+        core = "実装網羅（条件7: Figma にあるものは全部実装）"
+        case("**中核が 1 なら、宣言があっても通さない**",
+             go([core + "\t1"], {core: good})[0], 1)
+        case("中核が 2（確かめられなかった）なら、宣言で覆える",
+             go([core + "\t2"], {core: good})[0], 0)
+        case("中核でない段は 1 でも宣言で覆える",
+             go(["アプリアイコン\t1"], {"アプリアイコン": good})[0], 0)
+        case("終了コードが無い（古い verify.sh）なら、中核でも規則を当てず宣言で覆える",
+             go([core], {core: good})[0], 0)
 
         case("宣言があれば通す", go(["実装網羅"], {"実装網羅": good})[0], 0)
         case("宣言が無ければ通さない", go(["実装網羅"], {})[0], 1)

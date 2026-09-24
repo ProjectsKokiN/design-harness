@@ -25,7 +25,9 @@ FAILED_LIST="$(mktemp -t harness_failed.XXXXXX)"
 # **「これから直す段」の控え**（#139）。呼ぶ側が HARNESS_EXPECTED_FAILURES で予告する
 EXPECTED_LIST="$(mktemp -t harness_expected.XXXXXX)"
 EXPECTED_OK_LIST="$(mktemp -t harness_expected_ok.XXXXXX)"
-trap 'rm -f "$FAILED_LIST" "$EXPECTED_LIST" "$EXPECTED_OK_LIST"' EXIT
+# **全部の段の結果**（名前とコード）。最後に「条件ごとに何を保証したか」を出すため（#135）
+GATE_LIST="$(mktemp -t harness_gate.XXXXXX)"
+trap 'rm -f "$FAILED_LIST" "$EXPECTED_LIST" "$EXPECTED_OK_LIST" "$GATE_LIST"' EXIT
 
 # --- 秘密を、検査の中で読む（2026-09-19・PlantTalk で踏んだ）-----------------
 # **pre-push フックと CI には対話セッションの環境変数が届きません。**
@@ -78,6 +80,7 @@ step() {  # step <名前> <コマンド...>
   # 実害（2026-09-07・#96）: Windows で self-test が落ちている道具の出力が `NG` として
   # 並び、**案件が壊れていると半日ぶん誤解**していた。壊れていたのは道具のほうだった。
   set +e; "$@"; _rc=$?; set -e
+  printf '%s\t%s\n' "$_name" "$_rc" >> "$GATE_LIST"
   # **「これから直す段」は分けて出します**（design-harness #139・2026-09-24）。
   #
   # 実害（FlashEnglish）: `build_catalog.sh` は verify → 作り直しの順に走るので、
@@ -105,7 +108,7 @@ step() {  # step <名前> <コマンド...>
         echo "これから直す段（確かめられなかった・予告どおり）"
         printf '%s\n' "$_name" >> "$EXPECTED_LIST"
       else
-        echo "NG（確かめられなかった）"; FAILED=1; printf '%s\n' "$_name" >> "$FAILED_LIST"
+        echo "NG（確かめられなかった）"; FAILED=1; printf '%s\t%s\n' "$_name" "$_rc" >> "$FAILED_LIST"
       fi
       ;;
     *)
@@ -113,7 +116,7 @@ step() {  # step <名前> <コマンド...>
         echo "これから直す段（予告どおり）"
         printf '%s\n' "$_name" >> "$EXPECTED_LIST"
       else
-        echo "NG"; FAILED=1; printf '%s\n' "$_name" >> "$FAILED_LIST"
+        echo "NG"; FAILED=1; printf '%s\t%s\n' "$_name" "$_rc" >> "$FAILED_LIST"
       fi
       ;;
   esac
@@ -481,6 +484,16 @@ step "テスト"          {{flutter test / npm test / xcodebuild test -scheme <�
 # **ガラスの面は描画の実測（snapshot）に向きません。** 後ろの内容で見た目が
 # 変わるので、同じ入力でも同じ画像になりません。外す場合は design/gaps.json に
 # 「かわりに何で見るか」を書いてください。
+
+# --- この緑（赤）が、Figma との照合として何を保証しているか（design-harness #135）--------
+# **緑の意味が出力のどこにも書かれていなかった。**planttalk（2026-09-19）で
+# design_check 違反 0・parse 全通過・verify 終了コード 0 を「通った」と読んで完了とし、
+# 実機では Figma と全く違う画面が出た。**3 つとも Figma とは比べていない。**
+# 条件（関門の条件 1・4・5・7・8・9）ごとに、測って合格したか・確かめられなかったか・
+# 違反を宣言で覆っているかを**必ず**出す。**関門の判定はここでは変えない。**
+echo "=== Figma との照合として、この結果が保証しているもの（関門の条件ごと）==="
+"$PY" "$HARNESS/tools/gate_summary.py" --gate-file "$GATE_LIST" --config design/stages.json || true
+echo
 
 # --- 「これから直す段」の要約（design-harness #139）---------------------------
 # **隠しません。**何件を予告として分けたかを必ず出します。

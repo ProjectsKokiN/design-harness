@@ -76,6 +76,40 @@ CROSS_RX = re.compile(r"^対象: ([A-Za-z0-9._-]+)@([0-9a-f]{7,40})", re.M)
 #: **横断の受信箱かどうかは、受信箱自身の書式の説明から導く**（2026-09-07・#89）。
 #: ファイル名やパスで決め打ちにすると、置き場が増えたときに黙って案件の書式に戻ります
 CROSS_DOC_RX = re.compile(r"^\s*対象: <リポジトリ名>@<sha>\s*$", re.M)
+
+#: **申し送りの前提の書き方**（design-harness #141・FlashEnglish 2026-09-24）。
+#:
+#: 司令塔が「ライトは 1 画素も変わらないはずです（ゴールデンのバイト数が変わっていません）」と
+#: 書き、**誤りでした**（画素差 2.21%）。バイト数は圧縮の効き方で、中身が違っても近い値に
+#: なります。2 台とも実測したので捕まりましたが、**信じていたら誤報が受け入れ条件になって**
+#: いました——正しい実装を不具合として報告する形です。
+#:
+#: 機械で見られるのは書き方だけです。**止めません。注意として出します。**
+#:   (1) 「変わっていない／同じ」の根拠がバイト数・サイズ → blob（`git rev-parse <rev>:<path>`）を使う
+#:   (2) 「〜のはず」に、確かめたコマンド（バッククォート）が同じ段落に無い → 併記する
+BYTES_AS_IDENTITY_RX = re.compile(
+    r"(変わ(?:って|ら)(?:い)?な|同じ|一致)[^\n。]{0,40}(バイト数|bytes|サイズ|容量)"
+    r"|(バイト数|bytes|サイズ|容量)[^\n。]{0,40}(変わ(?:って|ら)(?:い)?な|同じ|一致)")
+ASSUMPTION_RX = re.compile(r"[^\n。]*(?:はず|筈)(?:です|だ|で)[^\n。]*")
+
+
+def assumption_warnings(body):
+    """申し送りの本文から、前提の書き方の注意を返す（#141）。**落とさない。**"""
+    out = []
+    for m in BYTES_AS_IDENTITY_RX.finditer(body):
+        line = body.count("\n", 0, m.start()) + 1
+        out.append(f"{line} 行目: **「変わっていない」の根拠がバイト数です。**"
+                   f"圧縮の効き方で中身が違っても近い値になります。"
+                   f"blob（`git rev-parse <rev>:<path>`）か画素差で言ってください")
+    for para in re.split(r"\n\s*\n", body):
+        if not ASSUMPTION_RX.search(para):
+            continue
+        if "`" in para:
+            continue                       # 確かめたコマンドが同じ段落にある
+        first = ASSUMPTION_RX.search(para).group(0).strip()
+        out.append(f"「{first[:50]}」— **確かめたコマンドが同じ段落にありません。**"
+                   f"「〜のはず」は受け入れ条件になります。何を打って確かめたかを併記してください")
+    return out
 #: **文書そのものの見出し**（依頼の本文ではない）。節の終わりはここか、次の依頼か、索引。
 #: 2026-09-07 まで「次の `## ` まで」で切っていたため、**本文が `## 小見出し` を使うと
 #: そこで切れ、残りが受信箱に取り残されていた**（実測: 依頼2件なのに 5,097 行・
@@ -411,6 +445,9 @@ def do_check_target(path, root, require_for, archive=None):
     errs, warns, seen = [], [], 0
     for s, e, date, to, _, title in secs:
         body = text[s:e]
+        # **前提の書き方**（#141）。落とさない。注意として並べる
+        for w in assumption_warnings(body):
+            warns.append(f"  {date} 宛先: {to} — {title}: {w}")
         m = TARGET_RX.search(body)
         cross = CROSS_RX.search(body)
         if not m and not cross:
@@ -512,6 +549,19 @@ def main(argv=None):
 
 
 def self_test():
+    # ── **申し送りの前提の書き方**（#141）────────────────────────────
+    _w = assumption_warnings("ライトは 1 画素も変わらないはずです（ゴールデンのバイト数が変わっていません）。\n")
+    # **「根拠がバイト数」で見る。**「バイト数」だけだと、「はず」側の注意が元の文を
+    # 引用していて当たってしまう（2026-09-24 に自分の試験で踏んだ）
+    if not any("根拠がバイト数" in x for x in _w):
+        print("self-test NG: **バイト数を根拠にした「変わっていない」を見逃しました**"); return 1
+    if not any("確かめたコマンド" in x for x in _w):
+        print("self-test NG: **コマンドの無い「はず」を見逃しました**"); return 1
+    _w2 = assumption_warnings("ライトは変わらないはずです。`git rev-parse HEAD~1:a.png` と `HEAD:a.png` の blob が同じ。\n")
+    if any("確かめたコマンド" in x for x in _w2):
+        print("self-test NG: コマンドがあるのに「はず」を咎めました"); return 1
+    if assumption_warnings("画素差は 0 でした（`compare` で実測）。\n"):
+        print("self-test NG: 前提の無い文に注意を出しました"); return 1
     import contextlib
     import io
     import tempfile
