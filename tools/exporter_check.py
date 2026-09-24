@@ -313,6 +313,59 @@ def check_samples(doc):
     return ng, seen
 
 
+def check_convention(doc):
+    """**書き出しの中に、新旧 2 つの規約が混ざっていないか**（design-harness #140）。
+
+    FlashEnglish（2026-09-24）: 器が「取り直したセットだけが `irz` を持つ」規約で、
+    Chips 4 セットを取り直したら差分がこう出た。
+
+        -     "ch": "PrependIcon,T"
+        +     "ch": "F,T",
+        +     "irz": false
+
+    **設計が変わったのか、規約が追いついただけなのか、差分からは読めない。**
+    器のコードを読んで「規約が追いついただけ」と結論するのに根拠を積む作業が要った。
+    実測（414 の components.json）: 27 セットのうち `irz` を持つ 7・持たない 20。
+    `$meta` に規約の版は無い。
+
+    見るもの: 各セットの `layout` 行が持つ鍵の集合。**あるセットにはあって別のセットには
+    無い鍵**があれば「混ざっている」。
+    通す道は 2 つ（どちらも宣言）: 行ごとに `_v`（規約の版）を持つ／`$meta` の
+    `規約の混在を許す` に理由と期限を書く。
+
+    戻り: (混ざっている鍵 → 持たないセット名, 見たセット数, 宣言で許されているか)
+    """
+    sets = doc.get("componentSets") or {}
+    if not isinstance(sets, dict):
+        return {}, 0, None
+    per_set = {}
+    for name, v in sets.items():
+        lay = v.get("layout") if isinstance(v, dict) else None
+        rows = lay if isinstance(lay, list) else (list(lay.values()) if isinstance(lay, dict) else [])
+        rows = [r for r in rows if isinstance(r, dict)]
+        if not rows:
+            continue
+        keys = set()
+        for r in rows:
+            keys |= set(r.keys())
+        per_set[name] = keys
+    if not per_set:
+        return {}, 0, None
+    allk = set().union(*per_set.values())
+    # **行に規約の版があるなら、それが答え**（混ざっていても読める）
+    versioned = all(any("_v" in r for r in (v.get("layout") or []) if isinstance(r, dict))
+                    for v in sets.values() if isinstance(v, dict) and v.get("layout"))
+    mixed = {}
+    for k in sorted(allk):
+        if k == "_v":
+            continue
+        lacking = sorted(n for n, ks in per_set.items() if k not in ks)
+        if lacking and len(lacking) < len(per_set):
+            mixed[k] = lacking
+    allow = (doc.get("$meta") or {}).get("規約の混在を許す")
+    return (({} if versioned else mixed), len(per_set), allow)
+
+
 def digest_of(path):
     return text_digest(path.read_bytes().decode("utf-8", errors="replace"))
 
@@ -333,11 +386,39 @@ def main(argv=None):
                     help="器のページ名が page-scope.json の allowed と合っているか（部分一致は落とす）")
     ap.add_argument("--page-scope", type=Path,
                     help="--pages で読む宣言（既定: 設定の親/figma/page-scope.json）")
+    ap.add_argument("--convention", type=Path, metavar="COMPONENTS_JSON",
+                    help="書き出しに新旧の規約が混ざっていないか（#140）")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
 
     if args.self_test:
         return self_test()
+
+    if args.convention:
+        if not args.convention.is_file():
+            print(f"書き出しがありません: {args.convention}", file=sys.stderr)
+            return 2
+        doc = json.loads(args.convention.read_text(encoding="utf-8", errors="replace"))
+        mixed, seen, allow = check_convention(doc)
+        if seen == 0:
+            print("layout 行を持つセットが 1 つもありません。**0 件は『綺麗』ではなく『見ていない』です。**",
+                  file=sys.stderr)
+            return 2
+        if not mixed:
+            print(f"書き出しの規約: セット {seen} 件、鍵の集合はそろっています")
+            return 0
+        print(f"書き出しの規約: セット {seen} 件のうち、**鍵の有無がセットで違うもの {len(mixed)} 件**")
+        for k, lacking in mixed.items():
+            print(f"  `{k}` を持たないセット {len(lacking)} 件: {', '.join(lacking[:5])}"
+                  + (" …" if len(lacking) > 5 else ""))
+        if isinstance(allow, dict) and allow.get("why") and allow.get("reviewBy"):
+            print(f"  宣言で許しています（{allow['reviewBy']} まで）: {allow['why'][:80]}")
+            return 0
+        print("  **新旧 2 つの規約が混ざっています。差分が設計変更か規約追従か読めません。**",
+              file=sys.stderr)
+        print("  全セットを一度に取り直すか、行に `_v`（規約の版）を持たせるか、"
+              "`$meta.規約の混在を許す` に why と reviewBy を書いてください", file=sys.stderr)
+        return 1
 
     if args.samples:
         if not args.samples.exists():
@@ -783,6 +864,36 @@ def self_test():
                         encoding="utf-8")
         if main(pargv) == 0:
             print("self-test NG: **どのページを見ているか読めないのに通した**"); ok = False
+
+        # ── **規約の混在**（#140）────────────────────────────────────
+        _mixed = {"componentSets": {
+            "Chips": {"layout": [{"ch": "F,T", "irz": False}]},
+            "Tabs": {"layout": [{"ch": "A"}]},
+            "Cards": {"layout": [{"ch": "B"}]}}}
+        _m, _seen, _ = check_convention(_mixed)
+        if "irz" not in _m or _m["irz"] != ["Cards", "Tabs"]:
+            print(f"self-test NG: **混ざった鍵を名指しできません**（{_m}）"); ok = False
+        _same = {"componentSets": {"A": {"layout": [{"ch": "x", "irz": True}]},
+                                   "B": {"layout": [{"ch": "y", "irz": False}]}}}
+        if check_convention(_same)[0]:
+            print("self-test NG: そろっているのに混在と言いました"); ok = False
+        _ver = {"componentSets": {"A": {"layout": [{"ch": "x", "_v": 1}]},
+                                  "B": {"layout": [{"ch": "y", "irz": False, "_v": 2}]}}}
+        if check_convention(_ver)[0]:
+            print("self-test NG: **行に規約の版があるのに混在と言いました**"); ok = False
+        _mp = ex / "mixed.json"; _mp.write_text(json.dumps(_mixed), encoding="utf-8")
+        if main(["--convention", str(_mp)]) != 1:
+            print("self-test NG: 混在を通しました"); ok = False
+        # **why だけの宣言は通さない**（期限の無い免除は残り続ける）
+        _mixed["$meta"] = {"規約の混在を許す": {"why": "取り直し中"}}
+        _mp.write_text(json.dumps(_mixed, ensure_ascii=False), encoding="utf-8")
+        if main(["--convention", str(_mp)]) != 1:
+            print("self-test NG: **期限（reviewBy）の無い宣言で許しました**"); ok = False
+        _mixed["$meta"] = {"規約の混在を許す": {"why": "取り直し中", "reviewBy": "2099-01-01"}}
+        _mp.write_text(json.dumps(_mixed, ensure_ascii=False), encoding="utf-8")
+        if main(["--convention", str(_mp)]) != 0:
+            print("self-test NG: 宣言で許したのに落ちました"); ok = False
+        _mp.unlink()
 
         # 宣言から読む器だけなら通る（直書き 0 でも空振りではない）
         good.write_text("const allowed = JSON.parse(fs.readFileSync('design/figma/page-scope.json')).allowed;\n"

@@ -143,6 +143,27 @@ def main(argv=None):
 
     print(f"期待値の出どころ: {checked}ファイル中 "
           f"{checked - len(handwritten) - len(allowed)}件が書き出しを読んでいます")
+
+    # **見ていないテストの数を必ず出す**（design-harness #142・FlashEnglish 2026-09-24）。
+    # `dirs` の外のテストは、この検査の目に入らない。FlashEnglish では `test/design` の
+    # 26 本だけを見ており、**外に 85 本**あった。手書きの期待値（blurRadius 32・
+    # 内側シャドウ 2 枚 sigma 2 と 4）で Figma が動いても緑のままだった 2 本は、その外にいた。
+    # **置き場の宣言は案件の責任だが、見ていない量は機械が言える。**
+    test_root = base / (conf.get("test_root") or "test")
+    outside = []
+    if test_root.exists():
+        inside = [(base / d).resolve() for d in dirs]
+        for f in sorted(test_root.rglob("*")):
+            if not f.is_file() or f.suffix not in SUFFIXES:
+                continue
+            if any(str(f.resolve()).startswith(str(i) + "/") for i in inside):
+                continue
+            outside.append(f.relative_to(base).as_posix())
+    if outside:
+        print(f"  **この検査が見ていないテスト: {len(outside)} 本**"
+              f"（{test_root.relative_to(base).as_posix()}/ の中で dirs の外）。"
+              f"そこに手書きの期待値があっても分かりません。"
+              f"例: {' / '.join(outside[:3])}{' …' if len(outside) > 3 else ''}")
     for a in allowed:
         print(f"  例外: {a}")
     fossils = sorted(set(allow) - used)
@@ -181,6 +202,19 @@ def self_test():
             cfg.write_text(json.dumps({"dirs": ["test/design"],
                                        "allow": allow or []}), encoding="utf-8")
             return ["--config", str(cfg), "--root", str(root)]
+
+        # ── **dirs の外にあるテストの数を出す**（#142）──────────────────
+        (root / "test" / "ui").mkdir(parents=True, exist_ok=True)
+        (root / "test" / "ui" / "shadow_test.dart").write_text(
+            "expect(blurRadius, 32);\n", encoding="utf-8")
+        import io, contextlib
+        _argv = setup({"ok_test.dart": "figma/frames.json\n"})
+        _buf = io.StringIO()
+        with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(_buf):
+            main(_argv)
+        if "見ていないテスト: 1 本" not in _buf.getvalue():
+            print("self-test NG: **dirs の外にあるテストを数えていません**"); ok = False
+        (root / "test" / "ui" / "shadow_test.dart").unlink()
 
         for f in (root / "test" / "design").glob("*"):
             f.unlink()

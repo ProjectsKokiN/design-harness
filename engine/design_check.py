@@ -192,6 +192,18 @@ def load_rules(rules_path, _seen=None):
                 "expected_rules", "ignore_requires_expiry"):
         if key in child:
             merged[key] = child[key]
+    # **概念の対**（design-harness #142）は層をまたいで集める。親→子、同じ概念は子が勝つ
+    pairs = {}
+    for rel in child.get("extends", []):
+        pp = (rules_path.parent / rel).resolve()
+        if pp.exists():
+            try:
+                pairs.update(json.loads(pp.read_text(encoding="utf-8")).get(SIBLINGS, {}) or {})
+            except Exception:
+                pass
+    pairs.update(child.get(SIBLINGS, {}) or {})
+    if pairs:
+        merged[SIBLINGS] = pairs
     return merged
 
 
@@ -199,6 +211,19 @@ def load_rules(rules_path, _seen=None):
 MAX_EXTENDS_DEPTH = 8
 
 KNOWN_RULE_TYPES = {"require-near"}
+#: **同じ概念の別の型**（design-harness #142・FlashEnglish 2026-09-24）。
+#:
+#:     "概念の対": {"影": ["BoxShadow", "InnerShadowSpec"]}
+#:
+#: 落ち影を自前で組んでいた 5 か所を見つけて `\bBoxShadow\s*\(` の規則を足したが、
+#: **内側シャドウ（InnerShadowSpec）には規則が 1 本も無いまま**で、翌日手組みが 1 件
+#: そのまま通った（ユーザーの指摘で発覚）。種は「その規則が発火するか」しか見ず、
+#: **隣に穴が開いていることは見ない。**gap_report は「発火 0 だが種で確認済み（コードが綺麗）」
+#: と言ったが、**綺麗なのではなく、見ていない側に落ちていた。**
+#:
+#: 対を宣言すると、**対のどれかに規則が 1 本も無ければ落とす。**宣言したときだけ効く。
+#: 対を機械で列挙できるかは未検証なので、ここでは宣言に留める。
+SIBLINGS = "概念の対"
 
 
 def unrunnable_rules(config):
@@ -221,6 +246,42 @@ def unrunnable_rules(config):
                 out.append(f"  {rid}: require-near に trigger / require がありません")
         elif not rule.get("pattern"):
             out.append(f"  {rid}: pattern がありません（このルールは一度も走りません）")
+    return out
+
+
+def uncovered_siblings(config):
+    """宣言した「概念の対」のうち、**規則が 1 本も当たらない型**を返す（#142）。
+
+    当たるかは、その型名を含む最小の断片（`InnerShadowSpec(`）に規則の pattern が
+    当たるかで見る。**pattern を読んで推測しない。実際に当てる。**
+    """
+    out = []
+    pairs = config.get(SIBLINGS) or {}
+    if not isinstance(pairs, dict):
+        return [f"  {SIBLINGS} は {{概念: [型, 型, …]}} の形で書いてください"]
+    rules = [r for r in config.get("rules", []) if r.get("pattern")]
+    for concept, types in pairs.items():
+        if not isinstance(types, list) or len(types) < 2:
+            out.append(f"  {concept}: 対は 2 つ以上書いてください（1 つでは「対」になりません）")
+            continue
+        for t in types:
+            # **型名の後ろに来る形を何通りか当てる。**`BoxShadow(`（呼び出し）、
+            # `Prim.`（メンバ参照）、裸の名前。1 通りだと、書き方の違いで
+            # 「規則が無い」と言ってしまう（2026-09-24 に `Prim\.` で踏んだ）
+            probes = (f"{t}(", f"{t}.", f"{t} ", str(t))
+            hit = None
+            for r in rules:
+                flags = re.DOTALL if r.get("multiline") else 0
+                try:
+                    if any(re.search(r["pattern"], pr, flags) for pr in probes):
+                        hit = r.get("id"); break
+                except re.error:
+                    continue
+            if hit is None:
+                others = [x for x in types if x != t]
+                out.append(f"  {concept}: **`{t}` に当たる規則が 1 本もありません**"
+                           f"（対の {', '.join(map(str, others))} には有る／宣言している）。"
+                           f"同じ穴が隣に開いています")
     return out
 
 
@@ -962,6 +1023,19 @@ def self_test() -> int:
         cases.append(("解けるときは持ち上げない",
                       not load_rules(_rules).get(UNRESOLVED)))
 
+    # ── **概念の対**（#142）────────────────────────────────────────
+    _cfg_pair = {"rules": [rule], SIBLINGS: {"Prim": ["Prim", "Brand"]}}
+    cases.append(("**対の片方に規則が無ければ言う**",
+                  any("Brand" in x for x in uncovered_siblings(_cfg_pair))))
+    _cfg_ok = {"rules": [rule, {"id": "no-brand", "pattern": r"Brand\.", "severity": "error",
+                                "forbidden": "", "instead": ""}],
+               SIBLINGS: {"Prim": ["Prim", "Brand"]}}
+    cases.append(("対の両方に規則があれば言わない", uncovered_siblings(_cfg_ok) == []))
+    cases.append(("宣言が無ければ何も言わない", uncovered_siblings({"rules": [rule]}) == []))
+    cases.append(("対が 1 つだけなら「対になりません」と言う",
+                  any("2 つ以上" in x for x in uncovered_siblings(
+                      {"rules": [rule], SIBLINGS: {"Prim": ["Prim"]}}))))
+
     for name, good in cases:
         if not good:
             print(f"self-test NG: {name}")
@@ -1027,6 +1101,15 @@ def main(argv=None, *, rules_path=None, hooks=None, log_path=None):
         print("デザインハーネス異常: 正規表現が壊れているルールがあります。"
               "そのルールは一度も走らないので、先に直してください。", file=sys.stderr)
         print("\n".join(broken), file=sys.stderr)
+        return 2
+
+    # **同じ概念の別の型に、規則が無い**（#142）。宣言したときだけ効く
+    sib = uncovered_siblings(config)
+    if sib:
+        print("デザインハーネス異常: 宣言した「概念の対」に、規則の無い型があります。"
+              "**種は隣の穴を見ません。**先に規則を足すか、対から外して理由を書いてください。",
+              file=sys.stderr)
+        print("\n".join(sib), file=sys.stderr)
         return 2
 
     project_root = find_project_root(rules_path, config)
