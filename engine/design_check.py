@@ -55,6 +55,9 @@ for _stream in (sys.stdout, sys.stderr):
         except (AttributeError, ValueError):
             pass
 
+#: 解けなかった extends の控え。**続けずに入口で 2 を返すため**（#132）
+UNRESOLVED = "$未解決の extends"
+
 IGNORE_MARK = "harness-ignore"
 
 LOG_SOURCE = os.environ.get(
@@ -131,26 +134,31 @@ def load_rules(rules_path, _seen=None):
                 "exclude_files": [], "rules": []}
 
     merged = {"file_extensions": [], "exclude_paths": [],
-              "exclude_files": [], "rules": []}
+              "exclude_files": [], "rules": [], UNRESOLVED: []}
     for rel in child.get("extends", []):
         parent_path = (rules_path.parent / rel).resolve()
         if not parent_path.exists():
-            print(
-                f"デザインハーネス注意: extends の参照先が見つかりません: {parent_path}\n"
-                f"  共通ルール抜きで検査を続けます。デザイン変更を検証するマシンでは\n"
-                f"  design-systems リポジトリを ~/dev に隣接クローンしてください",
-                file=sys.stderr,
-            )
+            # **続けません**（design-harness #132・2026-09-24）。
+            #
+            # それまでは「注意」を一行出して**共通ルール抜きで検査を続けて**いました。
+            # 結果 rules が 0 件になり、seed_check が
+            # 「expected.json にあるが rules.json に無いルールです」を 9 件並べます。
+            # **読んだ人は案件の設定が壊れていると判断します**（実際そう報告が来た）。
+            # 原因は環境（隣のレジストリが古い）で、**案件の設定は正しい。**
+            # planttalk で Mac mini が丸一日止まりました。
+            #
+            # ここでは持ち上げるだけにして、入口が 2（確かめられなかった）で止めます。
+            merged[UNRESOLVED].append(str(parent_path))
             continue
         parent = load_rules(parent_path, _seen)   # 再帰: 親の extends もたどる
         if parent is None:
-            print(f"デザインハーネス注意: extends の読み込みに失敗: {parent_path}",
-                  file=sys.stderr)
+            merged[UNRESOLVED].append(f"{parent_path}（読み込みに失敗）")
             continue
         for key in ("file_extensions", "exclude_paths", "exclude_files"):
             if not merged[key]:
                 merged[key] = parent.get(key, [])
         merged["rules"].extend(parent.get("rules", []))
+        merged[UNRESOLVED].extend(parent.get(UNRESOLVED, []))   # 孫の未解決も持ち上げる
 
     for key in ("file_extensions", "exclude_paths", "exclude_files"):
         if child.get(key):
@@ -926,6 +934,34 @@ def self_test() -> int:
     e, _ = run("# Prim.x のこと\nx = 1\n", name="a.py")
     cases.append(("`#` のコメントも潰す", len(e) == 0))
 
+    # ── **共通ルールが解けないときは 2 で止まる**（#132・2026-09-24）─────
+    # それまでは「注意」を一行出して**ルール 0 件のまま検査を続け**、
+    # seed_check が「rules.json に無いルール」を並べて**案件のせいに見せて**いた。
+    # planttalk で Mac mini が丸一日止まった。
+    with tempfile.TemporaryDirectory() as _td:
+        _r = Path(_td)
+        _rules = _r / "rules.json"
+        _rules.write_text(json.dumps({"extends": ["../nowhere/swift.json"],
+                                      "rules": [], "file_extensions": [".swift"]},
+                                     ensure_ascii=False), encoding="utf-8")
+        _cfg = load_rules(_rules)
+        cases.append(("解けない extends を持ち上げる", bool(_cfg.get(UNRESOLVED))))
+        (_r / "a.swift").write_text("let a = 1\n", encoding="utf-8")
+        _rc = main(["--all", "--rules", str(_rules)], rules_path=_rules)
+        cases.append(("**解けないときは 2（確かめられなかった）で止まる**", _rc == 2))
+
+        # **解けるときは止めない**
+        (_r / "reg").mkdir()
+        (_r / "reg" / "swift.json").write_text(json.dumps(
+            {"rules": [{"id": "x", "pattern": "ZZZ", "severity": "error",
+                        "forbidden": "", "instead": ""}]}, ensure_ascii=False),
+            encoding="utf-8")
+        _rules.write_text(json.dumps({"extends": ["reg/swift.json"], "rules": [],
+                                      "file_extensions": [".swift"]},
+                                     ensure_ascii=False), encoding="utf-8")
+        cases.append(("解けるときは持ち上げない",
+                      not load_rules(_rules).get(UNRESOLVED)))
+
     for name, good in cases:
         if not good:
             print(f"self-test NG: {name}")
@@ -963,6 +999,18 @@ def main(argv=None, *, rules_path=None, hooks=None, log_path=None):
     hooks = hooks or {}
 
     config = load_rules(rules_path)
+    # **共通ルールが解けていないなら、検査した気にならない**（#132）。
+    # 0 件のルールで緑にも赤にもしない。**確かめられなかった（2）**で止める。
+    if config and config.get(UNRESOLVED):
+        print("デザインハーネス: **共通ルールが読めていません。検査していません。**",
+              file=sys.stderr)
+        for u in config[UNRESOLVED]:
+            print(f"  解けなかった extends: {u}", file=sys.stderr)
+        print("  **案件の設定は壊れていません。**隣のレジストリが無いか古いだけです。",
+              file=sys.stderr)
+        print("  design-systems を ~/dev に隣接クローンし、pull してから回してください。",
+              file=sys.stderr)
+        return 2
     if config is None:
         # fail-closed（テンプレ 2026-08-20 の是正。QnD 版は fail-open のままだった）
         return fail_config(rules_path)

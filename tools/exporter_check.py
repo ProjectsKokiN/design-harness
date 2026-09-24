@@ -167,6 +167,18 @@ PAGE_VAR_RX = re.compile(
 PAGE_SCOPE_RX = re.compile(r"page-scope|pageScope|PAGE_SCOPE|allowedPages")
 #: Python の器の直書き
 PAGE_PY_RX = re.compile(r"^\s*PAGE\s*=\s*['\"]([^'\"]+)['\"]", re.M)
+#: **配列でページを絞る形**（design-harness #137・FlashEnglish 2026-09-23）。
+#:
+#:     const ALLOW_PAGES = ['⚙️_Styles'];
+#:     for (const page of figma.root.children) {
+#:       if (!ALLOW_PAGES.includes(page.name)) continue;
+#:
+#: `includes` が**配列側**に付くので、`p.name.includes(` を探す部分一致の検査にも、
+#: `p.name === '…'` を探す完全一致の検査にも当たりませんでした。
+#: **器はちゃんとページを絞っているのに、検査が「1つも見つからない」と言って 2 を返します。**
+#: **これは完全一致です。**部分一致と同じ扱いにしてはいけません。
+ARRAY_DECL_RX = re.compile(r"(?:const|let|var)\s+(\w+)\s*=\s*\[([^\]]*)\]")
+STR_LIT_RX = re.compile(r"['\"]([^'\"]+)['\"]")
 
 
 def strip_comments_js(src):
@@ -217,6 +229,30 @@ def check_pages(files, allowed, page_ids):
                     ng.append((f.name, at(m),
                                f"ページ `{name}` は page-scope.json の allowed にありません"
                                f"（allowed: {' / '.join(sorted(allowed))}）。**片方だけ直っています**"))
+            # **配列で絞る形**（#137）。`ALLOW_PAGES.includes(page.name)`
+            arrays = {a: STR_LIT_RX.findall(b) for a, b in ARRAY_DECL_RX.findall(src)}
+            for m in re.finditer(r"(\w+)\s*\.\s*includes\(\s*" + re.escape(v)
+                                 + r"\.name\s*\)", src):
+                arr = m.group(1)
+                names = arrays.get(arr)
+                if names is None and PAGE_SCOPE_RX.search(src):
+                    # **page-scope.json から読んでいる器**。配列の中身がこの器に
+                    # 無いのは**当たり前**で、いちばん良い形です（直書きしていない）
+                    continue
+                if names is None:
+                    ng.append((f.name, at(m),
+                               f"`{arr}` でページを絞っていますが、**この器の中に "
+                               f"`{arr}` の中身がありません**。どのページを見ているか読めません。"
+                               f"同じファイルに配列を書くか、page-scope.json から読んでください"))
+                    continue
+                for name in names:
+                    literal += 1
+                    used.add(name)
+                    if name not in allowed:
+                        ng.append((f.name, at(m),
+                                   f"ページ `{name}` は page-scope.json の allowed に"
+                                   f"ありません（allowed: {' / '.join(sorted(allowed))}）。"
+                                   f"**片方だけ直っています**"))
             for m in re.finditer(re.escape(v) + r"\.id\s*===\s*['\"]([^'\"]+)['\"]", src):
                 pid = m.group(1)
                 literal += 1
@@ -725,6 +761,29 @@ def self_test():
         if main(pargv) != 0:
             print("self-test NG: 宣言済みの ID で落ちた"); ok = False
         (ex / "byid.js").unlink()
+        # ── **配列でページを絞る形**（#137・FlashEnglish 2026-09-23）──────
+        # `ALLOW_PAGES.includes(page.name)` は **配列側**の includes なので、
+        # 部分一致の検査にも完全一致の検査にも当たらず、**空振りで 2** を返していた。
+        good.write_text("const ALLOW_PAGES = ['⚙️_Styles'];\n"
+                        "for (const page of figma.root.children) {\n"
+                        "  if (!ALLOW_PAGES.includes(page.name)) continue;\n}\n",
+                        encoding="utf-8")
+        if main(pargv) != 0:
+            print("self-test NG: **配列で絞る器を空振りにした**"); ok = False
+        # **allowed に無い名前なら落ちる**（読めるだけでは足りない）
+        good.write_text("const ALLOW_PAGES = ['⚙️_Styles', '存在しないページ'];\n"
+                        "for (const page of figma.root.children) {\n"
+                        "  if (!ALLOW_PAGES.includes(page.name)) continue;\n}\n",
+                        encoding="utf-8")
+        if main(pargv) == 0:
+            print("self-test NG: **allowed に無いページ名を通した**"); ok = False
+        # **配列の中身がこの器に無く、page-scope も読んでいなければ言う**
+        good.write_text("for (const page of figma.root.children) {\n"
+                        "  if (!SOMEWHERE.includes(page.name)) continue;\n}\n",
+                        encoding="utf-8")
+        if main(pargv) == 0:
+            print("self-test NG: **どのページを見ているか読めないのに通した**"); ok = False
+
         # 宣言から読む器だけなら通る（直書き 0 でも空振りではない）
         good.write_text("const allowed = JSON.parse(fs.readFileSync('design/figma/page-scope.json')).allowed;\n"
                         "const pages = figma.root.children.filter(p => allowed.includes(p.name));\n",

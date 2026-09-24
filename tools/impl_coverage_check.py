@@ -124,7 +124,38 @@ def declared_problems(export_paths):
 
 
 #: `impl` が指す実装の定義。Dart のトップレベルの宣言
-IMPL_DEF = ("class", "mixin", "enum", "extension", "typedef")
+#: 言語ごとの「型を宣言する語」。**言語から導きます。**（design-harness #130）
+#:
+#: 実害（planttalk-ios・2026-09-19）: ここが Dart のまま
+#: `("class", "mixin", "enum", "extension", "typedef")` だったため、
+#: **SwiftUI の View（ほぼ全部 `struct`）が 3 件とも「定義がありません」**になりました。
+#: 対応表は正しいのに、Swift の案件では**必ず落ちます**。
+#: `_source_ext.py` は 2026-09-18 に Swift へ対応したのに、この定数だけ取り残されていました。
+DEF_BY_EXT = {
+    ".dart": ("class", "mixin", "enum", "extension", "typedef"),
+    ".swift": ("struct", "class", "enum", "actor", "protocol", "extension", "typealias"),
+    ".kt": ("class", "object", "interface", "enum"),
+    ".kts": ("class", "object", "interface", "enum"),
+    ".ts": ("class", "interface", "type", "enum", "function", "const"),
+    ".tsx": ("class", "interface", "type", "enum", "function", "const"),
+    ".js": ("class", "function", "const"),
+    ".jsx": ("class", "function", "const"),
+}
+
+#: 知らない拡張子のときに使う語。**全部の言語の和集合**です。
+#: 狭めると「対応表が正しいのに落ちる」（#130 と同じ形）ので、**広いほうに倒します。**
+#: 見落とす側に倒るのは承知のうえで、**知らない言語で嘘の赤を出さない**ほうを取ります。
+IMPL_DEF_ANY = tuple(sorted({w for ws in DEF_BY_EXT.values() for w in ws}))
+
+#: 既定（拡張子が分からない場合）。**旧 IMPL_DEF の名前は残しません**——
+#: 残すと「どちらが効いているか」が読めなくなります
+def def_words(path=None):
+    """そのファイルの言語で、型を宣言する語を返す。"""
+    if path is not None:
+        w = DEF_BY_EXT.get(Path(path).suffix)
+        if w:
+            return w
+    return IMPL_DEF_ANY
 
 
 def impl_targets(value):
@@ -198,8 +229,8 @@ def check_impl_targets(map_path, root, lib_dir="lib"):
             except OSError:
                 continue
 
-    def defined_in(text, name):
-        return re.search(r"\b(?:" + "|".join(IMPL_DEF) + r")\s+"
+    def defined_in(text, name, path=None):
+        return re.search(r"\b(?:" + "|".join(def_words(path)) + r")\s+"
                          + re.escape(name) + r"\b", text) is not None
 
     bad, n, skipped = [], 0, 0
@@ -220,11 +251,11 @@ def check_impl_targets(map_path, root, lib_dir="lib"):
                 except OSError as e:
                     bad.append((figma, target, f"読めません（{e}）"))
                     continue
-                if not defined_in(body, cls):
+                if not defined_in(body, cls, f):
                     bad.append((figma, target, "そのファイルに定義がありません"))
             elif not texts:
                 skipped += 1          # lib/ が無い。名前だけの宣言は見られない
-            elif not any(defined_in(x, target) for x in texts.values()):
+            elif not any(defined_in(x, target, k) for k, x in texts.items()):
                 bad.append((figma, target, f"{lib_dir}/ のどこにも定義がありません"))
     return n, bad, skipped
 
@@ -628,6 +659,24 @@ def self_test():
     """落ちるケースを持つ（規律: 検査を足したら落ちるケースを1つ書く）。"""
     import tempfile
     ok = True
+
+    # ── **型を宣言する語は、言語から導く**（#130・2026-09-24）────────────
+    # 実害: ここが Dart のままで、**SwiftUI の View（struct）が 3 件とも
+    # 「定義がありません」**になった。対応表は正しいのに必ず落ちる。
+    _cases = [
+        ("Swift の struct を読む", ".swift", "struct Chip: View {}", "Chip", True),
+        ("Swift の actor を読む", ".swift", "actor Store {}", "Store", True),
+        ("Dart の mixin を読む", ".dart", "mixin Sticky {}", "Sticky", True),
+        ("**Dart では struct を型と読まない**", ".dart", "struct Chip {}", "Chip", False),
+        ("知らない拡張子では広く読む", ".zig", "struct Chip {}", "Chip", True),
+        ("名前が無ければ見つからない", ".swift", "struct Other {}", "Chip", False),
+    ]
+    for _name, _ext, _code, _want, _hit in _cases:
+        _rx = re.search(r"\b(?:" + "|".join(def_words("x" + _ext)) + r")\s+"
+                        + re.escape(_want) + r"\b", _code) is not None
+        if _rx is not _hit:
+            print(f"self-test NG: {_name}")
+            ok = False
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
         (base / "export.json").write_text(json.dumps({
