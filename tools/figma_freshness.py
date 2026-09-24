@@ -57,6 +57,7 @@ import io
 import json
 import re
 import os
+import subprocess
 import sys
 import urllib.request
 from pathlib import Path
@@ -65,6 +66,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
 
 ROOT = Path(__file__).resolve().parent.parent
+#: 設定と案件の根（--config を読むと差し替わる）。**関係の判定に使う**
+CONFIG: dict = {}
+PROJECT_ROOT = ROOT
 
 # ---- 案件ごとに埋める（3つだけ）--------------------------------------------
 #: 全量書き出しの components.json。レジストリ参照の案件はレジストリ側を指す
@@ -436,6 +440,35 @@ def self_test() -> int:
             os.environ['FIGMA_TOKEN'] = _keep_tok
     cases.append(('通信が詰まったら 2 で諦める（帰ってこないのが最悪）', _rc == 2))
     cases.append(('urlopen に待ち時間の上限を渡している', _seen.get('timeout') == NET_TIMEOUT))
+
+    # ── **変わったセットが、いまの作業と関係あるか**（#138・2026-09-24）─────
+    # 実害: 作業と無関係な 4 セットで push が止まり、取り直しに約 25 分かかった。
+    # **どれが無関係かが分かれば、いま直すか後回しにするかを選べる。**
+    with tempfile.TemporaryDirectory() as _td:
+        _r = Path(_td)
+        (_r / 'design').mkdir()
+        subprocess.run(['git', '-C', str(_r), 'init', '-q'], capture_output=True)
+        (_r / 'lib').mkdir()
+        (_r / 'lib' / 'chip.dart').write_text('x\n', encoding='utf-8')   # 触っている
+        (_r / 'lib' / 'tabs.dart').write_text('y\n', encoding='utf-8')
+        subprocess.run(['git', '-C', str(_r), 'add', 'lib/tabs.dart'], capture_output=True)
+        subprocess.run(['git', '-C', str(_r), '-c', 'user.email=t@t', '-c', 'user.name=t',
+                        'commit', '-q', '-m', 'x'], capture_output=True)
+        _map = _r / 'design' / 'component-map.json'
+        _map.write_text(json.dumps({'componentSets': {
+            'Chips/Plain': {'impl': 'lib/chip.dart#Chip'},
+            'Tabs': {'impl': 'lib/tabs.dart#Tabs'},
+            'Toast': {},
+        }}, ensure_ascii=False), encoding='utf-8')
+        _cfg = {'componentMap': 'design/component-map.json'}
+        _rel = relatedness(['Chips/Plain', 'Tabs', 'Toast'], _cfg, _r)
+        cases.append(('触っているファイルのセットは「作業中」', _rel.get('Chips/Plain') == '作業中'))
+        cases.append(('**触っていないセットは「無関係」**', _rel.get('Tabs') == '無関係'))
+        cases.append(('**対応表に実装が無ければ「不明」**（無関係と決めつけない）',
+                      _rel.get('Toast') == '不明'))
+        cases.append(('対応表が無ければ何も言わない',
+                      relatedness(['Chips/Plain'], {}, _r) == {}))
+
 
     # 本題の退行: 名前がずれていても値のずれを隠さない
     r = compare(
@@ -919,6 +952,9 @@ def load_config(path) -> None:
     g = globals()
     conf = json.loads(Path(path).read_text(encoding='utf-8'))
     base = Path(path).resolve().parent
+    # **設定と案件の根を覚えておく。**関係の判定（#138）で対応表を引くのに要る
+    g['CONFIG'] = conf
+    g['PROJECT_ROOT'] = base.parent
     if conf.get('export'):
         g['EXPORT'] = (base / conf['export']).resolve()
     if conf.get('fileKey'):
@@ -1061,6 +1097,79 @@ def vocab_check() -> int:
         return 1
     print('  OK: ハッシュの項目はすべて一覧にあります。')
     return 0
+
+
+
+def _changed_files(root):
+    """いま手を入れているファイル（作業ツリー＋未 push）を集める。"""
+    out = set()
+    for args in (('status', '--porcelain'), ('diff', '--name-only', '@{u}...HEAD')):
+        r = subprocess.run(['git', '-C', str(root), *args],
+                           capture_output=True, text=True, encoding='utf-8', errors='replace')
+        if r.returncode != 0:
+            continue
+        for line in r.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if args[0] == 'status':
+                line = line[3:].strip().strip('"')
+                if ' -> ' in line:
+                    line = line.split(' -> ', 1)[1]
+            out.add(line)
+    return out
+
+
+def relatedness(names, cfg, root):
+    """変わったセットが、**いまの作業と関係があるか**を返す。
+
+    実害（FlashEnglish・2026-09-24・#138）: 作業を終えて push したら、
+    **今回の作業と無関係な 4 セット**で止まりました。すでに 2 コミット積んだ後で、
+    取り直し・生成し直し・カタログ作り直しに **約 25 分**かかっています。
+
+    **「どれが無関係か」が分かれば、いま直すか後回しにするかを選べます。**
+    対応表（component-map.json）でセット名から実装ファイルを引き、
+    そのファイルにいま手を入れているかで分けます。
+
+    **分からないものは「不明」と言います。**「無関係」と決めつけません。
+    """
+    mp = cfg.get('componentMap')
+    if not mp:
+        return {}
+    path = (Path(root) / mp)
+    if not path.exists():
+        return {}
+    try:
+        table = json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return {}
+    sets = table.get('componentSets') or table.get('sets') or table
+    touched = _changed_files(root)
+    out = {}
+    for n in names:
+        row = sets.get(n) if isinstance(sets, dict) else None
+        impl = (row or {}).get('impl') if isinstance(row, dict) else None
+        if not impl:
+            out[n] = '不明'
+            continue
+        f = str(impl).split('#')[0]
+        out[n] = '作業中' if any(t == f or t.endswith('/' + f) or f.endswith(t)
+                                for t in touched) else '無関係'
+    return out
+
+
+def print_relatedness(names, cfg, root):
+    rel = relatedness(names, cfg, root)
+    if not rel:
+        return
+    away = [n for n, v in rel.items() if v == '無関係']
+    print()
+    print('  いまの作業との関係:')
+    for n in names:
+        print(f'    {rel.get(n, "不明")}  {n}')
+    if away:
+        print(f'  **{len(away)} セットは、いま触っているファイルと関係がありません。**')
+        print('  いま取り直すか、宣言して後回しにするかを選べます。')
 
 
 def main() -> int:
@@ -1226,10 +1335,14 @@ def main() -> int:
               + (f' / 画面 {len(fr)} 枚' if fr else '') + '）')
         return 0
 
-    print('**Figma が書き出しより新しくなっています。**')
+    notice = '--notice' in sys.argv
+    head = ('**Figma が書き出しより新しくなっています。**'
+            + ('（**報せです。ここでは止めません**）' if notice else ''))
+    print(head)
     for label, names in (('変わった', changed), ('増えた', added), ('消えた', removed)):
         if names:
             print(f'  {label}: {", ".join(names)}')
+    print_relatedness(list(changed) + list(added) + list(removed), CONFIG, PROJECT_ROOT)
     print()
     print('取り直し方: ~/.claude/skills/mobile-harness-setup/references/'
           'figma-fullexport.md の手順で書き出し直し、')
