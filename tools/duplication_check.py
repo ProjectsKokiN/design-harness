@@ -34,7 +34,7 @@
     python3 tools/duplication_check.py --config duplication.json
 
     {
-      "roots": ["~/dev/aub-familywalk", "~/dev/flash-compose", "~/dev/planttalk"],
+      "roots": ["~/dev/aub-familywalk", "~/dev/FlashEnglish", "~/dev/planttalk"],
       "scope": ["design"],
       "suffixes": [".py", ".js", ".mjs", ".sh"],
       "exclude": ["harness/", "__pycache__/", "seeds/"],

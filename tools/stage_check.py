@@ -1266,7 +1266,7 @@ def matrix(template, projects):
     PLAN.md に測った日の値が1行残っているだけで、次に知りたくなったら人が手で組み直す
     ことになります。**「宣言しない。導出する」に反したまま**でした。
 
-        python3 tools/stage_check.py --matrix ~/dev/aub-familywalk ~/dev/flash-compose
+        python3 tools/stage_check.py --matrix ~/dev/aub-familywalk ~/dev/FlashEnglish
 
     案件ごとに `design/verify.sh` と `.github/workflows/` を読み、雛形の段が
     走っているか（○）・理由つきで不在か（宣言）・宣言も無く落ちているか（**×**）を出します。
