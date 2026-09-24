@@ -84,6 +84,20 @@ STEP_RX = re.compile(r'^\s*(?:step|note)\s+"([^"]+)"\s+(.*)$')
 #: 読まれ、その段の照合が狂う。実際に `テスト` が `flutter test` と一致しなくなった
 TAIL_RX = re.compile(r'^\s*if\s+\[\s+"\$FAILED"\s+-ne\s+0\s+\]')
 TOOL_RX = re.compile(r'(?:\$HARNESS|harness)/tools/([a-z_]+)\.py')
+#: **案件ローカルの道具**（design-harness #136・2026-09-24）。
+#:
+#: それまで `TOOL_RX` は `$HARNESS/tools/` しか拾わず、**案件の道具は全部
+#: 「外部の道具」に分類されて self-test の要求から外れて**いました。
+#: PlantTalk で「自己検査なし（外部の道具）」に挙がっていた 4 件は、
+#: **4 件とも案件の道具**で、外部（`flutter test` のような案件固有のコマンド）は 0 件。
+#: **免除されていること自体が、文言のせいで見えません。**
+#:
+#: `engine/design_check.py` に self-test を入れたのに、段が相変わらず
+#: 「自己検査なし」と言い続けたことから見つかりました。
+LOCAL_TOOL_RX = re.compile(r'\$PY"?\s+"?((?:[\w.-]+/)*[\w-]+\.py)')
+#: シムが「本体はどれか」を宣言する印。**シムには self_test の字が無い**ので、
+#: これが無いと「self-test が無い道具」に見えます（`design/design_check.py` が実例）。
+SHIM_RX = re.compile(r'harness-shim:\s*(\S+)')
 #: 段が走らせるファイルの名前（パスは落とす）。案件シム経由でも同じ名前になる
 FILE_RX = re.compile(r"(?:^|[\s/\"'])([a-z_][a-z0-9_]*\.(?:py|sh))\b")
 #: README の例外表から拾う道具名
@@ -1870,16 +1884,37 @@ def main(argv=None):
             if not TOOL_RX.search(line):
                 continue
             label, cmd = line.strip()[:60], line
-        tools = TOOL_RX.findall(cmd)
+        tools = [(n, args.tools / f"{n}.py") for n in TOOL_RX.findall(cmd)]
+        # **案件の道具も拾う**（#136）。ハーネスの道具は上で拾っているので除く
+        # **案件の根は「design/ を含む場所」。**`design/verify.sh` なら 2 つ上、
+        # そうでなければ 1 つ上（作り物や手書きの置き方に合わせる）
+        _vp = args.verify.resolve().parent
+        _proj = _vp.parent if _vp.name == "design" else _vp
+        for rel in LOCAL_TOOL_RX.findall(cmd):
+            if "harness/tools/" in rel:
+                continue
+            tools.append((Path(rel).stem, _proj / rel))
         if not tools:
             foreign.append(label)
             continue
-        for name in tools:
-            path = args.tools / f"{name}.py"
+        for name, path in tools:
             if not path.exists():
                 problems.append(f"「{label}」が呼ぶ {name}.py がありません")
                 continue
             src = path.read_text(encoding="utf-8", errors="ignore")
+            # **シムは本体を宣言する**（#136）。シム自身には self_test の字が無い
+            _shim = SHIM_RX.search(src)
+            if _shim and "self_test" not in src:
+                _body = (path.parent / _shim.group(1))
+                if not _body.exists():
+                    _body = (_proj / _shim.group(1))
+                if _body.exists():
+                    src = _body.read_text(encoding="utf-8", errors="ignore")
+                else:
+                    problems.append(
+                        f"「{label}」の {name}.py が `harness-shim: {_shim.group(1)}` と"
+                        f"宣言していますが、**その本体がありません**")
+                    continue
             if "self_test" not in src:
                 if name in exceptions:
                     foreign.append(f"{label}（{name}: 例外として明記済み）")
@@ -2102,6 +2137,32 @@ def self_test():
             print(f"self-test NG: **時間切れを 2 で返していません**（返り値 {rc_slow}）"); ok = False
         if rc_mix != 1:
             print(f"self-test NG: **違反が混ざっているのに 1 を返していません**（{rc_mix}）"); ok = False
+
+        # ── **案件の道具も self-test を要求する**（#136・2026-09-24）─────
+        # それまで `$HARNESS/tools/` しか拾わず、案件の道具は全部「外部の道具」に
+        # 分類されて免除されていた。PlantTalk の「自己検査なし」4 件は**4 件とも
+        # 案件の道具**で、外部は 0 件だった。**免除が文言のせいで見えない。**
+        (base / "design").mkdir(exist_ok=True)
+        (base / "design" / "local_good.py").write_text(
+            "import sys\ndef self_test():\n    return 0\n", encoding="utf-8")
+        (base / "design" / "local_bad.py").write_text("print('検査したふり')\n",
+                                                      encoding="utf-8")
+        if run('step "案件の道具（よい）" "$PY" design/local_good.py\n') != 0:
+            print("self-test NG: 案件の道具で self-test があるのに落ちました"); ok = False
+        if run('step "案件の道具（無し）" "$PY" design/local_bad.py\n') != 1:
+            print("self-test NG: **案件の道具の self-test 無しを見逃しました**"); ok = False
+
+        # **シムは本体を宣言すれば通る**（シム自身に self_test の字は無い）
+        (base / "design" / "shim.py").write_text(
+            "# harness-shim: engine_body.py\nimport sys\n", encoding="utf-8")
+        (base / "design" / "engine_body.py").write_text(
+            "def self_test():\n    return 0\n", encoding="utf-8")
+        if run('step "シム" "$PY" design/shim.py\n') != 0:
+            print("self-test NG: **シムの宣言を辿れていません**"); ok = False
+        # **宣言した本体が無ければ落ちる**（宣言だけで通さない）
+        (base / "design" / "engine_body.py").unlink()
+        if run('step "シム" "$PY" design/shim.py\n') != 1:
+            print("self-test NG: **本体が無いのにシムの宣言で通しました**"); ok = False
 
         if run('step "よい段" "$PY" "$HARNESS/tools/good.py"\n') != 0:
             print("self-test NG: self-test のある道具で落ちた"); ok = False
