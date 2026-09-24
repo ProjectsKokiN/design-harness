@@ -22,7 +22,10 @@ FAILED=0
 # 無いと `too few X's in template` で失敗します。macOS では通るので、
 # **手元で気づけません**（2026-09-19、CI で実際に踏みました）。
 FAILED_LIST="$(mktemp -t harness_failed.XXXXXX)"
-trap 'rm -f "$FAILED_LIST"' EXIT
+# **「これから直す段」の控え**（#139）。呼ぶ側が HARNESS_EXPECTED_FAILURES で予告する
+EXPECTED_LIST="$(mktemp -t harness_expected.XXXXXX)"
+EXPECTED_OK_LIST="$(mktemp -t harness_expected_ok.XXXXXX)"
+trap 'rm -f "$FAILED_LIST" "$EXPECTED_LIST" "$EXPECTED_OK_LIST"' EXIT
 
 # --- 秘密を、検査の中で読む（2026-09-19・PlantTalk で踏んだ）-----------------
 # **pre-push フックと CI には対話セッションの環境変数が届きません。**
@@ -75,10 +78,44 @@ step() {  # step <名前> <コマンド...>
   # 実害（2026-09-07・#96）: Windows で self-test が落ちている道具の出力が `NG` として
   # 並び、**案件が壊れていると半日ぶん誤解**していた。壊れていたのは道具のほうだった。
   set +e; "$@"; _rc=$?; set -e
+  # **「これから直す段」は分けて出します**（design-harness #139・2026-09-24）。
+  #
+  # 実害（FlashEnglish）: `build_catalog.sh` は verify → 作り直しの順に走るので、
+  # **作り直す前の「カタログが古い」段は必ず落ちます。**1 セッションで 3 回作り直し、
+  # 3 回とも同じ赤が出ました。**毎回出る赤は読まれなくなり、本物の失敗が紛れます。**
+  #
+  # 呼ぶ側が `HARNESS_EXPECTED_FAILURES` に段の名前を改行区切りで入れると、
+  # その段の失敗を**別の見出し**にします。**隠しません。**数も最後に出します。
+  # 名前が合わない・予告した段が落ちなかったときも言います（**古い予告を残さない**）。
+  _expected=0
+  case "${HARNESS_EXPECTED_FAILURES:-}" in
+    *"$_name"*) _expected=1 ;;
+  esac
   case "$_rc" in
-    0) echo "OK" ;;
-    2) echo "NG（確かめられなかった）"; FAILED=1; printf '%s\n' "$_name" >> "$FAILED_LIST" ;;
-    *) echo "NG"; FAILED=1; printf '%s\n' "$_name" >> "$FAILED_LIST" ;;
+    0)
+      if [ "$_expected" = 1 ]; then
+        echo "OK（**予告した段ですが落ちませんでした。**予告が古くなっています）"
+        printf '%s\n' "$_name" >> "$EXPECTED_OK_LIST"
+      else
+        echo "OK"
+      fi
+      ;;
+    2)
+      if [ "$_expected" = 1 ]; then
+        echo "これから直す段（確かめられなかった・予告どおり）"
+        printf '%s\n' "$_name" >> "$EXPECTED_LIST"
+      else
+        echo "NG（確かめられなかった）"; FAILED=1; printf '%s\n' "$_name" >> "$FAILED_LIST"
+      fi
+      ;;
+    *)
+      if [ "$_expected" = 1 ]; then
+        echo "これから直す段（予告どおり）"
+        printf '%s\n' "$_name" >> "$EXPECTED_LIST"
+      else
+        echo "NG"; FAILED=1; printf '%s\n' "$_name" >> "$FAILED_LIST"
+      fi
+      ;;
   esac
   echo
 }
@@ -444,6 +481,24 @@ step "テスト"          {{flutter test / npm test / xcodebuild test -scheme <�
 # **ガラスの面は描画の実測（snapshot）に向きません。** 後ろの内容で見た目が
 # 変わるので、同じ入力でも同じ画像になりません。外す場合は design/gaps.json に
 # 「かわりに何で見るか」を書いてください。
+
+# --- 「これから直す段」の要約（design-harness #139）---------------------------
+# **隠しません。**何件を予告として分けたかを必ず出します。
+# 予告したのに落ちなかった段も出します（**古い予告を残さないため**）。
+if [ -s "$EXPECTED_LIST" ] || [ -s "$EXPECTED_OK_LIST" ]; then
+  echo "=== これから直す段（呼んだ側が予告したもの）==="
+  if [ -s "$EXPECTED_LIST" ]; then
+    echo "  予告どおり落ちた段: $(wc -l < "$EXPECTED_LIST" | tr -d ' ') 件"
+    sed 's/^/    /' "$EXPECTED_LIST"
+  fi
+  if [ -s "$EXPECTED_OK_LIST" ]; then
+    echo "  **予告したのに落ちなかった段: $(wc -l < "$EXPECTED_OK_LIST" | tr -d ' ') 件**"
+    sed 's/^/    /' "$EXPECTED_OK_LIST"
+    echo "  予告が古くなっています。HARNESS_EXPECTED_FAILURES から外してください。"
+  fi
+  echo "  **これは免除ではありません。**このあと直るかは、呼んだ側の仕事です。"
+  echo
+fi
 
 if [ "$FAILED" -ne 0 ]; then
   echo "検証に失敗しました。上の NG を直してから再実行してください。"
