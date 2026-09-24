@@ -141,6 +141,19 @@ def blocks(src: str):
     return found
 
 
+def declared_names(src: str) -> set:
+    """**型を宣言した名前**だけを返す（`struct` / `enum` / `class` / `protocol` / `actor`）。
+
+    `extension X { … }` は**既にある型にメンバを足すだけで、型を宣言しません**
+    （design-harness #144・2026-09-25）。それまで `blocks()` の結果をそのまま
+    「案件の型」にしていたので、案件が `extension Color { init(hex:) }` を持つと
+    Color が案件の型になり、**`Color.clear` を「その型に無いメンバ」と言って**いました。
+    `外の型` に書いても効かず、PlantTalk は正しいコードを `Spacer` に書き換えて避けました。
+    **検査の都合で製品のコードを曲げさせていました。**
+    """
+    return {m.group(1).split(".")[0] for m in DECL_RX.finditer(src)}
+
+
 def members_of(bodies, synth=None):
     """その型が持つメンバ。**プロトコルが足すぶんも入れます。**"""
     synth = synth or {}
@@ -182,14 +195,21 @@ def main(argv=None) -> int:
         return 2
 
     stripped = {f: strip_code(f.read_text(encoding="utf-8", errors="replace")) for f in files}
-    types = {}
+    types, declared = {}, set()
     for src in stripped.values():
         for name, bodies in blocks(src).items():
             types.setdefault(name, []).extend(bodies)
+        declared |= declared_names(src)
     synth = cfg.get("プロトコルが足すメンバ") or {}
-    known = {n: members_of(b, synth) for n, b in types.items()}
     outside = cfg.get("外の型") or {}
     ignore = cfg.get("見ない名前") or {}
+    # **案件の型は、案件が宣言した型だけ**（#144）。`extension` しか無い型は
+    # 外の型（フレームワークの型）で、案件はそれにメンバを足しているだけ。
+    # **`外の型` に書いた型は、案件が同じ名前を宣言していても外の型として扱う**
+    # （書いた宣言が効かないのでは、宣言の意味が無い）
+    known = {n: members_of(b, synth) for n, b in types.items()
+             if n in declared and n not in outside}
+    extended_only = {n for n in types if n not in declared}
 
     bad_member, bad_type = [], []
     refs = 0
@@ -200,10 +220,14 @@ def main(argv=None) -> int:
                 continue
             refs += 1
             line = src.count("\n", 0, m.start()) + 1
+            if cont in outside or cont in extended_only:
+                # **外の型。メンバは見ない**（フレームワークの全部は分からない）。
+                # extension しか無い型は、extension があること自体が「外の型」の証拠
+                continue
             if cont in known:
                 if mem not in known[cont]:
                     bad_member.append((f, line, cont, mem))
-            elif cont not in outside:
+            else:
                 bad_type.append((f, line, cont, mem))
 
     print(f"名前の照合: 案件の型 {len(known)} 件 / 参照 {refs} 件 "
@@ -287,6 +311,25 @@ def self_test() -> int:
         write("enum Tone: String { case a, b }\nlet x = Tone.allCases\n", c_p)
         if run() != 1:
             print("self-test NG: **準拠していないのに allCases を通しました**"); ok = False
+
+        # ── **extension は型の宣言ではない**（#144・2026-09-25）──────────
+        # それまで `extension Color` で Color が案件の型になり、Color.clear を落としていた
+        write("extension Color { init(hex: UInt32) {} }\nlet a = Color.clear\n",
+              {**cfg, "外の型": {}})
+        if run() != 0:
+            print("self-test NG: **extension しか無い型の標準メンバを落としました**"); ok = False
+        write("extension Color { static let brand = 1 }\nlet a = Color.brand\n",
+              {**cfg, "外の型": {}})
+        if run() != 0:
+            print("self-test NG: extension で足したメンバを落としました"); ok = False
+        # **案件の型の extension で足したメンバは、今までどおり数える**
+        write("enum Space { }\nextension Space { static let m = 16.0 }\nlet a = Space.zzz\n")
+        if run() != 1:
+            print("self-test NG: **案件の型の無いメンバを見逃しました**（extension があるだけで外の型にした）"); ok = False
+        # **外の型に書いた型は、案件が同じ名前を宣言していても外の型**
+        write("enum Font { static let m = 1 }\nlet a = Font.body\n")
+        if run() != 0:
+            print("self-test NG: **外の型の宣言が効いていません**（案件の型を先に見た）"); ok = False
 
         # **見ない名前は数えない**
         write("enum Space { static let m = 16.0 }\nlet a = Self.anything\n")
