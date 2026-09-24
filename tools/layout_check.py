@@ -300,7 +300,10 @@ def self_test() -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="画面の骨格が書き出しどおりか")
     ap.add_argument("--config", default="design/screen-map.json")
-    ap.add_argument("--root", default=str(ROOT))
+    # **案件の根は「いま居る場所」を既定にします**（#133・共有層へ上げたため）。
+    # 道具の位置から求めると、`design/harness/tools/` に置いた瞬間に
+    # **ハーネスの中を案件だと思い込みます**（2026-09-24 に踏みました）。
+    ap.add_argument("--root", default=".")
     ap.add_argument("--self-test", action="store_true")
     a = ap.parse_args()
     if a.self_test:
