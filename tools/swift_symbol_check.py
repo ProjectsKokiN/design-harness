@@ -225,7 +225,11 @@ def main(argv=None) -> int:
                 # extension しか無い型は、extension があること自体が「外の型」の証拠
                 continue
             if cont in known:
-                if mem not in known[cont]:
+                # **`X.self` はメンバではない。**型そのものを値として渡す書き方
+                # （`@Environment(AppModel.self)` / `navigationDestination(for: Step.self)`）。
+                # 2026-09-25 に PlantTalk が踏んだ（#144 と同じ種類）。**型が在るかは
+                # 見る**ので、無い型の `.self` は下の bad_type で今までどおり落ちる
+                if mem != "self" and mem not in known[cont]:
                     bad_member.append((f, line, cont, mem))
             else:
                 bad_type.append((f, line, cont, mem))
@@ -289,6 +293,16 @@ def self_test() -> int:
               'let s = "DECISIONS.md を読む"\nlet a = Space.m\n')
         if run() != 0:
             print("self-test NG: **コメントや文字列の中を数えました**"); ok = False
+
+        # **`X.self` はメンバではない**（2026-09-25・PlantTalk）。型そのものを渡す書き方
+        write("final class AppModel { }\nenum Step { case one }\n"
+              "let e = AppModel.self\nlet d = Step.self\n")
+        if run() != 0:
+            print("self-test NG: **`.self` を無いメンバと読みました**"); ok = False
+        # ただし**無い型の `.self` は落とす**（型が在るかは見る）
+        write("let d = Missing.self\n")
+        if run() != 1:
+            print("self-test NG: **宣言されていない型の `.self` を通しました**"); ok = False
 
         # **extension で足した static も拾う**
         write("enum Space { }\nextension Space { static let m = 16.0 }\nlet a = Space.m\n")
