@@ -156,7 +156,8 @@ def main(argv=None):
         for f in sorted(test_root.rglob("*")):
             if not f.is_file() or f.suffix not in SUFFIXES:
                 continue
-            if any(str(f.resolve()).startswith(str(i) + "/") for i in inside):
+            # 区切り文字を文字列で足さない（Windows は `\`。portable_check が落とす）
+            if any(f.resolve().is_relative_to(i) for i in inside):
                 continue
             outside.append(f.relative_to(base).as_posix())
     if outside:
