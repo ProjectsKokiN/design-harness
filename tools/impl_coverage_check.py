@@ -17,6 +17,9 @@
 - 書き出し（figma/components.json ＋ frames.json の枠）にあるのに、対応表
   （component-map.json）の `impl` が空、または対応表に行そのものが無いもの
 - 対応表にあるのに書き出しに無い名前（幽霊。名前の取り違え・Figma 側の削除）
+- **プラットフォームの標準で実装した**と対応表の `standard` に書いたのに、その書き方
+  （`uses`）が実装に出てこないもの。`why` と `decided`（ユーザーの決定の置き場）も要る
+  （2026-09-25。宣言だけでは数えない。`check_standards()` を参照）
 
 ## この検査が捕まえないもの
 
@@ -258,6 +261,72 @@ def check_impl_targets(map_path, root, lib_dir="lib"):
             elif not any(defined_in(x, target, k) for k, x in texts.items()):
                 bad.append((figma, target, f"{lib_dir}/ のどこにも定義がありません"))
     return n, bad, skipped
+
+
+#: 行コメント・ブロックコメント（標準の使用を数えるときに外す）
+_COMMENT_RX = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
+
+
+def check_standards(map_path, root, lib_dir="lib"):
+    """**プラットフォームの標準で実装した**部品を、実装ありと数えてよいかを見る（2026-09-25）。
+
+    PlantTalk の `Icon` は `Image(systemName:)`、`Lists` / `Lists/Subtle` は SwiftUI の
+    `List` で実装すると**ユーザーが決めている**（案件の DECISIONS.md に表で残っている）。
+    それまで対応表にそれを書く手段が無く、`impl` を空にするしかなかったので
+    「未実装」に数えられていた。段4 で宣言は測定の代わりにならなくなったので、
+    **宣言だけでは数えない**:
+
+        {"figma": "Icon", "impl": [],
+         "standard": {"uses": "Image(systemName:",
+                      "why": "SF Symbols で描く。Figma の Icon は表示用の器",
+                      "decided": "DECISIONS.md:1596（ユーザー決定）"}}
+
+    - `uses` の文字列が、`lib_dir` の実装（コメントを外したもの）に**実際に出ること**を測る
+    - `why` と `decided`（ユーザーの決定がどこに書いてあるか）が無ければ数えない。
+      **AI がどれを作る・作らないを判断しない**（2026-08-29 の規則）ので、決めた人の記録を要る
+
+    戻り: ({figma 名: uses}, [(figma 名, 理由)])
+    """
+    try:
+        doc = json.loads(map_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}, []
+    comps = doc.get("components") if isinstance(doc, dict) else None
+    if not isinstance(comps, list):
+        return {}, []
+    decl = [(c.get("figma") or "?", c["standard"]) for c in comps
+            if isinstance(c, dict) and c.get("standard") is not None]
+    if not decl:
+        return {}, []
+    lib = Path(root) / lib_dir
+    code = []
+    if lib.exists():
+        for f in rglob_sources(lib):
+            try:
+                code.append(_COMMENT_RX.sub("", f.read_text(encoding="utf-8", errors="ignore")))
+            except OSError:
+                continue
+    ok, bad = {}, []
+    for figma, st in decl:
+        if not isinstance(st, dict):
+            bad.append((figma, "`standard` は {uses, why, decided} の形で書きます"))
+            continue
+        missing = [k for k in ("uses", "why", "decided")
+                   if not (isinstance(st.get(k), str) and st[k].strip())]
+        if missing:
+            bad.append((figma, f"`standard` に {' / '.join(missing)} がありません"
+                               f"（決めた人の記録が無い宣言は数えません）"))
+            continue
+        if not code:
+            bad.append((figma, f"`{lib_dir}/` に実装が無いので、`{st['uses']}` を"
+                               f"使っているか**見ていません**"))
+            continue
+        if not any(st["uses"] in t for t in code):
+            bad.append((figma, f"`{st['uses']}` が `{lib_dir}/` の実装のどこにも出てきません"
+                               f"（コメントは数えません）"))
+            continue
+        ok[figma] = st["uses"]
+    return ok, bad
 
 
 def mapped_impl(map_path):
@@ -555,6 +624,10 @@ def main(argv=None):
             print(f"対応表が読めません: {cmap}\n  {why}", file=sys.stderr)
             return 2
     export_problems = declared_problems(exports)
+    # **標準で実装したもの**は、使っていることを測れたときだけ実装ありと数える
+    std_ok, std_bad = check_standards(cmap, repo_root_of(base), conf.get("lib_dir", "lib"))
+    for name in std_ok:
+        impl[name] = True
 
     if not targets:
         print("NG: 書き出しに component set が0件です（書き出しが空の可能性）",
@@ -593,6 +666,9 @@ def main(argv=None):
         if unchecked:
             print(f"    うち {unchecked} 件は名前だけの宣言で、"
                   f"`{conf.get('lib_dir', 'lib')}/` が無いので**実在を見ていません**")
+    if std_ok:
+        print(f"  プラットフォームの標準で実装: {len(std_ok)} 件（"
+              + " / ".join(f"{k} → `{v}`" for k, v in sorted(std_ok.items())) + "）")
     if excluded:
         print(f"  書き出しが除外している: {len(excluded)} 件"
               f"（{', '.join(sorted(excluded))}）")
@@ -607,6 +683,12 @@ def main(argv=None):
         print(f"\n書き出しの分母が信用できません:", file=sys.stderr)
         for m in export_problems:
             print(f"  - {m}", file=sys.stderr)
+        rc = 1
+    if std_bad:
+        print(f"\n標準で実装したという宣言を、実装で確かめられません（{len(std_bad)} 件）。"
+              f"**未実装として数えています**:")
+        for figma, why in std_bad:
+            print(f"  - {figma}: {why}")
         rc = 1
     if unimplemented:
         print(f"\n未実装が {len(unimplemented)} 件あります"
@@ -753,6 +835,35 @@ def self_test():
         (base / "lib").mkdir(exist_ok=True)
         (base / "lib" / "w.dart").write_text(
             "class A {}\nclass B {}\nclass C {}\nclass D {}\n", encoding="utf-8")
+
+        # ─── プラットフォームの標準で実装（2026-09-25・PlantTalk）──────────
+        # 宣言だけでは数えない。**使っていることを測る**。決めた人の記録も要る
+        std = {"uses": "Image(systemName:", "why": "SF Symbols で描く",
+               "decided": "DECISIONS.md（ユーザー決定）"}
+        (base / "lib" / "v.dart").write_text(
+            "// Image(systemName: はコメントでは数えない\nclass V {}\n", encoding="utf-8")
+
+        def std_map(st):
+            write_map([{"figma": "Buttons/M", "impl": [{"class": "A"}]},
+                       {"figma": "Chips", "impl": [], "standard": st},
+                       {"figma": "Header", "impl": [{"class": "C"}]}])
+        std_map(std)
+        if main(cfg) != 1:
+            print("self-test NG: **コメントにしか出てこない標準を、実装ありと数えた**"); ok = False
+        (base / "lib" / "v.dart").write_text(
+            "class V { var i = Image(systemName: \"leaf\") }\n", encoding="utf-8")
+        if main(cfg) != 0:
+            print("self-test NG: 標準を実際に使っているのに落ちた"); ok = False
+        std_map({**std, "decided": ""})
+        if main(cfg) != 1:
+            print("self-test NG: **決めた人の記録が無い宣言を数えた**"); ok = False
+        std_map({k: v for k, v in std.items() if k != "why"})
+        if main(cfg) != 1:
+            print("self-test NG: **理由の無い宣言を数えた**"); ok = False
+        std_map({**std, "uses": "List("})
+        if main(cfg) != 1:
+            print("self-test NG: **使っていない標準を、実装ありと数えた**"); ok = False
+        (base / "lib" / "v.dart").unlink()
 
         write_map([{"figma": "Buttons/M", "impl": [{"class": "A"}]},
                    {"figma": "Chips", "impl": [{"class": "B"}]},
