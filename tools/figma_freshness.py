@@ -240,6 +240,72 @@ def read_sets() -> dict:
     return found
 
 
+#: 書き出しのファイル名に入ったノード ID（`screens-84-9595.json` → `84:9595`）
+EXPORT_NAME_ID_RX = re.compile(r'[-_](\d+)-(\d+)\.json$')
+
+
+def export_sources(path: Path, doc) -> list | None:
+    """書き出しの出どころのノード ID。**宣言が先、無ければファイル名から導く。**
+
+    宣言は `$meta.sourceNodes`（ノード ID の配列）。ファイル名は
+    `screens-84-9595.json` の形（Figma の URL の node-id と同じ `-` 区切り）。
+    どちらも無ければ None（**確かめられない**）。
+    """
+    meta = doc.get('$meta') if isinstance(doc, dict) else None
+    declared = meta.get('sourceNodes') if isinstance(meta, dict) else None
+    if isinstance(declared, list) and declared:
+        return [str(x) for x in declared]
+    m = EXPORT_NAME_ID_RX.search(path.name)
+    return [f'{m.group(1)}:{m.group(2)}'] if m else None
+
+
+def check_exports() -> dict | None:
+    """`page-scope.json` の `exports` の各書き出しの出どころが、いまの Figma に在るか（#146）。
+
+    `exports` は「照合に使ってよい書き出し」の一覧。**消えた節の書き出しが載っていると、
+    古い写しが正として読まれる。**それまでどの検査もこれを見ていなかった
+    （2026-09-25、PlantTalk で `screens-84-9595.json` が消えた節 84:9595 のまま載っていた）。
+
+    返す値: gone（出どころが消えた）/ missing（載っているのにファイルが無い）/
+    unknown（出どころを持たないので確かめられない）/ checked（確かめた数）。
+    page-scope.json か exports が無ければ None。
+    """
+    if PAGE_SCOPE is None or not Path(PAGE_SCOPE).exists():
+        return None
+    scope = json.loads(Path(PAGE_SCOPE).read_text(encoding='utf-8'))
+    exports = scope.get('exports')
+    if not isinstance(exports, list) or not exports:
+        return None
+    base = Path(PAGE_SCOPE).parent
+    want, missing, unknown = {}, [], []
+    for rel in exports:
+        f = base / rel
+        if not f.exists():
+            missing.append(rel)
+            continue
+        try:
+            doc = json.loads(f.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            unknown.append(rel)
+            continue
+        ids = export_sources(f, doc)
+        if ids is None:
+            unknown.append(rel)
+        else:
+            want[rel] = ids
+    gone = []
+    if want:
+        ids = ','.join(sorted({i for v in want.values() for i in v}))
+        nodes = get(f'https://api.figma.com/v1/files/{FILE_KEY}/nodes?ids={ids}&depth=1'
+                    ).get('nodes') or {}
+        for rel, v in want.items():
+            # **消えたノードは null で返る**（2026-09-25 に 84:9595 で実測）
+            dead = [i for i in v if not nodes.get(i)]
+            if dead:
+                gone.append(f'{rel}（出どころ {", ".join(dead)} が Figma にありません）')
+    return {'gone': gone, 'missing': missing, 'unknown': unknown, 'checked': len(want)}
+
+
 #: 画面の ID → 表示名（SECTION 名/画面名）。read_frames が埋める（#143）
 FRAME_NAMES: dict = {}
 ID_RX = re.compile(r'^\d+:\d+$')
@@ -953,6 +1019,79 @@ def self_test() -> int:
         cases.append(('画面: 見ていない画面とずれが両方あれば 1',
                       rc == 1 and '画面が変わっています: CAMERA' in out))
 
+        # ── #146（2026-09-25）: exports の出どころが消えていたら言う ──────────
+        sd = d / 'scope'; sd.mkdir(exist_ok=True)
+        (sd / 'screens-5-6.json').write_text('{}', encoding='utf-8')          # ファイル名から 5:6
+        (sd / 'decl.json').write_text(json.dumps({'$meta': {'sourceNodes': ['7:8']}}),
+                                      encoding='utf-8')                     # 宣言で 7:8
+        (sd / 'tokens.json').write_text('{}', encoding='utf-8')             # 出どころ無し
+        scope_file = sd / 'page-scope.json'
+
+        def scope_run(exports, alive):
+            scope_file.write_text(json.dumps({'allowed': ['Comp'], 'exports': exports}),
+                                  encoding='utf-8')
+            asked = []
+
+            def g(u):
+                if '&depth=1' in u and '/nodes?' in u:
+                    asked.append(u)
+                    ids = u.split('ids=')[1].split('&')[0].split(',')
+                    return {'nodes': {i: ({'document': {}} if i in alive else None)
+                                      for i in ids}}
+                return fake_all(u)
+            keep8 = (g5['get'], g5['PAGE_SCOPE'])
+            g5['get'], g5['PAGE_SCOPE'] = g, str(scope_file)
+            try:
+                return check_exports(), asked
+            finally:
+                (g5['get'], g5['PAGE_SCOPE']) = keep8
+
+        ex, asked = scope_run(['./screens-5-6.json', './decl.json', './tokens.json',
+                               './ない.json'], alive={'7:8'})
+        cases.append(('書き出し: ファイル名の ID が消えていたら名指しする',
+                      len(ex['gone']) == 1 and 'screens-5-6.json' in ex['gone'][0]
+                      and '5:6' in ex['gone'][0]))
+        cases.append(('書き出し: $meta.sourceNodes の ID が在れば通す',
+                      not any('decl.json' in x for x in ex['gone'])
+                      and ex['checked'] == 2))
+        cases.append(('書き出し: 出どころを持たないものは「確かめていない」に数える',
+                      ex['unknown'] == ['./tokens.json']))
+        cases.append(('書き出し: 載っているのにファイルが無いものを数える',
+                      ex['missing'] == ['./ない.json']))
+        ex, _ = scope_run(['./screens-5-6.json', './decl.json'], alive={'5:6', '7:8'})
+        cases.append(('書き出し: 出どころが全部在れば食い違い 0',
+                      ex['gone'] == [] and ex['missing'] == []))
+        ex, asked = scope_run(['./tokens.json'], alive=set())
+        cases.append(('書き出し: 確かめる対象が無ければ網に聞かない',
+                      asked == [] and ex['checked'] == 0))
+        g5['PAGE_SCOPE'] = None
+        cases.append(('書き出し: page-scope.json が無ければ None（見ていないと言う側へ）',
+                      check_exports() is None))
+
+        # main まで通して、消えた出どころが 1 になること
+        scope_file.write_text(json.dumps({'allowed': ['Comp'],
+                                          'exports': ['./screens-5-6.json']}),
+                              encoding='utf-8')
+        fp.write_text(json.dumps({'$meta': {'restDigests': dict(fnow)}}), encoding='utf-8')
+        (d / 'export.json').write_text(json.dumps({
+            '$meta': {'restDigests': dict(now)},
+            'componentSets': {'Buttons': {}, 'Header': {}}}), encoding='utf-8')
+        keep9 = (g5['get'], g5['FRAMES_EXPORT'], g5['SKIP_PAGES'], g5['PAGE_SCOPE'],
+                 g5['EXPORT'], sys.argv)
+        g5['FRAMES_EXPORT'], g5['SKIP_PAGES'] = str(fp), []
+        g5['PAGE_SCOPE'], g5['EXPORT'], sys.argv = str(scope_file), d / 'export.json', ['x']
+        g5['get'] = lambda u: fake_all(u)          # nodes に 5:6 は無い → null 扱い
+        try:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = main()
+            out = buf.getvalue()
+        finally:
+            (g5['get'], g5['FRAMES_EXPORT'], g5['SKIP_PAGES'], g5['PAGE_SCOPE'],
+             g5['EXPORT'], sys.argv) = keep9
+        cases.append((f'書き出し: 消えた節の書き出しが残っていれば main が 1（rc={rc}）',
+                      rc == 1 and '消えた節の書き出しが exports に残っています' in out))
+
         # 名前で記録した古い書き出し → 比べずに取り直しを求める
         rc, out = run_frames({'$meta': {'restDigests': {'Brand colors': 'a',
                                                         'Effects': 'b'}}})
@@ -1371,6 +1510,31 @@ def main() -> int:
         elif not frame_ng:
             print(f'画面の鮮度: {len(fr)} 枚が一致')
 
+    # **書き出しの出どころ**（#146・2026-09-25）。消えた節の書き出しを正として読まない
+    export_ng = []
+    ex = check_exports()
+    if ex is None:
+        print('書き出しの出どころ: **見ていません**（page-scope.json の exports がありません）')
+    else:
+        export_ng = ([f'消えた節の書き出しが exports に残っています: {g}' for g in ex['gone']]
+                     + [f'exports に載っているのにファイルがありません: {m}'
+                        for m in ex['missing']])
+        if export_ng:
+            print(f'**書き出しの一覧（exports）が Figma と食い違っています（{len(export_ng)}件）:**')
+            for m in export_ng:
+                print(f'  - {m}')
+            print('  消えた節の書き出しは exports から外すか、取り直してください。'
+                  '**古い写しを正として読まないため**')
+            print()
+        elif ex['checked']:
+            print(f'書き出しの出どころ: {ex["checked"]} 件が Figma に在る')
+        if ex['unknown']:
+            # 黙って飛ばさない。ただし部品や色の書き出しはファイル全体が出どころなので、
+            # ここで 2 にはしない（毎回 2 になり、誰も読まなくなる）
+            print(f'書き出しの出どころ: {len(ex["unknown"])} 件は出どころのノードを持たないので'
+                  f'確かめていません（{", ".join(ex["unknown"])}）。'
+                  '節から取った書き出しなら $meta.sourceNodes に ID を書くと見ます')
+
     if update:
         # 画面のハッシュも同じときに記録する（**別々に更新すると片方だけ古くなる**）
         if fr is not None:
@@ -1438,7 +1602,7 @@ def main() -> int:
           'design/figma_pack_variables.py で差分を見てください')
 
     if not (added or removed or changed):
-        if name_drift or style_ng or frame_ng:
+        if name_drift or style_ng or frame_ng or export_ng:
             what = []
             if name_drift:
                 what.append('名前の食い違い')
@@ -1446,6 +1610,8 @@ def main() -> int:
                 what.append(f'スタイルのずれ {len(style_ng)}件')
             if frame_ng:
                 what.append(f'画面のずれ {len(frame_ng)}件')
+            if export_ng:
+                what.append(f'書き出しの一覧のずれ {len(export_ng)}件')
             print(f'値は書き出しと同じです（{len(now)} セット）。'
                   f'**{" と ".join(what)}が残っています**（上の報告を見る）')
             return 1
