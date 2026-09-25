@@ -240,6 +240,11 @@ def read_sets() -> dict:
     return found
 
 
+#: 画面の ID → 表示名（SECTION 名/画面名）。read_frames が埋める（#143）
+FRAME_NAMES: dict = {}
+ID_RX = re.compile(r'^\d+:\d+$')
+
+
 def read_frames() -> dict | None:
     """参照するページの**画面**（トップレベルの FRAME）を 名前 → ハッシュ で返す。
 
@@ -275,14 +280,56 @@ def read_frames() -> dict | None:
             if isinstance(meta, dict) and meta.get('name'):
                 names[sid] = meta['name']
     found: dict[str, str] = {}
-    for nid, entry in data['nodes'].items():
-        # **画面はページ直下の FRAME だけ。** 部品（COMPONENT / COMPONENT_SET）は
-        # 部品側の段が見るので数えない。二重に数えると、部品を直しただけで
-        # 画面が動いたことになる
-        for c in (entry['document'].get('children') or []):
+    FRAME_NAMES.clear()
+
+    def walk(children, section=None):
+        # **画面は FRAME。SECTION の中へは降りる**（design-harness #143・2026-09-25）。
+        #
+        # それまで**ページ直下の FRAME だけ**を数えていた。PlantTalk の `🎨_Designs` は
+        # 画面が全部 SECTION の中にあるので 1 枚も数えられず、
+        # 「画面の鮮度: 9 枚が一致」の 9 枚は `⚙️_Styles` の見本帳の枠だった。
+        # **書き出しは 36 画面を持っているのに、1 枚も見ずに「一致」と言っていた。**
+        #
+        # 部品（COMPONENT / COMPONENT_SET）は今までどおり数えない（部品側の段が見る）。
+        # FRAME や GROUP の中へは降りない（画面の中の枠を画面と数えないため）。
+        for c in children or []:
             if c['type'] == 'FRAME':
-                found[c['name']] = node_digest(c, names)
+                found[c['id']] = node_digest(c, names)
+                FRAME_NAMES[c['id']] = f"{section}/{c['name']}" if section else c['name']
+            elif c['type'] == 'SECTION':
+                walk(c.get('children'), c['name'])
+
+    for nid, entry in data['nodes'].items():
+        walk(entry['document'].get('children'))
+    # **キーはノード ID**（#143）。名前は重なる——PlantTalk では `Top` `FlowerDetail`
+    # `PictureSelect` が複数の SECTION にある。名前をキーにすると**同名の画面が
+    # 黙って上書きされ、見ていない画面が出る**。書き出し（frames.json）も ID で持つ
     return found
+
+
+def export_frame_ids(doc: dict) -> dict:
+    """書き出しが持つ画面の ID → 表示名。ID で持っていない書き出しなら空。"""
+    fr = doc.get('frames') or {}
+    if not isinstance(fr, dict):
+        return {}
+    out = {}
+    for k, v in fr.items():
+        if ID_RX.match(str(k)):
+            name = v.get('name') if isinstance(v, dict) else None
+            sec = v.get('section') if isinstance(v, dict) else None
+            out[k] = f"{sec}/{name}" if sec and name else (name or k)
+    return out
+
+
+def unseen_frames(now: dict, doc: dict) -> list[str]:
+    """**書き出しにあるのに、この検査が見ていない画面**（#143）。
+
+    分母（書き出しの画面数）と、道具が見た数を突き合わせる。これが無いと、
+    Figma の置き方が変わるたび（SECTION・GROUP・別のページ）に、
+    **見ていないのに「一致」と言う**。
+    """
+    exp = export_frame_ids(doc)
+    return [f"{exp[k]}（{k}）" for k in sorted(exp) if k not in now]
 
 
 def compare_frames(now: dict) -> tuple[list, dict]:
@@ -291,15 +338,21 @@ def compare_frames(now: dict) -> tuple[list, dict]:
     saved = (doc.get('$meta', {}).get('restDigests') or {})
     if not saved:
         return ['画面のハッシュがまだ記録されていません（--update で記録します）'], doc
+    if not any(ID_RX.match(str(k)) for k in saved):
+        # **記録が名前の形（2026-09-25 より前）。**比べると全部が「増えた・消えた」に
+        # 見えて、どれが本当に動いたか読めない。取り直しを求める
+        return ['画面のハッシュが古い形（名前で記録）です。**画面の ID で記録し直してください**'
+                '（--update）。名前は SECTION をまたいで重なるので、名前では比べません'], doc
+    label = lambda k: FRAME_NAMES.get(k) or export_frame_ids(doc).get(k) or k
     msgs = []
-    for name in sorted(set(now) - set(saved)):
-        msgs.append(f'Figma にしか無い画面: {name}')
-    for name in sorted(set(saved) - set(now)):
-        msgs.append(f'書き出しにしか無い画面: {name}'
-                    f'（名前が変わった／消えた可能性。**推測で直さず確認する**）')
-    for name in sorted(set(saved) & set(now)):
-        if saved[name] != now[name]:
-            msgs.append(f'**画面が変わっています: {name}**'
+    for k in sorted(set(now) - set(saved)):
+        msgs.append(f'Figma にしか無い画面: {label(k)}')
+    for k in sorted(set(saved) - set(now)):
+        msgs.append(f'書き出しにしか無い画面: {label(k)}'
+                    f'（消えた可能性。**推測で直さず確認する**）')
+    for k in sorted(set(saved) & set(now)):
+        if saved[k] != now[k]:
+            msgs.append(f'**画面が変わっています: {label(k)}**'
                         f' → この画面の書き出しを取り直して、実装を見直す')
     return msgs, doc
 
@@ -760,9 +813,10 @@ def self_test() -> int:
 
         # ─── 画面の鮮度（#25・2026-09-04）────────────────────────────
         # **画面はページ直下の FRAME。** 部品と切り分けられていることまで見る
-        SCREENS = {'ALBUM_ScrapBoard': {'type': 'FRAME', 'name': 'ALBUM_ScrapBoard',
+        SCREENS = {'ALBUM_ScrapBoard': {'id': '10:1', 'type': 'FRAME',
+                                        'name': 'ALBUM_ScrapBoard',
                                         'itemSpacing': 20, 'children': []},
-                   'CAMERA': {'type': 'FRAME', 'name': 'CAMERA',
+                   'CAMERA': {'id': '10:2', 'type': 'FRAME', 'name': 'CAMERA',
                               'itemSpacing': 0, 'children': []}}
 
         def fake_all(url, _s=SETS, _f=SCREENS):
@@ -814,8 +868,9 @@ def self_test() -> int:
         fnow = read_frames()
         (g5['get'], g5['FRAMES_EXPORT'], g5['SKIP_PAGES'], g5['PAGE_SCOPE']) = keep6
 
-        cases.append(('画面: ページ直下の FRAME だけを拾う',
-                      sorted(fnow) == ['ALBUM_ScrapBoard', 'CAMERA']))
+        cases.append(('画面: ページ直下の FRAME を ID で拾う',
+                      sorted(fnow) == ['10:1', '10:2']
+                      and FRAME_NAMES.get('10:2') == 'CAMERA'))
         cases.append(('画面: 部品を画面に数えない',
                       'Buttons' not in fnow and 'Header' not in fnow))
 
@@ -824,7 +879,7 @@ def self_test() -> int:
         cases.append(('画面: 一致していれば 0', rc == 0 and '2 枚が一致' in out))
 
         # 1. ハッシュを1文字変える → 落ちる
-        bad = {'$meta': {'restDigests': {**fnow, 'CAMERA': 'x' + fnow['CAMERA'][1:]}}}
+        bad = {'$meta': {'restDigests': {**fnow, '10:2': 'x' + fnow['10:2'][1:]}}}
         rc, out = run_frames(bad)
         cases.append(('画面: ハッシュを変えたら落ちる',
                       rc == 1 and 'CAMERA' in out and '画面が変わっています' in out))
@@ -844,13 +899,65 @@ def self_test() -> int:
                       '画面の鮮度: 2 枚が一致' in out))
 
         # 画面が増えた／消えた
-        more = {**SCREENS, 'NEW': {'type': 'FRAME', 'name': 'NEW', 'children': []}}
+        more = {**SCREENS, 'NEW': {'id': '10:9', 'type': 'FRAME', 'name': 'NEW',
+                                   'children': []}}
         rc, out = run_frames(ok_doc, screens=more)
         cases.append(('画面: Figma に増えた画面を名指しする',
                       rc == 1 and 'Figma にしか無い画面: NEW' in out))
-        rc, out = run_frames({'$meta': {'restDigests': {**fnow, 'GONE': 'z'}}})
+        rc, out = run_frames({'$meta': {'restDigests': {**fnow, '10:99': 'z'}},
+                              'frames': {'10:99': {'section': 'S', 'name': 'GONE'}}})
         cases.append(('画面: 書き出しにしか無い画面を名指しする',
-                      rc == 1 and '書き出しにしか無い画面: GONE' in out))
+                      rc == 1 and '書き出しにしか無い画面: S/GONE' in out))
+
+        # ── #143（2026-09-25）: SECTION の中・同名・見ていない画面 ──────────
+        # PlantTalk は画面が全部 SECTION の中にあり、1 枚も見ずに「9 枚が一致」と
+        # 言っていた（9 枚は見本帳の枠）。**ここが本題**
+        inner = {'id': '20:5', 'type': 'FRAME', 'name': 'Inner', 'children': []}
+        sec_screens = {
+            **SCREENS,
+            'SecA': {'id': '20:1', 'type': 'SECTION', 'name': 'Home', 'children': [
+                {'id': '20:2', 'type': 'FRAME', 'name': 'Top', 'itemSpacing': 1,
+                 'children': [inner]}]},
+            'SecB': {'id': '20:3', 'type': 'SECTION', 'name': 'Detail', 'children': [
+                {'id': '20:4', 'type': 'FRAME', 'name': 'Top', 'itemSpacing': 2,
+                 'children': []}]}}
+        keep7 = (g5['get'], g5['FRAMES_EXPORT'], g5['SKIP_PAGES'], g5['PAGE_SCOPE'])
+        g5['get'] = lambda u: fake_all(u, SETS, sec_screens)
+        g5['FRAMES_EXPORT'], g5['SKIP_PAGES'], g5['PAGE_SCOPE'] = str(fp), [], None
+        snow = read_frames()
+        (g5['get'], g5['FRAMES_EXPORT'], g5['SKIP_PAGES'], g5['PAGE_SCOPE']) = keep7
+        cases.append(('画面: SECTION の中の画面を拾う',
+                      '20:2' in snow and '20:4' in snow))
+        cases.append(('画面: 同じ名前の画面を両方拾う（名前で上書きしない）',
+                      FRAME_NAMES.get('20:2') == 'Home/Top'
+                      and FRAME_NAMES.get('20:4') == 'Detail/Top'))
+        cases.append(('画面: 画面の中の枠を画面と数えない', '20:5' not in snow))
+
+        exp = {'10:1': {'name': 'ALBUM_ScrapBoard'}, '10:2': {'name': 'CAMERA'},
+               '20:2': {'section': 'Home', 'name': 'Top'},
+               '20:4': {'section': 'Detail', 'name': 'Top'}}
+        sec_doc = {'$meta': {'restDigests': dict(snow)}, 'frames': exp}
+        rc, out = run_frames(sec_doc, screens=sec_screens)
+        cases.append(('画面: 書き出しの画面を全部見ていれば 0',
+                      rc == 0 and '4 枚が一致' in out))
+
+        # 書き出しに 4 枚あるのに、ページ直下の 2 枚しか見えない → **2**。「一致」と言わない
+        rc, out = run_frames({'$meta': {'restDigests': dict(fnow)}, 'frames': exp})
+        cases.append((f'画面: 見ていない画面があれば 2 で返す（rc={rc}）',
+                      rc == 2 and '2 枚を、この検査は見ていません' in out
+                      and 'Detail/Top' in out and '枚が一致' not in out))
+
+        # 見ていない画面があっても、見えた画面のずれは 1（2 に薄めない）
+        rc, out = run_frames({'$meta': {'restDigests': {**fnow, '10:2': 'x'}},
+                              'frames': exp})
+        cases.append(('画面: 見ていない画面とずれが両方あれば 1',
+                      rc == 1 and '画面が変わっています: CAMERA' in out))
+
+        # 名前で記録した古い書き出し → 比べずに取り直しを求める
+        rc, out = run_frames({'$meta': {'restDigests': {'Brand colors': 'a',
+                                                        'Effects': 'b'}}})
+        cases.append(('画面: 名前で記録した古いハッシュは比べず、取り直しを求める',
+                      rc == 1 and '古い形' in out and 'Figma にしか無い' not in out))
 
         # 4. framesExport を設定しない案件 → 飛ばす（既存案件を壊さない）。
         # **ただし「見ていません」と必ず言う**（黙って飛ばさない）
@@ -1237,19 +1344,31 @@ def main() -> int:
             print(f'スタイルの鮮度: 使われている {len(st)} 件の名前と説明が一致')
 
     # **画面の鮮度**（2026-09-04 新設・#25）。部品は安定し、画面は動く。
-    frame_ng = []
+    frame_ng, frame_unseen = [], []
     fr = read_frames()
     if fr is None:
         print('画面の鮮度: **見ていません**（framesExport が設定されていません）。\n'
               '  **画面側の Figma の変更を、こちらから知る手段がない状態です。**')
     else:
         frame_ng, fdoc = compare_frames(fr)
+        frame_unseen = unseen_frames(fr, fdoc)
         if frame_ng:
             print(f'**画面が書き出しと食い違っています（{len(frame_ng)}件）:**')
             for m in frame_ng:
                 print(f'  - {m}')
             print()
-        else:
+        if frame_unseen:
+            # **見ていないのに「一致」と言わない**（#143）
+            print(f'**書き出しにある画面のうち {len(frame_unseen)} 枚を、この検査は見ていません'
+                  f'**（見えたのは {len(fr)} 枚）:')
+            for m in frame_unseen[:8]:
+                print(f'  - {m}')
+            if len(frame_unseen) > 8:
+                print(f'  ほか {len(frame_unseen) - 8} 枚')
+            print('  Figma で画面が SECTION・GROUP の中や、参照してよいページの外に'
+                  'あるかもしれません。**見ていない画面の鮮度は分かりません。**')
+            print()
+        elif not frame_ng:
             print(f'画面の鮮度: {len(fr)} 枚が一致')
 
     if update:
@@ -1330,6 +1449,10 @@ def main() -> int:
             print(f'値は書き出しと同じです（{len(now)} セット）。'
                   f'**{" と ".join(what)}が残っています**（上の報告を見る）')
             return 1
+        if frame_unseen:
+            print(f'部品は書き出しと同じです（{len(now)} セット）が、'
+                  f'**画面 {len(frame_unseen)} 枚を見ていません。**確かめられなかったので 2 で返します')
+            return 2
         print(f'Figma は書き出しと同じです（{len(now)} セット'
               + (f' / スタイル {len(st)} 件' if st else '')
               + (f' / 画面 {len(fr)} 枚' if fr else '') + '）')
