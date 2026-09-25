@@ -1,37 +1,42 @@
-// frames.json を作る。**画面のノード木の機械書き出し。**
+// components.json の本体を作る。**部品の各変異の中身を、行の形で書き出す。**
 //
-// 2026-09-04 に aub-familywalk から回収した（#14）。
-// `production-gate.md` は「画面固有の値の照合先は figma/frames.json（画面の
-// ノード木の機械書き出し）。これが無い案件は記録層を消せない」と書いていたのに、
-// **その書き出し器が共有層に無かった。** aub には在り、414 と FlashEnglish には
-// 無い（414 の frames.json は `surfaces`＝部品にならない枠で、画面ではない）。
+// 2026-09-25 新設（#145）。それまで部品の書き出し器が共有層に無く、PlantTalk の
+// components.json は `variants`（数）・`variantAxes`・`properties` しか持って
+// いなかった。**部品の中の文字の段と寸法がどこにも無く**、Chip の段が
+// caption2 → caption1 に変わったことを部品の定義の側では確かめられなかった
+// （画面の行の高さ 13 → 16 から導いて確かめた）。**画面に出ていない変異の変更は、
+// どこからも見えなかった。**
 //
-// 結果、FlashEnglish の手書きの記録層は 63 件 assert したまま残り、
-// **そのうち置き換えられるのは 9 件だけ**だった。残り 54 件はほぼ全部が
-// 画面固有の値（body.margin / Illusts.* / QuizScreen.* / MyPage.*）で、
-// **照合先が存在しなかった。** 「記録層を廃止する」という 2026-08-29 の決定は、
-// 画面の値については**実行不可能**だった。決定から5日、誰も気づいていない。
+// ## 使い方
 //
-// 案件ごとに書き換えるのは末尾の4つ（PAGE / SECTIONS / ONLY_IDS / 画面の見分け方）。
-// 前提条件が満たせているかは `tools/screen_export_check.py` が測る。
-// **「在る」と「足りている」は違う**（FlashEnglish は 3 件の frames.json を
-// 持っていたので、前提条件を満たしているように見えていた）。
+// 1. **頭に `_preamble.js` の中身を貼る**（`use_figma` は import できない）。
+//    `ALLOW_PAGES` を案件の page-scope.json の allowed にそろえる
+// 2. 大きい案件は 20KB で切られるので、`ONLY` にセットの名前を入れて分けて回す。
+//    1 セットでも収まらなければ `VARIANT_SLICE` で変異を区切る（PlantTalk の
+//    Chips/Text は 126 変異で 77KB あった。2026-09-25 実測）
+// 3. 返ってきた `componentSets` を案件の pack で components.json に差し込む
 //
-// 出すもの: design/screens.json に並べた画面の全部。
-// **行形式で返す**（JSON はキーの繰り返しで嵩み、20KB で切られる。2026-08-30 実測）。
+// ## 出すもの
 //
-//   1行 = 深さ|名前|型|w|h|x|y|k=v|k=v...
+//   componentSets: { <セット名>: { id, kind: 'set'|'single',
+//                    variants: { <変異名>: { id, rows: [...] } } } }
 //
-// 読み取りの決まり:
-//   - 部品のインスタンスは `instanceOf`（セット名とバリアント）まで。**中には降りない**
-//     （部品の仕様は ⚙️_Styles&Components の定義ノードが正。画面は使われ方だけ）
-//   - **ただし寸法は画面が正。** 定義と実寸が違えば `override=48x48->360x360` を足す
-//     （余白・すき間・塗り・角丸・文字スタイルは定義が正。寸法と伸び方だけ画面が正）
-//   - 色・文字スタイル・効果は**変数／スタイルの名前**で書く。解決しない
-//   - **ただし文字は実際の書体と大きさも書く**（`font=SF Pro/Regular/13`。#145）。
-//     スタイル名だけだと、スタイルの中身が変わったことに行から気づけない
-//   - **同じ形の兄弟は畳む**（ビンゴの 5x5 は 25 行ではなく 1 行 + 位置の列）
-function h(s){let x=0x811c9dc5;for(let i=0;i<s.length;i++){x^=s.charCodeAt(i)&0xFF;x=(x+((x<<1)+(x<<4)+(x<<7)+(x<<8)+(x<<24)))>>>0;}return x>>>0;}
+//   1行 = 深さ|名前|型|w|h|x|y|k=v|k=v...（`export_frames.js` と同じ形）
+//
+//   - 深さ 0 の行が変異そのもの。**w|h がその変異の寸法**
+//   - 文字は `ts=`（スタイル名）と `font=`（**実際の**書体/太さ/大きさ）の両方
+//   - 部品の中の別の部品（インスタンス）は `of=` まで。**中には降りない**
+//     （その部品の定義が、自分の行として別に出る）
+//   - **全部の変異を出す。**見本を 1 変異で済ませると、変異によって在ったり
+//     無かったりする子が消える（#22）
+//
+// ## 下の関数について
+//
+// `hex` から `walk` までは **`export_frames.js` から写したもの**（同じ形の行を出すため）。
+// 直すときは両方を直す。`attack/preamble_test.mjs`（CI で回る）が食い違いを落とす。
+
+// ── ここに _preamble.js の中身を貼る ──
+
 function hex(c){const b=x=>Math.round(x*255).toString(16).padStart(2,'0');const a=c.a==null?1:c.a;return '#'+b(c.r)+b(c.g)+b(c.b)+(a===1?'':b(a));}
 const R = x => x == null ? null : Math.round(x * 100) / 100;
 async function bn(n, f) {
@@ -161,23 +166,43 @@ async function walk(n, depth, rows) {
     i = j + 1;
   }
 }
-const SECTIONS = ['{{節の名前}}'];   // ← ここを書き換えて複数回まわす
-// 1枚だけ回したいとき（節が 20KB に収まらないとき）。空なら節の全部。
-const ONLY_IDS = [];
-const page = figma.root.children.find(p => p.name === '{{ページ名}}');
-await page.loadAsync();
+
+// 20KB で切られるときは、セットの名前で分けて複数回まわす。空なら全部
+const ONLY = [];
+// 1 セットでも収まらないときは変異を区切る（[始め, 終わり)）。既定は全部
+const VARIANT_SLICE = [0, Infinity];
+
+const c = await collect();
+if (c.error) return JSON.stringify(c);          // 止める（同名・許可ページ無し）
+
 const out = {};
-for (const sec of page.children) {
-  if (sec.type !== 'SECTION' || !SECTIONS.includes(sec.name)) continue;
-  for (const fr of sec.children) {
-    // 画面の見分け方。案件の版面の幅に書き換える
-    if (fr.type !== 'FRAME' || Math.round(fr.width) !== {{版面の幅}} || fr.height <= 60) continue;
-    if (ONLY_IDS.length && !ONLY_IDS.includes(fr.id)) continue;
-    const rows = [];
-    await walk(fr, 0, rows);
-    out[fr.id] = { section: sec.name, name: fr.name, rows };
+const dupVariants = [];
+for (const [kind, list] of [['set', c.sets], ['single', c.singles]]) {
+  for (const [name, node] of list) {
+    if (ONLY.length && !ONLY.includes(name)) continue;
+    const variants = {};
+    const all = kind === 'set' ? node.children.filter((v) => v.type === 'COMPONENT') : [node];
+    const vs = all.slice(VARIANT_SLICE[0], VARIANT_SLICE[1]);
+    for (const v of vs) {
+      const key = kind === 'set' ? v.name : '-';
+      // 同じ名前の変異は、どちらが正か機械で決められない。**黙って上書きしない**
+      if (variants[key]) { dupVariants.push(name + '/' + key); continue; }
+      const rows = [];
+      await walk(v, 0, rows);
+      variants[key] = { id: v.id, rows };
+    }
+    // **全部で何変異あるかを書く。**区切って回したとき、足りているかを数で確かめるため
+    out[name] = { id: node.id, kind, variantTotal: all.length, variants };
   }
 }
+if (dupVariants.length) return JSON.stringify({ error: '同名の変異', names: dupVariants });
+
 const body = JSON.stringify(out);
-return JSON.stringify({ frames: out,
-  digest: { algo: 'FNV-1a 32bit', rows: Object.keys(out).length, chars: body.length, value: h(body) } });
+return JSON.stringify({
+  $meta: { declared: c.declared, pages: c.pages, only: ONLY,
+           variantSlice: [VARIANT_SLICE[0], VARIANT_SLICE[1] === Infinity ? null : VARIANT_SLICE[1]] },
+  componentSets: out,
+  digest: { algo: 'FNV-1a 32bit', sets: Object.keys(out).length,
+            variants: Object.values(out).reduce((a, s) => a + Object.keys(s.variants).length, 0),
+            chars: body.length, value: h(body) },
+});

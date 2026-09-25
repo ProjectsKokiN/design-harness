@@ -86,5 +86,70 @@ check(typeof revZ({ itemReverseZIndex: true }) === 'boolean',
 check(h('a') !== h('b'), 'ハッシュが別の文字列で同じ');
 check(h('a') === h('a'), 'ハッシュが同じ文字列で違う');
 
-console.log(`preamble_test: ${ok ? 'OK' : 'NG'}（21 件）`);
+// ── #145: 部品の器が、各変異の文字の段・実際の書体・寸法を出すか ─────────
+{
+  const frames = readFileSync(join(here, '..', 'exporters', 'export_frames.js'), 'utf8');
+  const comps = readFileSync(join(here, '..', 'exporters', 'export_components.js'), 'utf8');
+  const block = (t) => {
+    const a = t.indexOf('function hex('), b = t.indexOf('\nasync function walk(');
+    const e = t.indexOf('\n}\n', b);
+    return a > 0 && b > a && e > b ? t.slice(a, e + 3) : null;
+  };
+  // 写しが離れると、画面と部品で行の形が変わる。**片方だけ直すと落とす**
+  check(block(frames) !== null && block(frames) === block(comps),
+        'export_components.js の行の関数が export_frames.js と食い違っている（両方を直す）');
+
+  // 実際に回す。Figma を偽物にして、器を丸ごと評価する
+  const text = (chars, segs) => ({
+    type: 'TEXT', name: 'Label', characters: chars, width: 40, height: 16, x: 12, y: 4,
+    textStyleId: 'S:caption1', textAlignHorizontal: 'LEFT',
+    fontName: MIXED, fontSize: MIXED,           // 素で読むと Symbol（#32 の形）
+    getStyledTextSegments: () => segs,
+  });
+  const variant = (name, t, w) => ({
+    type: 'COMPONENT', name, id: 'v:' + name, width: w, height: 32, x: 0, y: 0,
+    children: [t],
+  });
+  const seg = (style, size) => ({ fontName: { family: 'SF Pro', style }, fontSize: size });
+  const mk = (variants) => {
+    const set = { type: 'COMPONENT_SET', name: 'Chips/Text', id: '1:1', children: variants };
+    for (const v of variants) { v.parent = set; for (const c of v.children) c.parent = v; }
+    const page = {
+      name: 'Comp', loadAsync: async () => {},
+      findAllWithCriteria: ({ types }) => (types[0] === 'COMPONENT_SET' ? [set] : variants),
+    };
+    return {
+      mixed: MIXED, root: { children: [page] },
+      getStyleByIdAsync: async (id) => ({ name: id.replace('S:', '') }),
+      variables: { getVariableByIdAsync: async () => null },
+    };
+  };
+  const pre = src.replace(/^const ALLOW_PAGES[^\n]*$/m, "const ALLOW_PAGES = ['Comp'];");
+  const AF = Object.getPrototypeOf(async function () {}).constructor;
+  const run = async (fig) => JSON.parse(await new AF('figma', pre + '\n' + comps)(fig));
+
+  const out = await run(mk([
+    variant('State=On', text('ON', [seg('Regular', 13), seg('Bold', 13)]), 48),
+    variant('State=Off', text('OFF', [seg('Regular', 13)]), 52),
+  ]));
+  const on = out.componentSets?.['Chips/Text']?.variants?.['State=On']?.rows || [];
+  const off = out.componentSets?.['Chips/Text']?.variants?.['State=Off']?.rows || [];
+  check(on.some((r) => r.includes('ts=caption1')), `文字の段（ts=）が出ていない: ${on}`);
+  check(on.some((r) => r.includes('font=SF Pro/Regular/13+SF Pro/Bold/13')),
+        `字ごとに違う書体を区間で出していない: ${on}`);
+  check(off.some((r) => r.includes('font=SF Pro/Regular/13') && !r.includes('+')),
+        `書体を 1 つにまとめていない: ${off}`);
+  check(on[0]?.startsWith('0|State=On|COMPONENT|48|32'), `変異の寸法が 0 行目に無い: ${on[0]}`);
+  check(off[0]?.startsWith('0|State=Off|COMPONENT|52|32'), '全部の変異を出していない');
+  check(out.digest?.variants === 2, `変異の数を数えていない: ${out.digest?.variants}`);
+  check(out.componentSets?.['Chips/Text']?.variantTotal === 2, '全部の変異の数（variantTotal）を書いていない');
+
+  const dup = await run(mk([
+    variant('State=On', text('A', [seg('Regular', 13)]), 48),
+    variant('State=On', text('B', [seg('Regular', 13)]), 48),
+  ]));
+  check(dup.error === '同名の変異', '同じ名前の変異を黙って上書きした');
+}
+
+console.log(`preamble_test: ${ok ? 'OK' : 'NG'}（30 件）`);
 process.exit(ok ? 0 : 1);

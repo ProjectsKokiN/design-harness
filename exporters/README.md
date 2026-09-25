@@ -23,6 +23,7 @@ return JSON.stringify({ $meta: { declared: c.declared, pages: c.pages }, result 
 | 器 | 出すもの |
 |---|---|
 | `export_frames.js` | **画面のノード木**（1行 = 深さ\|名前\|型\|w\|h\|x\|y\|k=v…）。行形式なのは JSON がキーの繰り返しで嵩み、20KB で切られるため |
+| `export_components.js` | **部品の各変異の中身**（行の形は `export_frames.js` と同じ）。深さ 0 の行が変異の寸法。頭に `_preamble.js` を貼って回す（#145・2026-09-25） |
 
 `export_frames.js` の決まり:
 
@@ -31,6 +32,15 @@ return JSON.stringify({ $meta: { declared: c.declared, pages: c.pages }, result 
   （`counterAxisAlignItems: MAX` を `"bottom"` と書き写すような翻訳を挟むと、
   **それが「正」になる**）
 - **同じ形の兄弟は畳む**（ビンゴの 5x5 は 25 行ではなく 1 行 + 位置の列）
+- **文字はスタイル名（`ts=`）と実際の書体（`font=書体/太さ/大きさ`）の両方を書く**
+  （#145。スタイル名だけだと、スタイルの中身が変わったことに行から気づけない）
+
+`export_components.js` の決まり:
+
+- **全部の変異を出す**（見本を 1 変異で済ませない。#22）。大きいセットは
+  `VARIANT_SLICE` で区切り、`variantTotal` と突き合わせて足りているかを数で確かめる
+- `hex` から `walk` までは `export_frames.js` の写し。**片方だけ直すと
+  `attack/preamble_test.mjs` が落ちる**
 
 ## 器を書くときの決まり
 
