@@ -69,11 +69,26 @@ def load(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def entries(export: dict) -> dict:
+    """部品の名前 → 書き出しの欄。**セットと単体の部品の両方**（#153・2026-09-28）。
+
+    それまで `componentSets` しか読まず、PlantTalk の単体の部品 3 つ（Header・Footer・
+    Tabs/True/False。書き出しは『実装する』と宣言）がカタログに出ていなくても落ちなかった。
+    """
+    out = {}
+    for key in ("componentSets", "singleComponents"):
+        v = export.get(key) or {}
+        if isinstance(v, dict):
+            out.update({k: e for k, e in v.items() if isinstance(e, dict)})
+        elif isinstance(v, list):
+            out.update({e["name"]: e for e in v if isinstance(e, dict) and e.get("name")})
+    return out
+
+
 def targets(export: dict, key: str, want: str):
-    """書き出しから「作る」と宣言されているセット名を返す。"""
-    sets = export.get("componentSets") or {}
+    """書き出しから「作る」と宣言されている部品の名前を返す（セットと単体の両方）。"""
     out = []
-    for name, v in sets.items():
+    for name, v in entries(export).items():
         if not isinstance(v, dict):
             continue
         val = str(v.get(key, ""))
@@ -104,7 +119,7 @@ def implemented(export: dict, names, roots):
     blob = "\n".join(f.read_text(encoding="utf-8", errors="replace") for f in files)
     got = []
     for n in names:
-        view = (export["componentSets"][n] or {}).get("swiftView") or ""
+        view = (entries(export).get(n) or {}).get("swiftView") or ""
         view = re.split(r"[（(]", str(view))[0].strip()
         if view and view not in ("—", "-") and re.search(rf"\bstruct\s+{re.escape(view)}\b", blob):
             got.append((n, view))
@@ -193,7 +208,9 @@ def self_test() -> int:
             # 実装名（Divider）が実在するので、数えると「カタログに無い」で落ちる
             "Separator": {"実装": "実装する予定だったが、**実装しない**（SwiftUI の Divider）",
                           "swiftView": "Divider"},
-        }}
+        },
+            # **単体の部品**（#153）。最初は実装が無いので、カタログに無くても落ちない
+            "singleComponents": {"Header": {"実装": "実装する", "swiftView": "Header"}}}
         (base / "reg" / "components.json").write_text(json.dumps(exp, ensure_ascii=False),
                                                       encoding="utf-8")
         (base / "src" / "Chip.swift").write_text("struct Chip: View {}\n", encoding="utf-8")
@@ -239,6 +256,15 @@ def self_test() -> int:
         cat.write_text('let entries = ["Chips/Plain", "Toast"]\n', encoding="utf-8")
         if run() != 0:
             print("self-test NG: **実装しないものを数えました**"); ok = False
+
+        # **単体の部品も数える**（#153）。実装したのにカタログへ足し忘れたら落ちる
+        (base / "src" / "Header.swift").write_text("struct Header: View {}\n", encoding="utf-8")
+        if run() != 1:
+            print("self-test NG: **単体の部品をカタログに足し忘れたのを見逃しました**（#153）")
+            ok = False
+        cat.write_text('let entries = ["Chips/Plain", "Toast", "Header"]\n', encoding="utf-8")
+        if run() != 0:
+            print("self-test NG: 単体の部品もカタログに載せたのに落ちました"); ok = False
 
         # **書き出しが無ければ 2**
         c2 = dict(cfg); c2["export"] = "reg/nope.json"; write_cfg(c2)
