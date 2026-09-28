@@ -68,7 +68,7 @@
 | `tools/figma_freshness.py` | 書き出しが Figma より古くないか（ハッシュ） |
 | `tools/gen_input_check.py` | 生成器・照合の入力が書き出しだけか（記録層の廃止・2026-08-29） |
 | `tools/coverage_check.py` | 照合体制（**参考**。条件2 は 2026-09-03 に廃止）: 照合相手が書き出しだけか |
-| `ci/verify.sh.template` | 統合検査の入口の雛形（必須段を減らさない） |
+| `ci/verify.sh.template` | 統合検査の入口の雛形（必須段を減らさない）。**`quick` は関門ではありません**。push 前の関門（`ci/app-pre-push`）は全体を回します。`quick` は走った段だけで判定し、落ちた段が「まだ測れない段の宣言」で覆われていれば 0 で抜けるので、関門に使うと**テストを走らせないまま通ります**（2026-09-28・FlashEnglish の指摘。3 案件とも関門は全体を回していることを確かめた） |
 | `tools/harness_stats.py` | 発火ログを**箇所**で集計（任意の道具。2026-08-29 に「仕組改善層」としては廃止。2026-09-28 に落ちる不具合と数え方を直し、self-test を持った） |
 | `tools/contact_sheet.py` | golden を1枚のタイルに |
 | `tools/token_query.py` | 値からトークン名の逆引き |
