@@ -59,15 +59,24 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
 
+#: 同じ行に置いた属性（`@MainActor` `@Observable` `@available(iOS 17, *)`）。
+#: **属性を宣言と同じ行に書くと、型の宣言として拾わなかった**（2026-09-28。
+#: `@MainActor final class AppModel` の AppModel が「宣言されていない型」になる）
+ATTRS = r'(?:@\w+(?:\([^)\n]*\))?\s+)*'
+#: 修飾子は**好きな順に何個でも**並ぶ（`final public class` も `public final class` も書ける）
+MODS = r'(?:(?:public|private|internal|fileprivate|open|package|final|indirect|nonisolated)\s+)*'
 DECL_RX = re.compile(
-    r'^[ \t]*(?:public\s+|private\s+|internal\s+|fileprivate\s+|open\s+)?'
-    r'(?:final\s+)?(?:enum|struct|class|protocol|actor)\s+(\w+)', re.M)
+    r'^[ \t]*' + ATTRS + MODS + r'(?:enum|struct|class|protocol|actor)\s+(\w+)', re.M)
 EXT_RX = re.compile(r'^[ \t]*extension\s+([\w.]+)', re.M)
 # **行頭に固定しない。**`enum X { static let m = 1 }` のように 1 行で書くと
 # 行頭に来ません（2026-09-20 に自分の試験で踏みました）。`{` や `;` の後ろも見ます
+#: 静的なメンバも同じ。`@MainActor static let shared` を拾わず、在るメンバを「無い」と言っていた
 MEMBER_RX = re.compile(
-    r'(?:^|[{;])[ \t]*(?:public\s+|private\s+|internal\s+|fileprivate\s+|open\s+)?'
-    r'(?:static\s+|class\s+)(?:let|var|func)\s+(\w+)', re.M)
+    r'(?:^|[{;])[ \t]*' + ATTRS
+    + r'(?:(?:public|private|internal|fileprivate|open|package|nonisolated|final|override)\s+)*'
+    + r'(?:static\s+|class\s+)'
+    + r'(?:(?:public|private|internal|fileprivate|nonisolated|final|override)\s+)*'
+    + r'(?:let|var|func)\s+(\w+)', re.M)
 CASE_RX = re.compile(r'(?:^|[{;])[ \t]*case\s+([\w, ]+)', re.M)
 REF_RX = re.compile(r'(?<![\w.])([A-Z]\w*)\.([a-z_]\w*)')
 
@@ -303,6 +312,21 @@ def self_test() -> int:
         write("let d = Missing.self\n")
         if run() != 1:
             print("self-test NG: **宣言されていない型の `.self` を通しました**"); ok = False
+
+        # **属性を宣言と同じ行に書いても、型とメンバを拾う**（2026-09-28）
+        write("@MainActor final class AppModel { @MainActor static let shared = AppModel() }\n"
+              "let a = AppModel.shared\n")
+        if run() != 0:
+            print("self-test NG: **同じ行の属性で、型かメンバを拾えませんでした**"); ok = False
+        write("@Observable @MainActor public final class Store { }\n"
+              "final public class Other { static private var x = 1 }\n"
+              "let s = Store.self\nlet o = Other.x\n")
+        if run() != 0:
+            print("self-test NG: **属性の重ね書き・修飾子の並べ替えで拾えませんでした**"); ok = False
+        # 拾えるようになっても、無いメンバは今までどおり落とす
+        write("@MainActor final class AppModel { }\nlet a = AppModel.missing\n")
+        if run() != 1:
+            print("self-test NG: **属性つきの型の、無いメンバを通しました**"); ok = False
 
         # **extension で足した static も拾う**
         write("enum Space { }\nextension Space { static let m = 16.0 }\nlet a = Space.m\n")
