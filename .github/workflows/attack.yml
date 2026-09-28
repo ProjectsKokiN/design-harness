@@ -22,6 +22,11 @@ jobs:
       - name: 関門の集計（飛ばした条件を緑にしないか）
         run: python3 attack/gate_skip_test.py
 
+      # 統合検査の元ファイルを、道具を全部作り物にした案件で丸ごと回す（2026-09-28）。
+      # 段の判定・「これから直す段」の要約・出口を見る（#139 の取り込みで 3 つ抜けていた）
+      - name: 統合検査の元ファイル（段の判定・予告・出口）
+        run: python3 attack/verify_template_test.py
+
       - name: push 前のフック（削除を飛ばすか・握り潰していないか）
         run: python3 attack/prepush_test.py
 

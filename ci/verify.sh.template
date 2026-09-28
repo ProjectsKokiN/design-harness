@@ -90,10 +90,15 @@ step() {  # step <名前> <コマンド...>
   # 呼ぶ側が `HARNESS_EXPECTED_FAILURES` に段の名前を改行区切りで入れると、
   # その段の失敗を**別の見出し**にします。**隠しません。**数も最後に出します。
   # 名前が合わない・予告した段が落ちなかったときも言います（**古い予告を残さない**）。
+  #
+  # **名前は行ごとに完全一致で見ます**（2026-09-28）。それまで「予告の中に段の名前が
+  # 含まれるか」で見ていたため、`テストの一部` と予告すると `テスト` の段まで予告扱いに
+  # なりました（予告は関門を通すので、**書き間違いで本物の失敗が通ります**）。
   _expected=0
-  case "${HARNESS_EXPECTED_FAILURES:-}" in
-    *"$_name"*) _expected=1 ;;
-  esac
+  if [ -n "${HARNESS_EXPECTED_FAILURES:-}" ] \
+     && printf '%s\n' "$HARNESS_EXPECTED_FAILURES" | tr -d '\r' | grep -Fxq -- "$_name"; then
+    _expected=1
+  fi
   case "$_rc" in
     0)
       if [ "$_expected" = 1 ]; then
@@ -121,6 +126,43 @@ step() {  # step <名前> <コマンド...>
       ;;
   esac
   echo
+}
+
+# --- 「これから直す段」の要約（design-harness #139）---------------------------
+# **出口ごとに呼びます**（2026-09-28）。最後の出口にだけ置いていたため、途中で抜ける
+# 出口（quick）では要約が出ませんでした（FlashEnglish の実測: 途中の出口を持つ案件で、
+# 段が落ちたとき——要約が一番要るとき——に出なかった）。
+# **隠しません。**何件を予告として分けたかを必ず出します。
+# 予告したのに落ちなかった段も出します（**古い予告を残さないため**）。
+# 予告した名前に合う段がこの回に無いときも出します（**黙って空振りしない**。
+# ハーネスの中身の段は step を通らないので、予告しても効きません。外せない段です）。
+expected_summary() {
+  _unmatched=""
+  if [ -n "${HARNESS_EXPECTED_FAILURES:-}" ]; then
+    _unmatched="$(printf '%s\n' "$HARNESS_EXPECTED_FAILURES" | tr -d '\r' | while IFS= read -r _w; do
+      [ -n "$_w" ] || continue
+      cut -f1 "$GATE_LIST" | grep -Fxq -- "$_w" || printf '%s\n' "$_w"
+    done)"
+  fi
+  if [ -s "$EXPECTED_LIST" ] || [ -s "$EXPECTED_OK_LIST" ] || [ -n "$_unmatched" ]; then
+    echo "=== これから直す段（呼んだ側が予告したもの）==="
+    if [ -s "$EXPECTED_LIST" ]; then
+      echo "  予告どおり落ちた段: $(wc -l < "$EXPECTED_LIST" | tr -d ' ') 件"
+      sed 's/^/    /' "$EXPECTED_LIST"
+    fi
+    if [ -s "$EXPECTED_OK_LIST" ]; then
+      echo "  **予告したのに落ちなかった段: $(wc -l < "$EXPECTED_OK_LIST" | tr -d ' ') 件**"
+      sed 's/^/    /' "$EXPECTED_OK_LIST"
+      echo "  予告が古くなっています。HARNESS_EXPECTED_FAILURES から外してください。"
+    fi
+    if [ -n "$_unmatched" ]; then
+      echo "  **予告した名前に合う段が、この回にありません: $(printf '%s\n' "$_unmatched" | wc -l | tr -d ' ') 件**"
+      printf '%s\n' "$_unmatched" | sed 's/^/    /'
+      echo "  名前の書き間違い・この回で走らない段・予告できない段（ハーネスの中身）のどれかです。"
+    fi
+    echo "  **これは免除ではありません。**このあと直るかは、呼んだ側の仕事です。"
+    echo
+  fi
 }
 
 # --- ハーネスの中身が、記録されたピンと一致しているか -------------------------
@@ -226,7 +268,10 @@ step "個人の情報（公開に切り替える前に直すもの）" \
 # 案件の立ち上げ時に書いた宣言が、実装が入る何週間も後まで検査されない状態だった。
 step "設定の書式（鍵と型。走査対象が0件でも回る）" \
   "$PY" "$HARNESS/tools/config_schema_check.py"
-[ "$TARGET" = "quick" ] && exit $FAILED
+if [ "$TARGET" = "quick" ]; then
+  expected_summary
+  exit $FAILED
+fi
 
 step "文脈（共通の憲法を参照しているか・写していないか）" \
   "$PY" "$HARNESS/tools/design_md_check.py"
@@ -476,6 +521,14 @@ step "生成物のべき等（生成し直して差分が出ないか）" \
   "$PY" "$HARNESS/tools/gen_verify.py"
 step "テスト"          {{flutter test / npm test / xcodebuild test -scheme <名前> -destination <端末>}}
 
+# **予告（HARNESS_EXPECTED_FAILURES）は段の単位です**（#139・2026-09-28）。
+# テストの中の1本だけを予告したいとき（例: カタログの作り直しの前に必ず落ちる
+# 「カタログが古い」テスト）は、**そのテストを別の段に分けます**。「テスト」の段ごと
+# 予告すると、**本物のテストの失敗まで「予告どおり」に落ちます**。Flutter なら:
+#   テストに @Tags(['catalog-freshness']) を付け、dart_test.yaml に tags を書き、
+#   step "テスト"           flutter test --exclude-tags catalog-freshness
+#   step "カタログの鮮度"   flutter test --tags catalog-freshness
+
 # **SwiftUI の案件では、読み上げ・文字拡大・コントラストを XCTest の
 # `performAccessibilityAudit()` が見ます**（2026-09-18 追加）。
 # Flutter で自作していた2つの検査（押せるものの名前・文字拡大時の破綻）に当たります。
@@ -502,23 +555,7 @@ else
 fi
 echo
 
-# --- 「これから直す段」の要約（design-harness #139）---------------------------
-# **隠しません。**何件を予告として分けたかを必ず出します。
-# 予告したのに落ちなかった段も出します（**古い予告を残さないため**）。
-if [ -s "$EXPECTED_LIST" ] || [ -s "$EXPECTED_OK_LIST" ]; then
-  echo "=== これから直す段（呼んだ側が予告したもの）==="
-  if [ -s "$EXPECTED_LIST" ]; then
-    echo "  予告どおり落ちた段: $(wc -l < "$EXPECTED_LIST" | tr -d ' ') 件"
-    sed 's/^/    /' "$EXPECTED_LIST"
-  fi
-  if [ -s "$EXPECTED_OK_LIST" ]; then
-    echo "  **予告したのに落ちなかった段: $(wc -l < "$EXPECTED_OK_LIST" | tr -d ' ') 件**"
-    sed 's/^/    /' "$EXPECTED_OK_LIST"
-    echo "  予告が古くなっています。HARNESS_EXPECTED_FAILURES から外してください。"
-  fi
-  echo "  **これは免除ではありません。**このあと直るかは、呼んだ側の仕事です。"
-  echo
-fi
+expected_summary
 
 if [ "$FAILED" -ne 0 ]; then
   echo "検証に失敗しました。上の NG を直してから再実行してください。"
