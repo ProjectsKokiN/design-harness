@@ -85,6 +85,18 @@
 | **`attack/mutation_test.py`** | **変異試験**。各道具の「落とす」帰り道（`return 1` / `return 2`）を1本ずつ `return 0` に潰し、self-test が赤くなるかを見る。素通りは**その行の `# mutation-ok: 理由`** か `$patterns`（型）が無ければ落ちる。**要らなくなった印も落とす**（2026-09-05 の実測: 47% が素通りしていた。2026-09-06 に行番号の宣言を廃止・#79） |
 | `tools/stage_check.py --min-coverage N` | **self-test が本体の N% を通ることを求める**（持っているだけでは何も証明していない） |
 | `tools/stage_check.py --matrix <案件…>` | **段 × 案件の行列を導出する**（#76。どの案件でも走っていない段を名指しする。手で行列を組み直さない） |
+| `tools/catalog_check.py` | 自作部品が、人の目で見られる場所（部品カタログ）に出ているか |
+| `tools/config_schema_check.py` | 設定ファイルの**鍵と型だけ**を見る（#126） |
+| `tools/doc_example_check.py` | 文書のコード例が、自分の禁止ルールに違反していないか |
+| `tools/gate_summary.py` | 結果が **Figma との照合として何を保証しているか**を、関門の条件ごとに言う（判定は変えない。#135） |
+| `tools/layout_check.py` | 画面の骨格が、書き出し（`frames.json`）のとおりに実装されているか（#133） |
+| `tools/not_yet_check.py` | **まだ測れない段**を、理由と期限つきで宣言して関門だけ通す（中核の条件の違反は覆えない。#124・#134） |
+| `tools/rules_selftest.py` | `rules.json` のルールが**本当に当たるか**を、同梱の仕込み（bad / good）で確かめる（#124） |
+| `tools/save_hook_check.py` | 保存時のフックが、実際に違反を捕まえられるか（#125） |
+| `tools/session_scope_check.py` | 1つのコミットが、2つの担当（セッション）にまたがっていないか |
+| `tools/swift_symbol_check.py` | 実装が引いている名前（型・メンバ）が**実際に在るか**（型検査ではない） |
+| `tools/syntax_check.py` | その言語として読めるか（構文）**だけ**を見る |
+| `tools/_source_ext.py` | 案件のソースの拡張子を、宣言ではなく `design/rules.json` から導く（各道具が import するだけ。単体では回さない） |
 | `ci/` | 各リポジトリへ配る workflow の雛形 |
 | ~~`build/`~~ | **2026-09-07 に `machine-relay`（非公開）へ移しました。** ビルドの棚卸し・共有の規約・その検査は、**デザインの検査とは別の主題**で、さらに**機体のホームのパスや個人名が入る**ため、公開リポジトリに置きません（西川さん指示）。いまの置き場は `machine-relay` の `build/` と `analysis/` |
 
