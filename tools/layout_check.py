@@ -148,12 +148,29 @@ def check(conf_path: Path, root: Path) -> int:
         print(f"宣言がありません: {conf_path}\n"
               f"  **確かめられないので落とします。**0 件ではありません", file=sys.stderr)
         return 2
-    conf = json.loads(conf_path.read_text(encoding="utf-8", errors="replace"))
+    # **壊れた宣言は例外で落とさず、2 で止める**（2026-09-28）。それまでは
+    # json.loads の例外で落ちて終了コードが 1 になり、「確かめて違反」と区別できなかった
+    # （attack/broken_input_test.py が捕まえた）
+    try:
+        conf = json.loads(conf_path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError) as e:
+        print(f"宣言を読めません: {conf_path}（{e}）\n"
+              f"  **確かめられないので落とします。**", file=sys.stderr)
+        return 2
+    if not isinstance(conf, dict) or not conf.get("frames"):
+        print(f"宣言に `frames`（画面の書き出しの置き場）がありません: {conf_path}",
+              file=sys.stderr)
+        return 2
     frames_path = (root / conf["frames"]).resolve()
     if not frames_path.is_file():
         print(f"画面の書き出しがありません: {frames_path}", file=sys.stderr)
         return 2
-    frames = json.loads(frames_path.read_text(encoding="utf-8", errors="replace"))["frames"]
+    try:
+        frames = json.loads(frames_path.read_text(encoding="utf-8", errors="replace"))["frames"]
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        print(f"画面の書き出しを読めません: {frames_path}（{type(e).__name__}: {e}）",
+              file=sys.stderr)
+        return 2
     # **案件の置き場を既定にしません**（design-harness #133・2026-09-24）。
     # 共有層へ上げるときに `Sources/PlantTalk/Theme/Metrics.swift` が既定のまま
     # 残っていると、**他の案件では黙って 0 件の表で走ります。**
@@ -295,8 +312,38 @@ def self_test() -> int:
         if check(cp2, r2) != 2:
             print("self-test: **tokens の宣言が無いのに通りました**", file=sys.stderr)
             return 1
+        # **壊れた宣言・壊れた書き出しは 2**（例外の 1 で落ちると「違反」と区別できない）
+        import contextlib
+        import io
+        bad = r2 / "bad.json"
+        bad.write_text("{壊れた", encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc_bad = check(bad, r2)
+        if rc_bad != 2:
+            print(f"self-test: **壊れた宣言で 2 になりません**（{rc_bad}）", file=sys.stderr)
+            return 1
+        cp2.write_text(json.dumps({"tokens": "Sources/PlantTalk/Theme/Metrics.swift"}),
+                       encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc_nof = check(cp2, r2)
+        if rc_nof != 2:
+            print(f"self-test: **frames の宣言が無いのに 2 になりません**（{rc_nof}）",
+                  file=sys.stderr)
+            return 1
+        (r2 / "frames.json").write_text("{壊れた", encoding="utf-8")
+        cp2.write_text(json.dumps({"frames": "frames.json",
+                                   "tokens": "Sources/PlantTalk/Theme/Metrics.swift"}),
+                       encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc_fr = check(cp2, r2)
+        if rc_fr != 2:
+            print(f"self-test: **壊れた書き出しで 2 になりません**（{rc_fr}）", file=sys.stderr)
+            return 1
 
-    print("self-test: 通った（合えば 0 / 値を崩せば落ちる / コメントの数では通らない / 書き出しが変われば落ちる）")
+    # 「self-test: OK」を含める。attack/mutation_test.py はこの表示で成功を見分ける
+    # （2026-09-28 まで「通った」とだけ出していたので、変異試験に「測れない」と数えられていた）
+    print("self-test: OK（合えば 0 / 値を崩せば落ちる / コメントの数では通らない / "
+          "書き出しが変われば落ちる / 壊れた入力は 2）")
     return 0
 
 

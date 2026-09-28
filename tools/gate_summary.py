@@ -23,11 +23,19 @@ planttalk（2026-09-19）で、`design_check.py` 違反 0・`swiftc -parse` 全�
 
 ## これは関門ではありません
 
-判定は変えません（終了コードは常に 0）。**言うだけ**です。
+判定は変えません。**言うだけ**です（verify.sh は `|| true` で呼びます）。
 関門の判定は `not_yet_check.py` が持っています（#134 で中核の扱いを分けました）。
 
+終了コード: 0 = 言えた / 2 = 入力が無い・壊れていて言えない。**1 は出しません**（判定しないため）。
+
 入力: `--gate-file` … `<段の名前>\\t<終了コード>` を 1 行ずつ（verify.sh の全段）
-      `--config`    … design/stages.json（「まだ測れない」の宣言を読む）
+      `--config`    … design/stages.json（「まだ測れない」の宣言を読む）。**渡さなければ宣言は無いものとして読みます**
+
+**2026-09-28 に変えたこと**: それまで `--config` に無いパスや壊れた JSON を渡されても、
+宣言を 0 件として読んで最後まで出し、終了コード 0 で返していました。宣言があるのに
+読めていないと、覆っている段まで「宣言なし」と出ます（**言うことが間違う**）。
+渡されたのに読めないときは 2 で止めます。宣言を持たない案件は `--config` を渡しません
+（`ci/verify.sh.template` は `design/stages.json` があるときだけ渡します）。
 """
 from __future__ import annotations
 
@@ -71,11 +79,19 @@ def read_gate(path: Path):
     return rows
 
 
-def declared(conf_path: Path) -> set:
+def declared(conf_path: Path | None):
+    """宣言した段の名前（正規化済み）。**読めなければ None**（0 件と区別する）。
+
+    `conf_path` が None なら宣言ファイルを持たない案件なので、空の集合を返す。
+    """
+    if conf_path is None:
+        return set()
     try:
         d = json.loads(conf_path.read_text(encoding="utf-8", errors="replace"))
-    except Exception:
-        return set()
+    except (OSError, ValueError):
+        return None
+    if not isinstance(d, dict):
+        return None
     decl = d.get(KEY) or {}
     return {norm(k) for k in decl} if isinstance(decl, dict) else set()
 
@@ -102,19 +118,25 @@ def classify(rows, decl):
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--gate-file", type=Path)
-    ap.add_argument("--config", type=Path, default=Path("design/stages.json"))
+    ap.add_argument("--config", type=Path, default=None)
     ap.add_argument("--self-test", "--selftest", dest="self_test", action="store_true")
     a = ap.parse_args(argv)
     if a.self_test:
         return self_test()
+    decl = declared(a.config)
+    if decl is None:
+        print(f"宣言ファイルを読めません: {a.config}（無いか、JSON として壊れています）\n"
+              f"  「まだ測れない」の宣言を読めないので、どの段が宣言で覆われているかを言えません。"
+              f"**0 件として読むと、言うことが間違います**", file=sys.stderr)
+        return 2
     if not a.gate_file or not a.gate_file.is_file():
         print("段の結果の控えがありません。**何を保証したか言えません。**")
-        return 0
+        return 2
     rows = read_gate(a.gate_file)
     if not rows:
         print("段の結果が 1 件もありません。**何を保証したか言えません。**")
-        return 0
-    by = classify(rows, declared(a.config))
+        return 2
+    by = classify(rows, decl)
     if not by:
         print("**関門の条件（条件N）を名前に持つ段が 1 つもありません。**"
               "Figma との照合は、この結果からは何も言えません")
@@ -182,6 +204,30 @@ def self_test() -> int:
             print("self-test NG: **中核の段が無いのに、何か保証したように見せています**"); ok = False
         if rc != 0:
             print("self-test NG: 判定を変えています（終了コードが 0 でない）"); ok = False
+
+        # ── 入力が無い・壊れているときは 2（2026-09-28）──────────────────
+        import io, contextlib
+
+        def rc_of(argv):
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                return main(argv)
+        gate.write_text(core + "\t1\n", encoding="utf-8")
+        if rc_of(["--gate-file", str(gate), "--config", str(r / "ない.json")]) != 2:
+            print("self-test NG: **無い宣言ファイルを 0 件として読みました**"); ok = False
+        broken = r / "broken.json"
+        broken.write_text("{壊れた", encoding="utf-8")
+        if rc_of(["--gate-file", str(gate), "--config", str(broken)]) != 2:
+            print("self-test NG: **壊れた宣言ファイルを 0 件として読みました**"); ok = False
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = main(["--gate-file", str(gate)])
+        if rc != 0 or "確かめて違反" not in buf.getvalue():
+            print("self-test NG: 宣言ファイルを渡さないとき、宣言なしとして読んでいません"); ok = False
+        if rc_of(["--gate-file", str(r / "ない.txt")]) != 2:
+            print("self-test NG: **段の結果の控えが無いのに 2 で止まりません**"); ok = False
+        gate.write_text("\n", encoding="utf-8")
+        if rc_of(["--gate-file", str(gate)]) != 2:
+            print("self-test NG: **段の結果が 0 件なのに 2 で止まりません**"); ok = False
     print("self-test: " + ("OK" if ok else "NG"))
     return 0 if ok else 1
 

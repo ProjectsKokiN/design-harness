@@ -492,7 +492,14 @@ step "テスト"          {{flutter test / npm test / xcodebuild test -scheme <�
 # 条件（関門の条件 1・4・5・7・8・9）ごとに、測って合格したか・確かめられなかったか・
 # 違反を宣言で覆っているかを**必ず**出す。**関門の判定はここでは変えない。**
 echo "=== Figma との照合として、この結果が保証しているもの（関門の条件ごと）==="
-"$PY" "$HARNESS/tools/gate_summary.py" --gate-file "$GATE_LIST" --config design/stages.json || true
+# **宣言ファイルがあるときだけ渡す**（2026-09-28）。gate_summary は渡された宣言を読めないと
+# 2 で止める（0 件として読むと、覆っている段まで「宣言なし」と言ってしまうため）。
+# 宣言を持たない案件（QnD など）では渡さず、宣言なしとして読ませる
+if [ -f design/stages.json ]; then
+  "$PY" "$HARNESS/tools/gate_summary.py" --gate-file "$GATE_LIST" --config design/stages.json || true
+else
+  "$PY" "$HARNESS/tools/gate_summary.py" --gate-file "$GATE_LIST" || true
+fi
 echo
 
 # --- 「これから直す段」の要約（design-harness #139）---------------------------
