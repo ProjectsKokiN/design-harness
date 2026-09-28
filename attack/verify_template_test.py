@@ -12,6 +12,11 @@ FlashEnglish が取り込んで次の 3 つが分かりました（2026-09-28）
   予告扱いになった**（予告した段は関門を通すので、書き間違いで本物の失敗が通る）
 - 予告した名前に合う段が無いとき（ハーネスの中身の段は step を通らない）、**黙って空振りした**
 
+PlantTalk の取り込み（同日）で、もう 1 つ分かりました。
+
+- quick の出口は「まだ測れない段の宣言」を見ずに抜けていたため、**全体の検査なら宣言で
+  覆われる段で、quick だけが 1 を返していた**（出口の扱いを finish にまとめた）
+
 ## 何をするか
 
 元ファイルの `{{ }}` を作り物の呼び出しに置き換え、**道具を全部、決めた終了コードを
@@ -181,7 +186,27 @@ def main(argv=None):
         ck(rc == 0 and "予告した名前に合う段が、この回にありません: 1 件" in out,
            f"quick で走らない段の予告を言わない（rc={rc}）", out)
 
-    print("verify_template_test:", "OK（8 通り）" if ok else "NG")
+        # 9) **quick でも「まだ測れない段の宣言」を見る**（全体の検査と同じ扱い）。
+        #    PlantTalk の実測: 宣言済みの段で、quick だけが毎回 1 を返していた。
+        #    宣言の中身は作り物の not_yet_check が決める（0 = 覆っている・1 = 覆っていない）
+        (prj / "design" / "stages.json").write_text("{}", encoding="utf-8")
+        rc, out = run(prj, home, target="quick", stub="config_schema_check=2")
+        ck(rc == 0 and "宣言が覆っているので関門は通します" in out,
+           f"quick で宣言を見ない（rc={rc}）", out)
+        rc, out = run(prj, home, target="quick", stub="config_schema_check=2;not_yet_check=1")
+        ck(rc == 1, f"quick で宣言が覆っていないのに通した（rc={rc}）", out)
+        rc, out = run(prj, home, stub="config_schema_check=2")
+        ck(rc == 0 and "宣言が覆っているので関門は通します" in out,
+           f"全体の検査で宣言を見ない（rc={rc}）", out)
+        (prj / "design" / "stages.json").unlink()
+
+        # 10) quick で何も落ちなければ、全体の検査と取り違えない言い方で通す
+        rc, out = run(prj, home, target="quick")
+        ck(rc == 0 and "quick の段をすべて通過しました" in out
+           and "すべての検証を通過しました" not in out,
+           f"quick の通過を、全体の検査の通過と同じ言い方にした（rc={rc}）", out)
+
+    print("verify_template_test:", "OK（12 通り）" if ok else "NG")
     return 0 if ok else 1
 
 

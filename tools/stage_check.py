@@ -324,6 +324,30 @@ def self_test_stages():
     GATE = {"生きている条件": {c: {"見出し": f"じょうけん{c}"}
                               for c in ("1", "5", "7", "8")}}
 
+    # **後始末の目印は、段が始まってからだけ見る**（2026-09-28）。出口の処理を関数
+    # （finish）にまとめて先頭で定義したら、その中の `if [ "$FAILED" -ne 0 ]` で
+    # 1 段目より前に読むのをやめ、元ファイルの段を 0 と読んだ。末尾の後始末は、
+    # 今までどおり最後の段に入れない
+    with tempfile.TemporaryDirectory() as td0:
+        t0 = Path(td0) / "t.sh"
+        t0.write_text(
+            'finish() {\n'
+            '  if [ "$FAILED" -ne 0 ]; then\n'
+            '    "$PY" "$HARNESS/tools/not_yet_check.py" --stages-file x\n'
+            '  fi\n'
+            '}\n'
+            'step "あ" "$PY" "$HARNESS/tools/a_check.py"\n'
+            'step "い" "$PY" "$HARNESS/tools/b_check.py"\n'
+            'if [ "$FAILED" -ne 0 ]; then\n'
+            '  "$PY" "$HARNESS/tools/not_yet_check.py" --stages-file x\n'
+            'fi\n', encoding="utf-8", newline="\n")
+        got = template_stages(t0)
+        leaked = sorted(k for k, v in got.items() if "not_yet_check" in repr(v))
+        if sorted(got) != ["あ", "い"] or leaked:
+            print(f"self-test NG: 後始末の目印の扱いが違う（読めた段 {sorted(got)}・"
+                  f"後始末が入った段 {leaked}）")
+            ok = False
+
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / "design").mkdir()
@@ -894,7 +918,10 @@ def template_stages(path):
     out, label, buf = {}, None, []
     lines = logical_lines(logical_text(path.read_text(encoding="utf-8")))
     for line in lines + [None]:
-        if line is not None and TAIL_RX.match(line):
+        # **後始末の目印は、段が始まってからだけ見る**（2026-09-28）。出口の処理を関数
+        # （finish）にまとめて先頭で定義したら、その中の `if [ "$FAILED" -ne 0 ]` で
+        # 1 段目より前に読むのをやめ、**元ファイルの段を 0 と読んだ**
+        if line is not None and label is not None and TAIL_RX.match(line):
             line = None                  # **ここから先は後始末。段ではない**
         m = STEP_RX.match(line) if line is not None else None
         if m or line is None:
@@ -1079,7 +1106,8 @@ def removed_stages(verify_path):
         out, label, buf = {}, None, []
         ls = logical_lines(logical_text(text))
         for line in ls + [None]:
-            if line is not None and TAIL_RX.match(line):
+            # 後始末の目印は、段が始まってからだけ見る（template_stages と同じ）
+            if line is not None and label is not None and TAIL_RX.match(line):
                 line = None              # **ここから先は後始末。段ではない**
             m = STEP_RX.match(line) if line is not None else None
             if m or line is None:

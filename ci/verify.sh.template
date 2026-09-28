@@ -165,6 +165,40 @@ expected_summary() {
   fi
 }
 
+# --- 出口（quick と最後で同じ扱いにする）--------------------------------------
+# **出口ごとに扱いを変えません**（2026-09-28）。quick の出口は落ちた段があれば
+# そのまま 1 を返していたため、全体の検査なら「まだ測れない段の宣言」で覆われる段で、
+# **quick だけが 1 を返していました**（PlantTalk の実測: 「ルールの仕込み」が
+# 確かめられない段として宣言済みなのに、quick で毎回落ちていた）。
+finish() {  # finish [quick]
+  expected_summary
+  if [ "$FAILED" -ne 0 ]; then
+    echo "検証に失敗しました。上の NG を直してから再実行してください。"
+    # **まだ測れない段の宣言**（design-harness #124）。立ち上げたばかりの案件では、
+    # 正直に緑にする道が無い段があります（部品の実装前・アイコンの絵が未着手など）。
+    # **宣言が理由と期限つきで全部の段を覆っているときだけ**、関門を通します。
+    # **上の NG はそのまま出ています。嘘の緑にはしません。**
+    if [ -s "$FAILED_LIST" ] && [ -f design/stages.json ]; then
+      echo
+      echo "=== まだ測れない段の宣言 ==="
+      if "$PY" "$HARNESS/tools/not_yet_check.py" \
+           --stages-file "$FAILED_LIST" --config design/stages.json; then
+        echo
+        echo "**落ちたままですが、宣言が覆っているので関門は通します。**"
+        echo "  期限が来たら落ちます。直すか、期限を延ばす理由を書いてください。"
+        exit 0
+      fi
+    fi
+    exit 1
+  fi
+  if [ "${1:-}" = "quick" ]; then
+    echo "quick の段をすべて通過しました（全体の検査ではありません）。"
+  else
+    echo "すべての検証を通過しました。"
+  fi
+  exit 0
+}
+
 # --- ハーネスの中身が、記録されたピンと一致しているか -------------------------
 #
 # **この段だけは、ハーネスの道具を使いません。** `git` だけで見ます。
@@ -269,8 +303,7 @@ step "個人の情報（公開に切り替える前に直すもの）" \
 step "設定の書式（鍵と型。走査対象が0件でも回る）" \
   "$PY" "$HARNESS/tools/config_schema_check.py"
 if [ "$TARGET" = "quick" ]; then
-  expected_summary
-  exit $FAILED
+  finish quick
 fi
 
 step "文脈（共通の憲法を参照しているか・写していないか）" \
@@ -555,25 +588,4 @@ else
 fi
 echo
 
-expected_summary
-
-if [ "$FAILED" -ne 0 ]; then
-  echo "検証に失敗しました。上の NG を直してから再実行してください。"
-  # **まだ測れない段の宣言**（design-harness #124）。立ち上げたばかりの案件では、
-  # 正直に緑にする道が無い段があります（部品の実装前・アイコンの絵が未着手など）。
-  # **宣言が理由と期限つきで全部の段を覆っているときだけ**、関門を通します。
-  # **上の NG はそのまま出ています。嘘の緑にはしません。**
-  if [ -s "$FAILED_LIST" ] && [ -f design/stages.json ]; then
-    echo
-    echo "=== まだ測れない段の宣言 ==="
-    if "$PY" "$HARNESS/tools/not_yet_check.py" \
-         --stages-file "$FAILED_LIST" --config design/stages.json; then
-      echo
-      echo "**落ちたままですが、宣言が覆っているので関門は通します。**"
-      echo "  期限が来たら落ちます。直すか、期限を延ばす理由を書いてください。"
-      exit 0
-    fi
-  fi
-  exit 1
-fi
-echo "すべての検証を通過しました。"
+finish
