@@ -228,7 +228,13 @@ def names_of(data: dict) -> dict:
     記録した版の読み比べ（`explain_frames`）が**同じ作り方で**引くための入口。
     """
     names: dict[str, str] = {}
-    varmap = ROOT / 'design' / 'figma-raw' / '_varmap.json'
+    # **案件の根から探す**（2026-09-28・FlashEnglish で判明）。`ROOT` は道具の置き場の
+    # 1 つ上で、ハーネスを submodule で使うと `design/harness` を指す。そこには対応表が
+    # 無いので、**色の変数が名前でなく ID のままハッシュに入り、同じ Figma なのに
+    # 28 セットすべてが「変わった」と出た**。案件の中に写しを置いていた頃（`ROOT` が
+    # 案件の根だった頃）の書き方が残っていた。`PROJECT_ROOT` は `--config` の置き場から
+    # 決まり、設定を渡さなければ `ROOT` と同じ（案件の中の写しはそのまま動く）
+    varmap = PROJECT_ROOT / 'design' / 'figma-raw' / '_varmap.json'
     if varmap.exists():
         names.update(json.loads(varmap.read_text(encoding='utf-8'))['map'])
     for entry in (data.get('nodes') or {}).values():
@@ -880,6 +886,32 @@ def self_test() -> int:
     cases.append(('node_digest: 作り方が変わっていない（固定した値と一致）',
                   node_digest(pin, {'VariableID:1:2': 'color/bg', 'S:3': 'Shadow/Card'})
                   == '22b80c8047ad' and node_digest(pin) == 'a841c03d967e'))
+
+    # **変数の名前は、案件の対応表から引く**（2026-09-28・FlashEnglish）。
+    # ハーネスの置き場（design/harness）を探していたため対応表が見つからず、
+    # 同じ Figma で 28 セットすべてが「変わった」と出た
+    import tempfile as _tf2
+    _keep_cfg = {k: globals().get(k) for k in ('CONFIG', 'PROJECT_ROOT', 'EXPORT', 'FILE_KEY',
+                                               'SKIP_PAGES', 'PAGE_SCOPE', 'STYLES_EXPORT',
+                                               'DESCS_EXPORT', 'FRAMES_EXPORT')}
+    try:
+        with _tf2.TemporaryDirectory() as _pd:
+            _proj = Path(_pd) / 'app'
+            (_proj / 'design' / 'figma-raw').mkdir(parents=True)
+            (_proj / 'design' / 'figma-raw' / '_varmap.json').write_text(
+                json.dumps({'map': {'VariableID:1:2': 'color/bg'}}), encoding='utf-8')
+            (_proj / 'design' / 'figma-freshness.json').write_text(json.dumps({
+                'export': 'x.json', 'fileKey': 'K', 'skipPages': []}), encoding='utf-8')
+            load_config(_proj / 'design' / 'figma-freshness.json')
+            _nm = names_of({'nodes': {}})
+            _paint = {'id': '9:9', 'type': 'RECTANGLE', 'name': 'R',
+                      'fills': [{'type': 'SOLID',
+                                 'boundVariables': {'color': {'id': 'VariableID:1:2'}}}]}
+            cases.append(('変数の名前は、--config で渡した案件の対応表から引く',
+                          _nm.get('VariableID:1:2') == 'color/bg'
+                          and 'fills=color/bg' in node_parts(_paint, _nm)))
+    finally:
+        globals().update(_keep_cfg)
 
     # body_hash: componentSets が変われば変わる
     d1 = {'componentSets': {'A': {'x': 1}}}
