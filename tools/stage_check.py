@@ -98,6 +98,29 @@ LOCAL_TOOL_RX = re.compile(r'\$PY"?\s+"?((?:[\w.-]+/)*[\w-]+\.py)')
 #: シムが「本体はどれか」を宣言する印。**シムには self_test の字が無い**ので、
 #: これが無いと「self-test が無い道具」に見えます（`design/design_check.py` が実例）。
 SHIM_RX = re.compile(r'harness-shim:\s*(\S+)')
+
+
+def template_local(rel, template):
+    """雛形を検査しているとき、案件の道具（`design/<名前>.py`）を、案件に写す元へ読み替える。
+
+    CI はハーネスの雛形（`ci/verify.sh.template`）そのものを `--verify` に渡す。雛形には
+    案件の根が無いので、案件から探すと `ci/design/design_check.py` という存在しない場所を
+    見て「がありません」と落ちていた（#136 で案件の道具を拾うようにした 2026-09-24 から、
+    CI のこの段が赤）。案件の `design/design_check.py` は `shims/design_check_shim.py` を
+    写したものなので、雛形のときはそこを読む（2026-09-28）。
+    """
+    parts = Path(rel).parts
+    if not parts or parts[0] != "design":
+        return None
+    cand = template.resolve().parent.parent / "shims" / f"{Path(rel).stem}_shim.py"
+    return cand if cand.exists() else None
+
+
+def template_body(decl, template):
+    """雛形を検査しているとき、シムが宣言した本体（`harness/...`）をハーネスの中で引く。"""
+    parts = Path(decl).parts
+    root = template.resolve().parent.parent
+    return root.joinpath(*parts[1:]) if parts and parts[0] == "harness" else root / decl
 #: 段が走らせるファイルの名前（パスは落とす）。案件シム経由でも同じ名前になる
 FILE_RX = re.compile(r"(?:^|[\s/\"'])([a-z_][a-z0-9_]*\.(?:py|sh))\b")
 #: README の例外表から拾う道具名
@@ -702,6 +725,18 @@ def self_test_stages():
         if r != 1 or "まだこの緩和の上に関門が立っていますか" not in o:
             print(f"self-test NG: 期限切れの緩和を通した（{r}）"); ok = False
         waivers.unlink(missing_ok=True)
+
+        # **シェルの書き方の誤りで 1**（2026-09-28・変異試験が見ていなかった経路）。
+        # `mktemp -t` の雛形に XXXXXX が無いと Linux（CI）でだけ落ちる
+        _keep = verify.read_text(encoding="utf-8")
+        verify.write_text(_keep + '\nT=$(mktemp -t harness)\n', encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = check_stages(tpl, verify, None, waivers, gate)
+        if rc != 1 or "XXXXXX" not in buf.getvalue():
+            print(f"self-test NG: **`mktemp -t` の雛形に XXXXXX が無いのに通した**（exit {rc}）")
+            ok = False
+        verify.write_text(_keep, encoding="utf-8")
 
         # 関門の条件の一覧そのものが無ければ落とす
         gate.unlink()
@@ -1870,6 +1905,8 @@ def main(argv=None):
 
 
     lines = logical_lines(_src)
+    # **雛形そのものを検査しているか**（2026-09-28）。CI は雛形を `--verify` に渡す
+    is_template = args.verify.resolve() == args.template.resolve()
     seen_step = False
     for line in lines:
         m = STEP_RX.match(line)
@@ -1893,7 +1930,10 @@ def main(argv=None):
         for rel in LOCAL_TOOL_RX.findall(cmd):
             if "harness/tools/" in rel:
                 continue
-            tools.append((Path(rel).stem, _proj / rel))
+            local = _proj / rel
+            if is_template:
+                local = template_local(rel, args.template) or local
+            tools.append((Path(rel).stem, local))
         if not tools:
             foreign.append(label)
             continue
@@ -1908,8 +1948,14 @@ def main(argv=None):
                 _body = (path.parent / _shim.group(1))
                 if not _body.exists():
                     _body = (_proj / _shim.group(1))
+                if not _body.exists() and is_template:
+                    _body = template_body(_shim.group(1), args.template)
                 if _body.exists():
                     src = _body.read_text(encoding="utf-8", errors="ignore")
+                    if is_template:
+                        # 雛形の入口は案件の外では動かない（design/harness が無い）。
+                        # **本体の self-test を回す**
+                        path = _body
                 else:
                     problems.append(
                         f"「{label}」の {name}.py が `harness-shim: {_shim.group(1)}` と"
@@ -2163,6 +2209,42 @@ def self_test():
         (base / "design" / "engine_body.py").unlink()
         if run('step "シム" "$PY" design/shim.py\n') != 1:
             print("self-test NG: **本体が無いのにシムの宣言で通しました**"); ok = False
+
+        # ── **雛形そのものを検査するとき**（2026-09-28）──────────────────
+        # CI は ci/verify.sh.template を --verify に渡す。案件の道具は案件に写す元
+        # （shims/）を読み、シムの本体はハーネスの中で引く。**これが無いと CI の段が
+        # 「design_check.py がありません」で落ちる**（9/24 から赤だった）
+        h = base / "h"
+        for d in ("ci", "shims", "engine"):
+            (h / d).mkdir(parents=True, exist_ok=True)
+        # 本物のシムと同じく、**案件の外（design/harness が無い所）では 2 で止まる**。
+        # 何もせず 0 を返す作り物だと、シム自身の self-test を回しても通ってしまい区別できない
+        (h / "shims" / "design_check_shim.py").write_text(
+            "# harness-shim: harness/engine/design_check.py\nimport sys\nsys.exit(2)\n",
+            encoding="utf-8")
+        (h / "engine" / "design_check.py").write_text(
+            "import sys\ndef self_test():\n    return 0\n"
+            "if __name__ == '__main__':\n    sys.exit(self_test())\n", encoding="utf-8")
+        tpl = h / "ci" / "verify.sh.template"
+        tpl.write_text('step "禁止パターン（全量・条件1）"   "$PY" design/design_check.py --all\n'
+                       + _STAGES_LINE, encoding="utf-8")
+
+        def run_tpl():
+            import io, contextlib
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                rc = main(["--verify", str(tpl), "--template", str(tpl), "--tools", str(tools),
+                           "--readme", str(readme)])
+            return rc, buf.getvalue()
+        rc, out = run_tpl()
+        if rc != 0 or "がありません" in out:
+            print(f"self-test NG: **雛形を検査するとき、案件の道具を雛形の置き場で引けていません**"
+                  f"（rc={rc}）"); ok = False
+        # 本体が無ければ、雛形でも落ちる（読み替えで通さない）
+        (h / "engine" / "design_check.py").unlink()
+        rc, _ = run_tpl()
+        if rc != 1:
+            print(f"self-test NG: **雛形の入口が宣言した本体が無いのに通しました**（rc={rc}）"); ok = False
 
         if run('step "よい段" "$PY" "$HARNESS/tools/good.py"\n') != 0:
             print("self-test NG: self-test のある道具で落ちた"); ok = False

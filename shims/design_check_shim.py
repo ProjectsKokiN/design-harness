@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# harness-shim: harness/engine/design_check.py
+# **本体はどれかを宣言します**（design-harness #136）。シム自身には self_test の
+# 字が無いので、これが無いと『self-test の無い道具』に見えます（2026-09-28 に雛形へ足した。
+# それまで印は案件の写しにしか無く、新しく立ち上げた案件では印が抜けていた）。
 """design_check.py のシム（案件側に置く薄い入口・テンプレート）。
 
 検査エンジンの正本は design-harness リポジトリ（submodule）にあり、
