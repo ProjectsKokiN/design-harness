@@ -85,14 +85,29 @@ ROW_RX = re.compile(r"^\|\s*(\d+)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|")
 TRIM_RX = re.compile(r"\*\*|`")
 
 
+#: 条件の表がある節の見出し。**この節の表だけを読む**（2026-09-28）
+SECTION_RX = re.compile(r"^##\s*合格条件")
+
+
 def parse(text):
-    """正本の表から、生きている条件だけを拾う。
+    """正本の「合格条件」の節の表から、生きている条件だけを拾う。
 
     表の行は `| # | 条件 | 何で測るか | 落ちたときの意味 |`。
     見出し行（`| # |`）と区切り行（`|---|`）は落とす。
+
+    **節の外の表は読まない**（2026-09-28）。2026-09-24 に正本へ足した
+    「宣言で覆えるもの・覆えないもの」の表が、終了コードの「2」で始まる行を持っていて、
+    それを**条件2 と読んでいた**（条件2 は 2026-09-03 に廃止済み）。道具名が取れないので
+    `--check` が 2 で止まり、CI がそこから先の段を一度も回していなかった。
     """
     out = {}
+    inside = False
     for line in text.splitlines():
+        if line.startswith("## "):
+            inside = bool(SECTION_RX.match(line))
+            continue
+        if not inside:
+            continue
         m = ROW_RX.match(line)
         if not m:
             continue
@@ -240,7 +255,14 @@ def self_test():
 | 7 | **実装網羅 100%** — 全部実装 | `impl_coverage_check.py` | 独断で省いた |
 
 **番号が飛んでいるのは廃止したためです。**
+
+## 宣言で覆えるもの・覆えないもの
+
+| 段が返したもの | 意味 | 宣言で覆えるか |
+|---|---|---|
+| 2 | 確かめられなかった | 覆える |
 """
+    # ↑ **別の節に、数字で始まる表の行を置く。**これを条件2 と読んでいた（2026-09-24〜09-28）
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         src = root / "gate.md"
