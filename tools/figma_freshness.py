@@ -49,6 +49,17 @@ aub-familywalk の実測（2026-09-02〜03）で、ユーザーが直した4件�
 
 画面は**1枚ごとにハッシュ**を持ちます。「どこかが変わった」では取り直す気になりませんが、
 「ALBUM_ScrapBoard が変わった」なら、その画面の実装を見直す動機になります。
+
+## 画面が動いたら、何が変わったかを名指しします（2026-09-28）
+
+画面の名前には**ノード ID を添えます**（同じ名前の画面が並ぶため）。`--update` のときに
+Figma の版を `$meta.restVersion` に記録し、画面が動いたらその版の画面を読み比べて、
+**変わったノードの ID と性質**（`wh=28x36 → wh=23x36` など）を出します。
+
+PlantTalk の実測: 書き出しは 1 行も違わないのにハッシュだけが変わり、人が版の履歴を
+読み比べて、部品の中の記号の幅だけと分かりました（書き出しは部品の中まで降りません）。
+記録した版で作り直したハッシュが記録と合わないときは、差分を出しません。
+版を記録していない書き出しは、次の `--update` から効きます。
 """
 
 import hashlib
@@ -151,6 +162,23 @@ def node_digest(n: dict, names: dict | None = None) -> str:
     変数名は `design/figma-raw/_varmap.json`（プラグインで取った対応表）から
     引きます。**対応表に無い id は id のままハッシュに入れます**（新しい変数が
     増えたときはハッシュが動くので、それで気づけます）。
+
+    **作り方を変えると、全案件の記録が一斉に食い違います。**self-test に
+    値を固定した例を置いてあります（2026-09-28）。
+    """
+    parts = node_parts(n, names)
+    for c in (n.get('children') or []):
+        parts.append(node_digest(c, names))
+    return hashlib.sha256('|'.join(map(str, parts)).encode()).hexdigest()[:12]
+
+
+def node_parts(n: dict, names: dict | None = None) -> list:
+    """1ノードぶんの、**子を除いた**ハッシュのもと（名前・型・余白と並び・色・スタイル・大きさ）。
+
+    `node_digest` はこれに子のハッシュを並べてハッシュにします。画面が動いたとき、
+    記録した版と今とでこれをノードごとに比べると、**どのノードの何が変わったか**を
+    名指しできます（`explain_frames`・2026-09-28）。比べるものとハッシュにするものを
+    **同じ関数から作る**ので、ハッシュは動いたのに差分が出ない、ということが起きません。
     """
     names = names or {}
     parts = [n.get('name', ''), n['type']]
@@ -169,9 +197,7 @@ def node_digest(n: dict, names: dict | None = None) -> str:
     box = n.get('absoluteBoundingBox') or {}
     if 'width' in box:
         parts.append(f'wh={round(box["width"])}x{round(box["height"])}')
-    for c in (n.get('children') or []):
-        parts.append(node_digest(c, names))
-    return hashlib.sha256('|'.join(map(str, parts)).encode()).hexdigest()[:12]
+    return parts
 
 
 def pages_of(doc) -> tuple[list, str]:
@@ -193,6 +219,23 @@ def pages_of(doc) -> tuple[list, str]:
     return pages, (f'除外リスト {SKIP_PAGES}（**弱い方式**。Figma に新しいページが'
                    f'増えたとき黙って対象に入る。page-scope.json を作って'
                    f'PAGE_SCOPE を差し込むと許可リストになる）')
+
+
+def names_of(data: dict) -> dict:
+    """**id → 名前の対応表。** スタイル名は REST の応答に入っている。
+
+    変数名はプラグインで取った対応表（_varmap.json）から引く。部品・画面・
+    記録した版の読み比べ（`explain_frames`）が**同じ作り方で**引くための入口。
+    """
+    names: dict[str, str] = {}
+    varmap = ROOT / 'design' / 'figma-raw' / '_varmap.json'
+    if varmap.exists():
+        names.update(json.loads(varmap.read_text(encoding='utf-8'))['map'])
+    for entry in (data.get('nodes') or {}).values():
+        for sid, meta in ((entry or {}).get('styles') or {}).items():
+            if isinstance(meta, dict) and meta.get('name'):
+                names[sid] = meta['name']
+    return names
 
 
 def read_sets() -> dict:
@@ -221,16 +264,7 @@ def read_sets() -> dict:
         for c in (n.get('children') or []):
             walk(c, names, in_set or n['type'] == 'COMPONENT_SET')
 
-    # **id → 名前の対応表。** スタイル名は REST の応答に入っている。
-    # 変数名はプラグインで取った対応表（_varmap.json）から引く。
-    names: dict[str, str] = {}
-    varmap = ROOT / 'design' / 'figma-raw' / '_varmap.json'
-    if varmap.exists():
-        names.update(json.loads(varmap.read_text(encoding='utf-8'))['map'])
-    for nid, entry in data['nodes'].items():
-        for sid, meta in (entry.get('styles') or {}).items():
-            if isinstance(meta, dict) and meta.get('name'):
-                names[sid] = meta['name']
+    names = names_of(data)
     for nid, entry in data['nodes'].items():
         walk(entry['document'], names)
     if dup:
@@ -308,6 +342,10 @@ def check_exports() -> dict | None:
 
 #: 画面の ID → 表示名（SECTION 名/画面名）。read_frames が埋める（#143）
 FRAME_NAMES: dict = {}
+#: 画面の ID → いま読んだノード木。画面が動いたとき、記録した版と読み比べる（2026-09-28）
+FRAME_NODES: dict = {}
+#: いま読んだ応答の Figma の版（version）と、ハッシュに使った id → 名前 の対応
+FRAME_SOURCE: dict = {}
 ID_RX = re.compile(r'^\d+:\d+$')
 
 
@@ -337,16 +375,12 @@ def read_frames() -> dict | None:
     pages, _ = pages_of(doc)
     ids = ','.join(p['id'] for p in pages)
     data = get(f'https://api.figma.com/v1/files/{FILE_KEY}/nodes?ids={ids}')
-    names: dict[str, str] = {}
-    varmap = ROOT / 'design' / 'figma-raw' / '_varmap.json'
-    if varmap.exists():
-        names.update(json.loads(varmap.read_text(encoding='utf-8'))['map'])
-    for nid, entry in data['nodes'].items():
-        for sid, meta in (entry.get('styles') or {}).items():
-            if isinstance(meta, dict) and meta.get('name'):
-                names[sid] = meta['name']
+    names = names_of(data)
     found: dict[str, str] = {}
     FRAME_NAMES.clear()
+    FRAME_NODES.clear()
+    FRAME_SOURCE.clear()
+    FRAME_SOURCE.update(version=data.get('version'), names=names)
 
     def walk(children, section=None):
         # **画面は FRAME。SECTION の中へは降りる**（design-harness #143・2026-09-25）。
@@ -362,6 +396,7 @@ def read_frames() -> dict | None:
             if c['type'] == 'FRAME':
                 found[c['id']] = node_digest(c, names)
                 FRAME_NAMES[c['id']] = f"{section}/{c['name']}" if section else c['name']
+                FRAME_NODES[c['id']] = c
             elif c['type'] == 'SECTION':
                 walk(c.get('children'), c['name'])
 
@@ -409,18 +444,137 @@ def compare_frames(now: dict) -> tuple[list, dict]:
         # 見えて、どれが本当に動いたか読めない。取り直しを求める
         return ['画面のハッシュが古い形（名前で記録）です。**画面の ID で記録し直してください**'
                 '（--update）。名前は SECTION をまたいで重なるので、名前では比べません'], doc
-    label = lambda k: FRAME_NAMES.get(k) or export_frame_ids(doc).get(k) or k
+    def label(k):
+        # **ID も出す**（PlantTalk の依頼・2026-09-28）。同じ SECTION に同じ名前の画面が
+        # 並ぶと（FlowerDetail/FlowerDetail が 6 枚）、名前だけではどれが動いたか読めない
+        name = FRAME_NAMES.get(k) or export_frame_ids(doc).get(k)
+        return f'{name}（{k}）' if name and name != k else k
     msgs = []
     for k in sorted(set(now) - set(saved)):
         msgs.append(f'Figma にしか無い画面: {label(k)}')
     for k in sorted(set(saved) - set(now)):
         msgs.append(f'書き出しにしか無い画面: {label(k)}'
                     f'（消えた可能性。**推測で直さず確認する**）')
-    for k in sorted(set(saved) & set(now)):
-        if saved[k] != now[k]:
-            msgs.append(f'**画面が変わっています: {label(k)}**'
-                        f' → この画面の書き出しを取り直して、実装を見直す')
+    moved = [k for k in sorted(set(saved) & set(now)) if saved[k] != now[k]]
+    details = explain_frames(moved, doc) if moved else {}
+    for k in moved:
+        msgs.append(f'**画面が変わっています: {label(k)}**'
+                    f' → この画面の書き出しを取り直して、実装を見直す'
+                    + ''.join(f'\n      {line}' for line in details.get(k, [])))
     return msgs, doc
+
+
+def read_version(ids: list, ver: str) -> dict | None:
+    """記録した版の画面を読む。読めなければ None（理由は呼び手が書く）。
+
+    `get` は読めないと「鮮度を確かめられませんでした」と言って 2 で止まりますが、
+    ここは**確かめ終わった後の説明**です。説明が読めないだけで、
+    確かめ終わった「画面が変わっています」（1）を 2 に薄めません。
+    """
+    url = (f'https://api.figma.com/v1/files/{FILE_KEY}/nodes'
+           f'?ids={",".join(ids)}&version={ver}')
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            return get(url)
+    except SystemExit:
+        return None
+
+
+def explain_frames(keys: list, doc: dict) -> dict:
+    """動いた画面ごとに、**どのノードの何が変わったか**を行の並びで返す（2026-09-28）。
+
+    PlantTalk の実測（2026-09-28）: FlowerDetail の 2 画面でハッシュだけが変わり、
+    プラグインの書き出しは 1 行も違わなかった。Figma の版の履歴を人の手で読み比べて
+    やっと、**部品の中の記号の幅（28 → 23）だけ**が変わったと分かった。
+    書き出しは部品の中まで降りないので、部品の中で自動で決まる幅は書き出しに出ない。
+    「画面が変わっています」だけでは、何を見直せばよいか決められない。
+
+    `--update` のときに Figma の版（`$meta.restVersion`）を記録しておき、
+    食い違ったらその版の画面を読む。**同じ作り方でハッシュを作り直し、記録と
+    一致したときだけ**ノードごとに比べる。一致しなければ、その版は記録した時点の
+    画面ではないので差分を出さない（推測で名指ししない）。
+    """
+    meta = doc.get('$meta') or {}
+    saved = meta.get('restDigests') or {}
+    ver = meta.get('restVersion')
+    if not ver:
+        why = ('何が変わったかは出せません: 記録に Figma の版（restVersion）がありません。'
+               '--update で記録し直すと、次から変わったノードを名指しします')
+        return {k: [why] for k in keys}
+    old = read_version(keys, ver)
+    if old is None:
+        why = (f'何が変わったかは出せません: 記録した版（{ver}）を Figma から読めませんでした'
+               '（版の履歴の保存期間を過ぎたか、回線の問題）')
+        return {k: [why] for k in keys}
+    old_names = names_of(old)
+    out = {}
+    for k in keys:
+        root = ((old.get('nodes') or {}).get(k) or {}).get('document')
+        if not root:
+            out[k] = [f'何が変わったかは出せません: 記録した版（{ver}）にこの画面がありません']
+        elif k not in FRAME_NODES:
+            out[k] = ['何が変わったかは出せません: いまの画面のノード木を読めていません']
+        elif node_digest(root, old_names) != saved.get(k):
+            out[k] = [f'何が変わったかは出せません: 記録した版（{ver}）で作り直したハッシュが'
+                      '記録と合いません（その版は記録した時点の画面ではありません）']
+        else:
+            out[k] = (diff_nodes(root, FRAME_NODES[k], old_names, FRAME_SOURCE.get('names'))
+                      or ['何が変わったかを名指しできませんでした（道具の不具合です。報告してください）'])
+    return out
+
+
+def diff_nodes(old: dict, new: dict, old_names: dict, new_names: dict,
+               limit: int = 8) -> list[str]:
+    """2 つのノード木をノード ID で突き合わせ、変わったノードと性質を行にする。
+
+    比べるのは `node_parts`（ハッシュにするものと同じ）と、子の並び。
+    """
+    def flat(root, names):
+        out = {}
+
+        def walk(n, path):
+            out[n['id']] = (path or n.get('name', ''), node_parts(n, names),
+                            [c['id'] for c in (n.get('children') or [])])
+            for c in (n.get('children') or []):
+                walk(c, f"{path}/{c.get('name', '')}" if path else c.get('name', ''))
+        walk(root, '')
+        return out
+
+    def shown(parts):
+        return [f'name={parts[0]}', f'type={parts[1]}'] + [str(p) for p in parts[2:]]
+
+    def minus(xs, ys):
+        rest, out = list(ys), []
+        for x in xs:
+            if x in rest:
+                rest.remove(x)
+            else:
+                out.append(x)
+        return out
+
+    def where(path, k):
+        path = path if len(path) <= 70 else '…' + path[-69:]
+        return f'{path}（{k}）'
+
+    a, b = flat(old, old_names), flat(new, new_names)
+    lines = [f'足されたノード: {where(b[k][0], k)}' for k in b if k not in a]
+    lines += [f'消えたノード: {where(a[k][0], k)}' for k in a if k not in b]
+    for k in b:
+        if k not in a:
+            continue
+        before, after = shown(a[k][1]), shown(b[k][1])
+        if before != after:
+            gone, came = minus(before, after), minus(after, before)
+            if gone or came:
+                lines.append(f'{where(b[k][0], k)}: {"、".join(gone) or "（なし）"}'
+                             f' → {"、".join(came) or "（なし）"}')
+            else:
+                lines.append(f'{where(b[k][0], k)}: 性質の並び順が変わりました（塗りの重なり順など）')
+        elif [c for c in a[k][2] if c in b] != [c for c in b[k][2] if c in a]:
+            lines.append(f'{where(b[k][0], k)}: 子の並び順が変わりました')
+    if len(lines) > limit:
+        lines = lines[:limit] + [f'ほか {len(lines) - limit} 件']
+    return lines
 
 
 def read_styles() -> dict | None:
@@ -643,6 +797,21 @@ def self_test() -> int:
     cases.append(('node_digest: 余白を変えたら変わる', node_digest(n1) != node_digest(n2)))
     cases.append(('node_digest: **子の名前を変えても変わる**',
                   node_digest(n1) != node_digest(n3)))
+    # **作り方が変わると、全案件の記録が一斉に食い違う。**値を固定して見張る（2026-09-28）。
+    # 下の 2 つの値は、node_parts に分ける前の作り方で計算したもの
+    _bx = {'x': 5, 'y': 7, 'width': 120.4, 'height': 80.6}
+    pin = {'id': '1:1', 'type': 'FRAME', 'name': 'Card', 'itemSpacing': 8,
+           'layoutMode': 'VERTICAL', 'absoluteBoundingBox': _bx,
+           'fills': [{'type': 'SOLID', 'color': {'r': 1, 'g': 1, 'b': 1, 'a': 1}},
+                     {'type': 'SOLID', 'boundVariables': {'color': {'id': 'VariableID:1:2'}}}],
+           'strokes': [{'type': 'SOLID', 'color': {'r': 0, 'g': 0, 'b': 0, 'a': 1}}],
+           'styles': {'effect': 'S:3'},
+           'children': [{'id': '1:2', 'type': 'TEXT', 'name': 'Title',
+                         'style': {'textAlignHorizontal': 'LEFT'},
+                         'absoluteBoundingBox': {**_bx, 'width': 100, 'height': 20}}]}
+    cases.append(('node_digest: 作り方が変わっていない（固定した値と一致）',
+                  node_digest(pin, {'VariableID:1:2': 'color/bg', 'S:3': 'Shadow/Card'})
+                  == '22b80c8047ad' and node_digest(pin) == 'a841c03d967e'))
 
     # body_hash: componentSets が変われば変わる
     d1 = {'componentSets': {'A': {'x': 1}}}
@@ -896,7 +1065,8 @@ def self_test() -> int:
         fp = d / 'frames.json'
         g5 = globals()
 
-        def run_frames(frames_doc, screens=None, sets=None, no_config=False):
+        def run_frames(frames_doc, screens=None, sets=None, no_config=False,
+                       getter=None, argv=('x',)):
             """main() を回して**出力ごと**返す。
 
             run_main は内側で標準出力を飲むので、画面の報告が読めない。
@@ -915,8 +1085,8 @@ def self_test() -> int:
             g5['FRAMES_EXPORT'] = None if no_config else str(fp)
             g5['SKIP_PAGES'], g5['PAGE_SCOPE'] = [], None
             g5['EXPORT'] = d / 'export.json'
-            g5['get'] = lambda u: fake_all(u, s, screens or SCREENS)
-            sys.argv = ['x']
+            g5['get'] = getter or (lambda u: fake_all(u, s, screens or SCREENS))
+            sys.argv = list(argv)
             try:
                 buf = io.StringIO()
                 with contextlib.redirect_stdout(buf):
@@ -1018,6 +1188,119 @@ def self_test() -> int:
                               'frames': exp})
         cases.append(('画面: 見ていない画面とずれが両方あれば 1',
                       rc == 1 and '画面が変わっています: CAMERA' in out))
+
+        # ── 何が変わったかを名指しする（PlantTalk の依頼・2026-09-28）──────────
+        # FlowerDetail の 2 画面でハッシュだけが変わり、書き出しは 1 行も違わなかった。
+        # 版の履歴を人の手で読み比べて、部品の中の記号の幅（28 → 23）だけと分かった。
+        # **ここが本題**: 画面の ID・変わったノードの ID・変わった性質を出す
+        def detail(sym_w=28, gap=4, extra=None):
+            sym = {'id': 'I30:2;5:2', 'type': 'TEXT', 'name': 'Symbol',
+                   'absoluteBoundingBox': {'x': 0, 'y': 0, 'width': sym_w, 'height': 22}}
+            return {'Sec': {'id': '30:0', 'type': 'SECTION', 'name': 'Detail', 'children': [
+                {'id': '30:1', 'type': 'FRAME', 'name': 'Same', 'children': [
+                    {'id': 'I30:2;5:1', 'type': 'INSTANCE', 'name': 'Button',
+                     'children': [sym]}]},
+                {'id': '30:4', 'type': 'FRAME', 'name': 'Same', 'itemSpacing': gap,
+                 'children': [] if extra is None else [extra]}]}}
+
+        def record(tree):
+            keep = (g5['get'], g5['FRAMES_EXPORT'], g5['SKIP_PAGES'], g5['PAGE_SCOPE'])
+            g5['get'] = lambda u: fake_all(u, SETS, tree)
+            g5['FRAMES_EXPORT'], g5['SKIP_PAGES'], g5['PAGE_SCOPE'] = str(fp), [], None
+            try:
+                return read_frames()
+            finally:
+                (g5['get'], g5['FRAMES_EXPORT'], g5['SKIP_PAGES'], g5['PAGE_SCOPE']) = keep
+
+        def versioned(current, old_tree=None, fail=False, ver='v2'):
+            """いまの木は current。`version=` を付けた問い合わせには old_tree を返す"""
+            frames = {}
+
+            def pick(n):
+                if n.get('type') == 'FRAME':
+                    frames[n['id']] = n
+                for c in (n.get('children') or []):
+                    pick(c)
+            for n in (old_tree or detail()).values():
+                pick(n)
+
+            def g(u):
+                if 'version=' in u:
+                    if fail:
+                        # 本物の get は読めないと標準エラーに「鮮度を確かめられません
+                        # でした」と書いてから止まる。**それを表に出さないこと**も見る
+                        print('Figma に繋がりません', file=sys.stderr)
+                        raise SystemExit(2)
+                    ids = u.split('ids=')[1].split('&')[0].split(',')
+                    return {'nodes': {i: ({'document': frames[i], 'styles': {}}
+                                          if i in frames else None) for i in ids}}
+                r = fake_all(u, SETS, current)
+                if 'nodes' in r and ver:
+                    r['version'] = ver
+                return r
+            return g
+
+        vnow = record(detail())
+        rec = {'$meta': {'restDigests': dict(vnow), 'restVersion': 'v1'}}
+        rc, out = run_frames(rec, getter=versioned(detail(sym_w=23, gap=6)))
+        cases.append(('名指し: 同じ名前の画面を ID で分けて出す',
+                      rc == 1 and '画面が変わっています: Detail/Same（30:1）' in out
+                      and '画面が変わっています: Detail/Same（30:4）' in out))
+        cases.append(('名指し: 部品の中で変わったノードの ID と性質を出す',
+                      'Button/Symbol（I30:2;5:2）: wh=28x22 → wh=23x22' in out))
+        cases.append(('名指し: 画面そのものの性質の変化も出す',
+                      'Same（30:4）: itemSpacing=4 → itemSpacing=6' in out))
+        cases.append(('名指し: 変わっていないノードは出さない（子が動いただけの親も）',
+                      'Button（I30:2;5:1）' not in out))
+
+        rc, out = run_frames(rec, getter=versioned(
+            detail(extra={'id': '30:9', 'type': 'TEXT', 'name': 'New'})))
+        cases.append(('名指し: 足されたノードを出す',
+                      rc == 1 and '足されたノード: New（30:9）' in out))
+        with_new = detail(extra={'id': '30:9', 'type': 'TEXT', 'name': 'New'})
+        rc, out = run_frames({'$meta': {'restDigests': dict(record(with_new)),
+                                        'restVersion': 'v1'}},
+                             getter=versioned(detail(), old_tree=with_new))
+        cases.append(('名指し: 消えたノードを出す',
+                      rc == 1 and '消えたノード: New（30:9）' in out))
+
+        # 記録した版で作り直したハッシュが記録と合わない → 差分を出さない（推測で名指ししない）
+        rc, out = run_frames({'$meta': {'restDigests': {**vnow, '30:1': 'x' * 12},
+                                        'restVersion': 'v1'}},
+                             getter=versioned(detail(sym_w=23)))
+        cases.append(('名指し: 記録と合わない版では差分を出さない',
+                      rc == 1 and '作り直したハッシュが記録と合いません' in out
+                      and 'wh=28x22 → wh=23x22' not in out))
+
+        # 記録した版が読めない → 1 のまま（2 に薄めない）。get の「確かめられません
+        # でした」も出さない（確かめ終わっているので、嘘になる）
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                rc, out = run_frames(rec, getter=versioned(detail(sym_w=23), fail=True))
+        except SystemExit as e:          # 2 に薄めると、ここへ抜けてくる
+            rc, out = e.code, ''
+        cases.append((f'名指し: 記録した版が読めなくても 1 のまま（rc={rc}）',
+                      rc == 1 and '記録した版（v1）を Figma から読めませんでした' in out
+                      and 'Figma に繋がりません' not in err.getvalue()))
+
+        rc, out = run_frames({'$meta': {'restDigests': dict(vnow)}},
+                             getter=versioned(detail(sym_w=23)))
+        cases.append(('名指し: 版の記録が無ければ、無いと言う',
+                      rc == 1 and '記録に Figma の版（restVersion）がありません' in out))
+
+        # --update がハッシュと同じ応答の版を記録する。応答に版が無ければ消す
+        rc, out = run_frames(rec, getter=versioned(detail(sym_w=23)),
+                             argv=('x', '--update'))
+        kept = json.loads(fp.read_text(encoding='utf-8'))['$meta']
+        cases.append((f'名指し: --update が版を記録する（rc={rc}）',
+                      rc == 0 and kept.get('restVersion') == 'v2'
+                      and kept['restDigests'] == record(detail(sym_w=23))))
+        rc, out = run_frames(rec, getter=versioned(detail(), ver=None),
+                             argv=('x', '--update'))
+        kept = json.loads(fp.read_text(encoding='utf-8'))['$meta']
+        cases.append(('名指し: 応答に版が無ければ、古い版を新しいハッシュと組にしない',
+                      rc == 0 and 'restVersion' not in kept))
 
         # ── #146（2026-09-25）: exports の出どころが消えていたら言う ──────────
         sd = d / 'scope'; sd.mkdir(exist_ok=True)
@@ -1543,6 +1826,18 @@ def main() -> int:
                 'REST API で読んだ**画面ごと**のハッシュ（tools/figma_freshness.py が'
                 '計算・更新する）。画面が動いたことに気づくためだけの値で、'
                 '内容の正は Plugin API の書き出し本体')
+            # **ハッシュと同じ応答の版を記録する**（2026-09-28）。画面が動いたとき、
+            # この版と読み比べて、どのノードの何が変わったかを名指しする。
+            # 応答に版が無ければ消す（古い版を新しいハッシュと組にしない）
+            if FRAME_SOURCE.get('version'):
+                fdoc['$meta']['restVersion'] = FRAME_SOURCE['version']
+                fdoc['$meta']['restVersion とは'] = (
+                    'restDigests を計算したときの Figma の版（tools/figma_freshness.py が'
+                    '記録する）。画面が動いたとき、この版の画面と読み比べて、'
+                    'どのノードの何が変わったかを名指しする')
+            else:
+                fdoc['$meta'].pop('restVersion', None)
+                fdoc['$meta'].pop('restVersion とは', None)
             Path(FRAMES_EXPORT).write_text(
                 json.dumps(fdoc, ensure_ascii=False, indent=1) + '\n',
                 encoding='utf-8')
