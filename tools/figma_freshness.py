@@ -717,30 +717,98 @@ def self_test() -> int:
     # ── **変わったセットが、いまの作業と関係あるか**（#138・2026-09-24）─────
     # 実害: 作業と無関係な 4 セットで push が止まり、取り直しに約 25 分かかった。
     # **どれが無関係かが分かれば、いま直すか後回しにするかを選べる。**
+    #
+    # **2026-09-28 に作り直した。**9/24 の試験は、どの案件にも無い形の対応表を
+    # 自分で作って試していたため通っていたが、FlashEnglish では 32 件すべてが「不明」
+    # だった。**対応表は 3 案件の実物の形で作る。**触り方も 3 通り（作業ツリーで変更・
+    # 新規・未 push のコミット）で試す（9/24 は新規ファイルでしか試していなかった）
     with tempfile.TemporaryDirectory() as _td:
-        _r = Path(_td)
-        (_r / 'design').mkdir()
-        subprocess.run(['git', '-C', str(_r), 'init', '-q'], capture_output=True)
+        _r = Path(_td) / 'app'
+        _remote = Path(_td) / 'remote.git'
+        (_r / 'design').mkdir(parents=True)
         (_r / 'lib').mkdir()
-        (_r / 'lib' / 'chip.dart').write_text('x\n', encoding='utf-8')   # 触っている
-        (_r / 'lib' / 'tabs.dart').write_text('y\n', encoding='utf-8')
-        subprocess.run(['git', '-C', str(_r), 'add', 'lib/tabs.dart'], capture_output=True)
-        subprocess.run(['git', '-C', str(_r), '-c', 'user.email=t@t', '-c', 'user.name=t',
-                        'commit', '-q', '-m', 'x'], capture_output=True)
+
+        def _git(*a, cwd=_r):
+            return subprocess.run(['git', '-C', str(cwd), '-c', 'user.email=t@t',
+                                   '-c', 'user.name=t', '-c', 'commit.gpgsign=false', *a],
+                                  capture_output=True, text=True, encoding='utf-8', errors='replace')
+        subprocess.run(['git', 'init', '-q', '--bare', str(_remote)], capture_output=True)
+        _git('init', '-q')
+        for f in ('chip', 'tabs', 'card', 'tab'):
+            (_r / 'lib' / f'{f}.dart').write_text(f'{f}\n', encoding='utf-8')
         _map = _r / 'design' / 'component-map.json'
-        _map.write_text(json.dumps({'componentSets': {
-            'Chips/Plain': {'impl': 'lib/chip.dart#Chip'},
-            'Tabs': {'impl': 'lib/tabs.dart#Tabs'},
-            'Toast': {},
-        }}, ensure_ascii=False), encoding='utf-8')
+        _map.write_text(json.dumps({'$meta': {}, 'components': [
+            {'figma': 'Chips/Plain', 'impl': 'lib/chip.dart#Chip'},              # PlantTalk・aub の形
+            {'figma': 'Tabs', 'impl': [{'package': None, 'path': 'lib/tabs.dart',
+                                        'class': 'Tabs'}]},                     # FlashEnglish の形
+            {'figma': 'Card', 'impl': 'lib/card.dart#Card'},
+            {'figma': 'New', 'impl': [{'path': 'lib/new.dart', 'class': 'New'}]},
+            {'figma': 'Toast', 'impl': ['ToastView']},                          # ひな形の形（パス無し）
+            {'figma': 'Tab', 'impl': 'lib/tab.dart#Tab'},
+        ]}, ensure_ascii=False), encoding='utf-8')
+        _git('add', '-A'); _git('commit', '-q', '-m', 'x')
+        _git('remote', 'add', 'origin', str(_remote)); _git('push', '-q', '-u', 'origin', 'HEAD')
+        # **1 つのファイルに触り方を 1 つだけ**。重ねると、別の経路で「作業中」になり、
+        # 片方の読み違いが隠れる（2026-09-28 に一度、そうなっていた）
+        (_r / 'lib' / 'card.dart').write_text('card2\n', encoding='utf-8')
+        _git('commit', '-q', '-m', 'y', '--', 'lib/card.dart')                  # 未 push のコミットだけ
+        (_r / 'lib' / 'chip.dart').write_text('chip2\n', encoding='utf-8')     # 作業ツリーで変更だけ（` M`）
+        (_r / 'lib' / 'new.dart').write_text('new\n', encoding='utf-8')        # 新規だけ（`??`）
+        (_r / 'ab.dart').write_text('ab\n', encoding='utf-8')     # 根の別ファイル。lib/tab.dart と末尾が同じ
         _cfg = {'componentMap': 'design/component-map.json'}
-        _rel = relatedness(['Chips/Plain', 'Tabs', 'Toast'], _cfg, _r)
-        cases.append(('触っているファイルのセットは「作業中」', _rel.get('Chips/Plain') == '作業中'))
-        cases.append(('**触っていないセットは「無関係」**', _rel.get('Tabs') == '無関係'))
-        cases.append(('**対応表に実装が無ければ「不明」**（無関係と決めつけない）',
+        _names = ['Chips/Plain', 'Tabs', 'Card', 'New', 'Toast', 'Gone', 'Tab']
+        _rel, _note = relatedness(_names, _cfg, _r)
+        cases.append((f'**作業ツリーで変更したファイルのセットは「作業中」**: {_rel.get("Chips/Plain")}',
+                      _rel.get('Chips/Plain') == '作業中'))
+        cases.append((f'未 push のコミットで直したファイルのセットは「作業中」: {_rel.get("Card")}',
+                      _rel.get('Card') == '作業中'))
+        cases.append((f'新規ファイルのセットは「作業中」（FlashEnglish の形）: {_rel.get("New")}',
+                      _rel.get('New') == '作業中'))
+        cases.append((f'**触っていないセットは「無関係」**（FlashEnglish の形）: {_rel.get("Tabs")}',
+                      _rel.get('Tabs') == '無関係' and _note is None))
+        cases.append(('**実装のパスが無ければ「不明」**（クラス名だけ・無関係と決めつけない）',
                       _rel.get('Toast') == '不明'))
-        cases.append(('対応表が無ければ何も言わない',
-                      relatedness(['Chips/Plain'], {}, _r) == {}))
+        cases.append(('対応表に無いセットは「不明」', _rel.get('Gone') == '不明'))
+        cases.append((f'パスの区切りまで見る（末尾が同じ別ファイルを同じとみなさない）: {_rel.get("Tab")}',
+                      _rel.get('Tab') == '無関係'))
+
+        # 上流を設定していない作業用のブランチ（FlashEnglish の日常）でも、未 push の
+        # コミットを見る。9/24 の版はここで黙って見落とし、全部を「無関係」にしていた
+        _git('branch', '--unset-upstream')
+        _rel, _note = relatedness(_names, _cfg, _r)
+        cases.append((f'**上流を設定していなくても、未 push のコミットを見る**: {_rel.get("Card")}',
+                      _rel.get('Card') == '作業中' and _rel.get('Tabs') == '無関係'
+                      and _note is None))
+        # リモートが 1 つも無い → 全部のコミットが未 push → コミットしたファイルは「作業中」
+        _git('remote', 'remove', 'origin')
+        _rel, _note = relatedness(['Tabs'], _cfg, _r)
+        cases.append((f'リモートが無ければ、コミットしたものは全部「作業中」: {_rel.get("Tabs")}',
+                      _rel.get('Tabs') == '作業中'))
+
+        # git が使えない場所 → 何も見えない → 全部「不明」
+        _plain = Path(_td) / 'plain'
+        (_plain / 'design').mkdir(parents=True)
+        _map2 = _plain / 'design' / 'component-map.json'
+        _map2.write_text(_map.read_text(encoding='utf-8'), encoding='utf-8')
+        _rel, _note = relatedness(['Tabs'], _cfg, _plain)
+        cases.append(('git が使えなければ「無関係」と言わない',
+                      _rel == {'Tabs': '不明'} and _note is not None))
+
+        # 対応表を読めない・形が違う → 黙らず、読めないと言う
+        _rel, _note = relatedness(['Tabs'], {'componentMap': 'design/ない.json'}, _r)
+        cases.append(('対応表が無ければ「読めません」と言う',
+                      _rel == {'Tabs': '不明'} and '読めません' in (_note or '')))
+        _map2.write_text('{壊れた', encoding='utf-8')
+        _rel, _note = relatedness(['Tabs'], _cfg, _plain)
+        cases.append(('対応表が壊れていれば言う', '壊れています' in (_note or '')))
+        # 9/24 の版が前提にしていた形（どの案件にも無い）。**推測で読まない**
+        _map2.write_text(json.dumps({'componentSets': {'Tabs': {'impl': 'lib/tabs.dart#Tabs'}}}),
+                         encoding='utf-8')
+        _rel, _note = relatedness(['Tabs'], _cfg, _plain)
+        cases.append(('components の一覧が無い形は、読めないと言う',
+                      _rel == {'Tabs': '不明'} and 'components の一覧がありません' in (_note or '')))
+        cases.append(('対応表を設定していなければ何も言わない',
+                      relatedness(['Tabs'], {}, _r) == ({}, None)))
 
 
     # 本題の退行: 名前がずれていても値のずれを隠さない
@@ -962,6 +1030,10 @@ def self_test() -> int:
         # 値が変わったら 1
         moved = json.loads(json.dumps(SETS)); moved['Buttons']['itemSpacing'] = 99
         cases.append(('main: 値が変わったら 1', run_main(base, moved) == 1))
+        # **--notice は止めない**（#138）。9/24 の版は見出しの文言だけ変えて 1 を返していた
+        # （FlashEnglish が 2026-09-28 に rc=1 を実測。試験が無かった）
+        _rc = run_main(base, moved, argv=('x', '--notice'))
+        cases.append((f'main: --notice なら、値が変わっても 0（rc={_rc}）', _rc == 0))
 
         # --update で「Figma は動いたのに本体は前回から変わっていない」→ 取り直し
         # 忘れとして 2。--force なら承知の上として通す
@@ -1182,6 +1254,10 @@ def self_test() -> int:
         cases.append((f'画面: 見ていない画面があれば 2 で返す（rc={rc}）',
                       rc == 2 and '2 枚を、この検査は見ていません' in out
                       and 'Detail/Top' in out and '枚が一致' not in out))
+        # --notice でも、確かめられなかった（2）は 2 のまま。**見ていないのに 0 と言わない**
+        rc, out = run_frames({'$meta': {'restDigests': dict(fnow)}, 'frames': exp},
+                             argv=('x', '--notice'))
+        cases.append((f'--notice: 確かめられなかったら 2 のまま（rc={rc}）', rc == 2))
 
         # 見ていない画面があっても、見えた画面のずれは 1（2 に薄めない）
         rc, out = run_frames({'$meta': {'restDigests': {**fnow, '10:2': 'x'}},
@@ -1630,27 +1706,64 @@ def vocab_check() -> int:
 
 
 def _changed_files(root):
-    """いま手を入れているファイル（作業ツリー＋未 push）を集める。"""
-    out = set()
-    for args in (('status', '--porcelain'), ('diff', '--name-only', '@{u}...HEAD')):
-        r = subprocess.run(['git', '-C', str(root), *args],
+    """いま手を入れているファイル（作業ツリー＋未 push）を集める。
+
+    返り値は（ファイルの集まり, 全部見られたか）。**全部は見られなかったとき、
+    「無関係」とは言えません**（見ていないファイルに手が入っているかもしれない）。
+
+    2026-09-28 に 2 つ直しました（FlashEnglish の実測で、#138 の直しが効いていないと判明）:
+    - `git status --porcelain` の行を**先に strip してから 3 文字切っていた**ため、
+      「作業ツリーで変更しただけ」の行（先頭が空白の ` M lib/x.dart`）はパスの頭が欠けて、
+      **いま触っているファイルが「無関係」になっていた**。self-test は新規ファイル
+      （`?? `）でしか試しておらず、気づけませんでした
+    - 上流（`@{u}`）が無いと未 push のコミットを黙って見落とし、そこで直したファイルも
+      「無関係」になっていた。FlashEnglish は上流を設定しない作業用のブランチで作業する
+      ので、いつもこれに当たる。**上流の設定に頼らず、どのリモートにも無いコミット**
+      （`HEAD --not --remotes`）で直したファイルを数える
+    """
+    out, complete = set(), True
+    for args in (('status', '--porcelain'),
+                 ('log', '--name-only', '--format=', 'HEAD', '--not', '--remotes')):
+        r = subprocess.run(['git', '-c', 'core.quotepath=false', '-C', str(root), *args],
                            capture_output=True, text=True, encoding='utf-8', errors='replace')
         if r.returncode != 0:
+            complete = False
             continue
-        for line in r.stdout.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            if args[0] == 'status':
-                line = line[3:].strip().strip('"')
-                if ' -> ' in line:
-                    line = line.split(' -> ', 1)[1]
-            out.add(line)
+        for raw in r.stdout.splitlines():
+            line = raw[3:] if args[0] == 'status' else raw
+            line = line.strip().strip('"')
+            if ' -> ' in line:
+                line = line.split(' -> ', 1)[1].strip('"')
+            if line:
+                out.add(line)
+    return out, complete
+
+
+def impl_paths(value) -> list:
+    """対応表の `impl` から、実装ファイルのパスだけを取り出す。**書き方は案件で違う。**
+
+    3 案件の component-map.json を読んで確かめた形（2026-09-28）:
+      PlantTalk・aub: `"Sources/…/ChipsGroups.swift#ChipsGroups"`（パス＋クラス）
+      FlashEnglish: `[{"path": "lib/…/app_scaffold_parts.dart", "class": "ButtonsMIcon"}]`
+      ひな形: `["AppButtonL"]`（クラス名だけ。**パスが無いので、どのファイルか分からない**）
+    """
+    out = []
+    for x in (value if isinstance(value, list) else [value]):
+        if isinstance(x, dict):
+            p = x.get('path') or x.get('file')
+        elif isinstance(x, str) and '#' in x:
+            p = x.split('#', 1)[0]
+        elif isinstance(x, str) and '/' in x:
+            p = x                 # パスだけ（クラス名は `/` を含まない）
+        else:
+            p = None
+        if isinstance(p, str) and p.strip():
+            out.append(p.strip())
     return out
 
 
 def relatedness(names, cfg, root):
-    """変わったセットが、**いまの作業と関係があるか**を返す。
+    """変わったセットが、**いまの作業と関係があるか**を返す。返り値は（分け方, 注記）。
 
     実害（FlashEnglish・2026-09-24・#138）: 作業を終えて push したら、
     **今回の作業と無関係な 4 セット**で止まりました。すでに 2 コミット積んだ後で、
@@ -1661,34 +1774,52 @@ def relatedness(names, cfg, root):
     そのファイルにいま手を入れているかで分けます。
 
     **分からないものは「不明」と言います。**「無関係」と決めつけません。
+
+    **2026-09-28 に作り直しました。**9/24 の版は、どの案件にも無い形の対応表
+    （`componentSets: {名前: {impl}}`）を前提にしていたため、FlashEnglish では
+    **32 件すべてが「不明」**でした（実物は `components: [{figma, impl}]` の一覧）。
+    self-test も自分で作った同じ形で試していたので、通っていました。
     """
     mp = cfg.get('componentMap')
     if not mp:
-        return {}
-    path = (Path(root) / mp)
-    if not path.exists():
-        return {}
+        return {}, None
+    path = Path(root) / mp
+    unknown = {n: '不明' for n in names}
     try:
         table = json.loads(path.read_text(encoding='utf-8'))
-    except Exception:
-        return {}
-    sets = table.get('componentSets') or table.get('sets') or table
-    touched = _changed_files(root)
+    except OSError:
+        return unknown, f'対応表（{mp}）を読めません。関係は分かりません'
+    except ValueError:
+        return unknown, f'対応表（{mp}）が JSON として壊れています。関係は分かりません'
+    rows = table.get('components') if isinstance(table, dict) else None
+    if not isinstance(rows, list):
+        return unknown, (f'対応表（{mp}）に components の一覧がありません。'
+                         '形が読めないので、関係は分かりません')
+    by_name: dict = {}
+    for row in rows:
+        if isinstance(row, dict) and isinstance(row.get('figma'), str):
+            by_name.setdefault(row['figma'], []).extend(impl_paths(row.get('impl')))
+    touched, complete = _changed_files(root)
     out = {}
     for n in names:
-        row = sets.get(n) if isinstance(sets, dict) else None
-        impl = (row or {}).get('impl') if isinstance(row, dict) else None
-        if not impl:
+        paths = by_name.get(n) or []
+        if not paths:
             out[n] = '不明'
-            continue
-        f = str(impl).split('#')[0]
-        out[n] = '作業中' if any(t == f or t.endswith('/' + f) or f.endswith(t)
-                                for t in touched) else '無関係'
-    return out
+        elif any(t == f or t.endswith('/' + f) or f.endswith('/' + t)
+                 for f in paths for t in touched):
+            # **パスの区切りまで見る**（2026-09-28）。末尾の文字だけで比べていたため、
+            # 頭の欠けたパス（`ib/chip.dart`）でも一致してしまい、読み違いが隠れていた。
+            # `t.endswith('/' + f)` は、案件が git の根より下にあるとき（QnD の site/）のため
+            out[n] = '作業中'
+        else:
+            out[n] = '無関係' if complete else '不明'
+    note = None if complete else ('いま手を入れているファイルを git で見られませんでした。'
+                                  '触っていないように見えるものも「不明」にしています')
+    return out, note
 
 
 def print_relatedness(names, cfg, root):
-    rel = relatedness(names, cfg, root)
+    rel, note = relatedness(names, cfg, root)
     if not rel:
         return
     away = [n for n, v in rel.items() if v == '無関係']
@@ -1696,12 +1827,26 @@ def print_relatedness(names, cfg, root):
     print('  いまの作業との関係:')
     for n in names:
         print(f'    {rel.get(n, "不明")}  {n}')
+    if note:
+        print(f'  {note}')
     if away:
         print(f'  **{len(away)} セットは、いま触っているファイルと関係がありません。**')
         print('  いま取り直すか、宣言して後回しにするかを選べます。')
 
 
 def main() -> int:
+    rc = _check()
+    # **`--notice` は報せだけ**（#138）。確かめて見つかったずれ（1）を 0 にします。
+    # 9/24 の版は見出しに「止めません」と書いただけで、**終了コードは 1 のまま**でした
+    # （FlashEnglish が 2026-09-28 に rc=1 を実測して判明。試験がありませんでした）。
+    # **確かめられなかった（2）は 2 のまま**です。0 は「確かめて通った」の意味なので、
+    # 見ていないのに 0 は返しません
+    if rc == 1 and '--notice' in sys.argv:
+        return 0
+    return rc
+
+
+def _check() -> int:
     if '--selftest' in sys.argv or '--self-test' in sys.argv:
         return self_test()
     if '--vocab-check' in sys.argv:
