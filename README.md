@@ -69,7 +69,7 @@
 | `tools/gen_input_check.py` | 生成器・照合の入力が書き出しだけか（記録層の廃止・2026-08-29） |
 | `tools/coverage_check.py` | 照合体制（**参考**。条件2 は 2026-09-03 に廃止）: 照合相手が書き出しだけか |
 | `ci/verify.sh.template` | 統合検査の入口の雛形（必須段を減らさない） |
-| `tools/harness_stats.py` | 発火ログの集計（任意の道具。2026-08-29 に「仕組改善層」としては廃止） |
+| `tools/harness_stats.py` | 発火ログを**箇所**で集計（任意の道具。2026-08-29 に「仕組改善層」としては廃止。2026-09-28 に落ちる不具合と数え方を直し、self-test を持った） |
 | `tools/contact_sheet.py` | golden を1枚のタイルに |
 | `tools/token_query.py` | 値からトークン名の逆引き |
 | `vocab/_vocab.json` | status / blockedBy / origin の語彙の正本 |
@@ -332,7 +332,9 @@ CI は最後の砦ですが、**気づくのが push のあと**になります�
 
 | 道具 | 理由 |
 |---|---|
-| `contact_sheet` / `token_query` / `harness_stats` / `generated` | **合否を出さない**（人が見る道具・一覧を出すだけ）。`generated` の判定の側は `generated_check` が持ち、そちらは測っています |
+| `contact_sheet` / `token_query` / `generated` | **合否を出さない**（人が見る道具・一覧を出すだけ）。`generated` の判定の側は `generated_check` が持ち、そちらは測っています |
+
+**2026-09-28 に `harness_stats` をこの表から外しました。**`--self-test` を持ちました。合否を出さない道具でも、**自己検査が無いと壊れても気づけません**——案件のルートで説明どおりに呼ぶと `AttributeError` で落ちる状態が、誰にも気づかれずに続いていました（案件の入口のシムを読み、引数なしで `load_rules()` を呼んでいた）。
 
 **2026-09-07 に、部品はこの表から要らなくなりました。** `_utf8` / `_submodules` / `figma_names` / `gen_io` は **`main()` を持たない共有の部品**で、単体で合否を出しません。`attack/mutation_test.py` が **`main()` の有無から導いて**分けるようにしたので、**一覧を宣言しなくてよくなりました**（宣言は古くなりますが、導出は古くなりません）。
 
