@@ -205,7 +205,7 @@ def self_test() -> int:
             print(b)
         print(f"NG: 自己検査が {len(bad)} 件落ちました。**この道具が空振りしています。**")
         return 1
-    print("OK: 自己検査 12 件とも期待どおりでした")
+    print("self-test: OK（自己検査 12 件とも期待どおりでした）")
     return 0
 
 
@@ -224,6 +224,6 @@ def main(argv=None) -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except Exception as e:  # mutation-ok: 例外の帰り道。中からは通せない
+    except Exception as e:  # 例外の帰り道。中からは通せない
         print(f"例外で止まりました: {e}")
         sys.exit(2)

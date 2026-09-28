@@ -249,12 +249,20 @@ def self_test() -> int:
         if "表示は落ちたまま" not in out:
             bad.append("関門を通すときに、表示が落ちたままだと言っていない")
 
+    # **--stages-file を渡さなければ 2**（2026-09-28・変異試験が見ていなかった経路）
+    import contextlib as _cl
+    import io as _io
+    with _cl.redirect_stdout(_io.StringIO()):
+        rc_noarg = main([])
+    if rc_noarg != 2:
+        bad.append(f"--stages-file を渡さないのに 2 を返しませんでした（{rc_noarg}）")
+
     if bad:
         for b in bad:
             print(b)
         print(f"NG: 自己検査が {len(bad)} 件落ちました。**この道具が空振りしています。**")
         return 1
-    print("OK: 自己検査 10 件とも期待どおりでした")
+    print("self-test: OK（自己検査 11 件とも期待どおりでした）")
     return 0
 
 
@@ -275,6 +283,6 @@ def main(argv=None) -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except Exception as e:  # mutation-ok: 例外の帰り道。中からは通せない
+    except Exception as e:  # 例外の帰り道。中からは通せない
         print(f"例外で止まりました: {e}")
         sys.exit(2)

@@ -114,7 +114,7 @@ def load_rules(path: Path):
             rules.append((r["id"], re.compile(pat, re.S if r.get("multiline") else 0),
                           r.get("forbidden", ""), r.get("instead", "")))
         except re.error:
-            continue  # mutation-ok: 壊れた正規表現は rules_selftest が咎める
+            continue  # 壊れた正規表現は rules_selftest が咎める
     return rules, langs, scoped
 
 
@@ -243,12 +243,20 @@ def self_test() -> int:
         if "当てていません" not in out:
             bad.append("置き場つきを当てていないことを報せていません")
 
+    # **--docs と --rules を渡さなければ 2**（2026-09-28・変異試験が見ていなかった経路）
+    import contextlib as _cl
+    import io as _io
+    with _cl.redirect_stdout(_io.StringIO()):
+        rc_noarg = main([])
+    if rc_noarg != 2:
+        bad.append(f"--docs と --rules を渡さないのに 2 を返しませんでした（{rc_noarg}）")
+
     if bad:
         for b in bad:
             print(b)
         print(f"NG: 自己検査が {len(bad)} 件落ちました。**この道具が空振りしています。**")
         return 1
-    print("OK: 自己検査 8 件とも期待どおりでした")
+    print("self-test: OK（自己検査 9 件とも期待どおりでした）")
     return 0
 
 
@@ -269,6 +277,6 @@ def main(argv=None) -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except Exception as e:  # mutation-ok: 例外の帰り道。中からは通せない
+    except Exception as e:  # 例外の帰り道。中からは通せない
         print(f"例外で止まりました: {e}")
         sys.exit(2)

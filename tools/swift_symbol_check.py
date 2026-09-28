@@ -359,6 +359,15 @@ def self_test() -> int:
         if run() != 2:
             print("self-test NG: 設定が無いのに 2 を返しませんでした"); ok = False
 
+        # **--config を渡さなければ 2**（2026-09-28・変異試験が見ていなかった経路）
+        import contextlib as _cl
+        import io as _io
+        with _cl.redirect_stderr(_io.StringIO()):
+            rc_noarg = main([])
+        if rc_noarg != 2:
+            print(f"self-test NG: **--config を渡さないのに 2 を返しませんでした**（{rc_noarg}）")
+            ok = False
+
     print("self-test: " + ("OK" if ok else "NG"))
     return 0 if ok else 1
 

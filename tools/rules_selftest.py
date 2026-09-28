@@ -91,7 +91,7 @@ def chain(path: Path, seen: set[Path] | None = None) -> list[Path]:
     try:
         data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
     except Exception:
-        return out  # mutation-ok: 読めない先は run() 側が 2 で報せる
+        return out  # 読めない先は run() 側が 2 で報せる
     for rel in data.get("extends") or []:
         if isinstance(rel, str):
             out += chain(path.parent / rel, seen)
@@ -170,22 +170,84 @@ def self_test() -> int:
         got, _ = check_rule(rule)
         if got != want:
             bad.append(f"{name}: {want} のはずが {got}")
+
+    # ── ファイルを読む・参照を辿る・入口の終了コード（2026-09-28）──────────
+    # それまで check_rule しか試しておらず、本体の 25% しか通っていなかった
+    # （stage_check --min-coverage 50 が CI で落としていた）
+    import contextlib
+    import io
+    import tempfile
+    good_rule = {"id": "g", "pattern": "AAA", "_selftest": {"bad": ["AAA"], "good": ["B"]}}
+    ng_rule = {"id": "n", "pattern": "AAA", "_selftest": {"bad": ["BBB"]}}
+    unknown_rule = {"id": "u", "pattern": "AAA"}
+
+    def quiet(fn, *args):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return fn(*args)
+
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+
+        def put(name, obj):
+            f = d / name
+            f.write_text(obj if isinstance(obj, str) else json.dumps(obj, ensure_ascii=False),
+                         encoding="utf-8")
+            return f
+
+        for label, obj, want in (
+                ("読めないファイルは 2", "{壊れた", 2),
+                ("rules が無ければ 2", {"rules": []}, 2),
+                ("全部当たれば 0（id の無い要素は数えない）", {"rules": [good_rule, {"_note": "x"}]}, 0),
+                ("当たらない仕込みがあれば 1", {"rules": [good_rule, ng_rule]}, 1),
+                ("仕込みが無いルールがあれば 2", {"rules": [good_rule, unknown_rule]}, 2),
+                ("1 と 2 が混ざれば 1（違反を重く見る）", {"rules": [ng_rule, unknown_rule]}, 1)):
+            got = quiet(run, put("r.json", obj))
+            if got != want:
+                bad.append(f"run: {label} のはずが {got}")
+
+        # extends を辿る。**辿らないと参照先のルールを見ない**
+        parent = put("parent.json", {"rules": [ng_rule]})
+        child = put("child.json", {"extends": ["parent.json", "ない.json"], "rules": [good_rule]})
+        got = [q.name for q in chain(child)]
+        if got != ["child.json", "parent.json"]:
+            bad.append(f"chain: 参照先を辿れていない（無い先は飛ばす）: {got}")
+        put("loop_a.json", {"extends": ["loop_b.json"], "rules": [good_rule]})
+        put("loop_b.json", {"extends": ["loop_a.json"], "rules": [good_rule]})
+        got = [q.name for q in chain(d / "loop_a.json")]
+        if got != ["loop_a.json", "loop_b.json"]:
+            bad.append(f"chain: 循環で止まらない: {got}")
+        put("broken_child.json", "{壊れた")
+        if [q.name for q in chain(d / "broken_child.json")] != ["broken_child.json"]:
+            bad.append("chain: 読めないファイルを落とした（run が 2 で報せるので残す）")
+
+        # 入口。**参照先の違反（1）を拾う**・引数が無ければ 2
+        if quiet(main, [str(child)]) != 0:
+            bad.append("main: 辿らなければ子だけを見て 0 のはず")
+        if quiet(main, ["--follow-extends", str(child)]) != 1:
+            bad.append("main: **--follow-extends で参照先の当たらない仕込みを拾えていない**")
+        if quiet(main, []) != 2:
+            bad.append("main: 確かめる rules.json が無いのに 2 で止まらない")
+        parent.write_text(json.dumps({"rules": [unknown_rule]}), encoding="utf-8")
+        if quiet(main, ["--follow-extends", str(child)]) != 2:
+            bad.append("main: 参照先に確かめられないルールがあるのに 2 にならない")
+
     if bad:
         for b in bad:
             print(b)
-        print(f"NG: 自己検査が {len(bad)} 件落ちました。**この道具が空振りしています。**")
+        print(f"self-test: NG（{len(bad)} 件）。**この道具が空振りしています。**")
         return 1
-    print(f"OK: 自己検査 {len(cases)} 件とも期待どおりでした")
+    # 「self-test: OK」を含める。attack/mutation_test.py はこの表示で成功を見分ける
+    print(f"self-test: OK（ルール {len(cases)} 件の判定・ファイルの読み込み・参照の辿り方・入口）")
     return 0
 
 
-def main() -> int:
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="rules.json の仕込みを当てる")
     ap.add_argument("paths", nargs="*", help="rules.json のパス")
     ap.add_argument("--follow-extends", action="store_true",
                     help="extends を辿って参照先のルールも確かめる")
     ap.add_argument("--self-test", action="store_true", help="この道具自身を確かめる")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
     if a.self_test:
         return self_test()
@@ -210,6 +272,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except Exception as e:  # mutation-ok: 例外の帰り道。中からは通せない
+    except Exception as e:  # 例外の帰り道。中からは通せない
         print(f"例外で止まりました: {e}")
         sys.exit(2)

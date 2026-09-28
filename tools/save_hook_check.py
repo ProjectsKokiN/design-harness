@@ -53,7 +53,7 @@ def hook_commands(root: Path) -> list[tuple[str, str]]:
         try:
             d = json.loads(p.read_text(encoding="utf-8", errors="replace"))
         except Exception:
-            continue  # mutation-ok: 壊れた設定は config_schema_check の担当
+            continue  # 壊れた設定は config_schema_check の担当
         for entry in (d.get("hooks", {}).get("PostToolUse") or []):
             for h in (entry.get("hooks") or []):
                 cmd = h.get("command")
@@ -277,7 +277,7 @@ def self_test() -> int:
             print(b)
         print(f"NG: 自己検査が {len(bad)} 件落ちました。**この道具が空振りしています。**")
         return 1
-    print("OK: 自己検査 8 件とも期待どおりでした")
+    print("self-test: OK（自己検査 8 件とも期待どおりでした）")
     return 0
 
 
@@ -294,6 +294,6 @@ def main(argv=None) -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except Exception as e:  # mutation-ok: 例外の帰り道。中からは通せない
+    except Exception as e:  # 例外の帰り道。中からは通せない
         print(f"例外で止まりました: {e}")
         sys.exit(2)

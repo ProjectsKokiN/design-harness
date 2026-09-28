@@ -87,7 +87,7 @@ def offscale(values, lo=1, hi=10000):
     for n in range(lo, hi):
         if float(n) not in have:
             return n
-    raise ValueError("段に無い値が見つかりません")  # mutation-ok: 段が 1..hi を埋め尽くす場合
+    raise ValueError("段に無い値が見つかりません")  # 段が 1..hi を埋め尽くす場合
 
 
 @builder("flutter", "radius")
