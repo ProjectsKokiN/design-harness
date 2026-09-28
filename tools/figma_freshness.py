@@ -355,6 +355,33 @@ FRAME_SOURCE: dict = {}
 ID_RX = re.compile(r'^\d+:\d+$')
 
 
+def frames_export_problem() -> str | None:
+    """framesExport を設定しているのに**画面の書き出しとして読めない**ときの理由（2026-09-28）。
+
+    FlashEnglish の実測: framesExport に 414 の `frames.json` を渡していたが、あれは画面の
+    書き出しではなく `surfaces`（3 つの面の色）の記録だった。名前が frames.json なので
+    読み違えやすい。そのまま `--update` すると、**別の記録に画面のハッシュを書き込む。**
+    画面の書き出しは `frames`（画面の ID → 行）を持つ（書き出し器 exporters/export_frames.js）。
+    `frames` が無くても、画面のハッシュをもう記録してある（`$meta.restDigests`）ものは読む。
+    設定していなければ None（見ていないことは呼び手が言う）。
+    """
+    if not FRAMES_EXPORT:
+        return None
+    path = Path(FRAMES_EXPORT)
+    if not path.exists():
+        return f'framesExport（{path.name}）がありません'
+    try:
+        doc = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return f'framesExport（{path.name}）を JSON として読めません'
+    recorded = isinstance(doc, dict) and isinstance((doc.get('$meta') or {}).get('restDigests'), dict)
+    if not isinstance(doc, dict) or not (isinstance(doc.get('frames'), (dict, list)) or recorded):
+        top = [str(k) for k in doc if not str(k).startswith('$')] if isinstance(doc, dict) else []
+        return (f'framesExport（{path.name}）は画面の書き出しに見えません'
+                f'（`frames` がありません。中にあるのは: {", ".join(top) or "なし"}）')
+    return None
+
+
 def read_frames() -> dict | None:
     """参照するページの**画面**（トップレベルの FRAME）を 名前 → ハッシュ で返す。
 
@@ -375,7 +402,7 @@ def read_frames() -> dict | None:
 
     FRAMES_EXPORT が無ければ None（見ない）。
     """
-    if not (FRAMES_EXPORT and Path(FRAMES_EXPORT).exists()):
+    if not (FRAMES_EXPORT and Path(FRAMES_EXPORT).exists()) or frames_export_problem():
         return None
     doc = get(f'https://api.figma.com/v1/files/{FILE_KEY}?depth=1')['document']
     pages, _ = pages_of(doc)
@@ -1170,7 +1197,7 @@ def self_test() -> int:
         g5 = globals()
 
         def run_frames(frames_doc, screens=None, sets=None, no_config=False,
-                       getter=None, argv=('x',)):
+                       getter=None, argv=('x',), frames_path=None):
             """main() を回して**出力ごと**返す。
 
             run_main は内側で標準出力を飲むので、画面の報告が読めない。
@@ -1186,7 +1213,7 @@ def self_test() -> int:
                 'componentSets': {'Buttons': {}, 'Header': {}}}), encoding='utf-8')
             keep5 = (g5['get'], g5['FRAMES_EXPORT'], g5['SKIP_PAGES'],
                      g5['PAGE_SCOPE'], g5['EXPORT'], sys.argv)
-            g5['FRAMES_EXPORT'] = None if no_config else str(fp)
+            g5['FRAMES_EXPORT'] = None if no_config else str(frames_path or fp)
             g5['SKIP_PAGES'], g5['PAGE_SCOPE'] = [], None
             g5['EXPORT'] = d / 'export.json'
             g5['get'] = getter or (lambda u: fake_all(u, s, screens or SCREENS))
@@ -1202,7 +1229,7 @@ def self_test() -> int:
 
         # いまの画面でハッシュを作る
         keep6 = (g5['get'], g5['FRAMES_EXPORT'], g5['SKIP_PAGES'], g5['PAGE_SCOPE'])
-        fp.write_text('{}', encoding='utf-8')
+        fp.write_text('{"frames": {}}', encoding='utf-8')     # 画面の書き出しの形（中身は空）
         g5['get'], g5['FRAMES_EXPORT'] = (lambda u: fake_all(u)), str(fp)
         g5['SKIP_PAGES'], g5['PAGE_SCOPE'] = [], None
         fnow = read_frames()
@@ -1488,6 +1515,21 @@ def self_test() -> int:
                                                         'Effects': 'b'}}})
         cases.append(('画面: 名前で記録した古いハッシュは比べず、取り直しを求める',
                       rc == 1 and '古い形' in out and 'Figma にしか無い' not in out))
+
+        # **画面の書き出しでないものを、画面の書き出しとして読まない**（2026-09-28・FlashEnglish）。
+        # 414 の frames.json は `surfaces`（面の色）の記録で、名前だけが frames.json だった
+        _surf = {'$meta': {'unit': 'px'}, 'surfaces': {'Header': {'fill': 'x'}}}
+        rc, out = run_frames(_surf)
+        cases.append((f'画面: 画面の書き出しでないものは読まずに 2（rc={rc}）',
+                      rc == 2 and '画面の書き出しに見えません' in out and 'surfaces' in out))
+        rc, out = run_frames(_surf, argv=('x', '--update'))
+        _after = json.loads(fp.read_text(encoding='utf-8'))
+        cases.append((f'画面: --update でも、画面の書き出しでないものには書かない（rc={rc}）',
+                      rc == 2 and 'restDigests' not in (_after.get('$meta') or {})
+                      and _after.get('surfaces') == _surf['surfaces']))
+        rc, out = run_frames(None, frames_path=d / 'ない-frames.json')
+        cases.append((f'画面: 設定した書き出しが無ければ 2（rc={rc}）',
+                      rc == 2 and 'がありません' in out))
 
         # 4. framesExport を設定しない案件 → 飛ばす（既存案件を壊さない）。
         # **ただし「見ていません」と必ず言う**（黙って飛ばさない）
@@ -1944,8 +1986,14 @@ def _check() -> int:
 
     # **画面の鮮度**（2026-09-04 新設・#25）。部品は安定し、画面は動く。
     frame_ng, frame_unseen = [], []
-    fr = read_frames()
-    if fr is None:
+    frame_problem = frames_export_problem()
+    # **読めないと決まったら読まない**（判定を 1 か所にする。--update の書き込みも fr で決まる）
+    fr = None if frame_problem else read_frames()
+    if frame_problem:
+        print(f'画面の鮮度: **見ていません**（{frame_problem}）。\n'
+              '  画面の書き出しでなければ、設定から framesExport を外してください。'
+              '**別の記録に画面のハッシュを書き込まないため、--update でも書きません**')
+    elif fr is None:
         print('画面の鮮度: **見ていません**（framesExport が設定されていません）。\n'
               '  **画面側の Figma の変更を、こちらから知る手段がない状態です。**')
     else:
@@ -2056,6 +2104,9 @@ def _check() -> int:
         EXPORT.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + '\n',
                           encoding='utf-8')
         print(f'ハッシュを更新しました（{len(now)} セット）')
+        if frame_problem:
+            print(f'**画面のハッシュは記録していません**（{frame_problem}）', file=sys.stderr)
+            return 2
         return 0
 
     if not saved:
@@ -2090,6 +2141,10 @@ def _check() -> int:
         if frame_unseen:
             print(f'部品は書き出しと同じです（{len(now)} セット）が、'
                   f'**画面 {len(frame_unseen)} 枚を見ていません。**確かめられなかったので 2 で返します')
+            return 2
+        if frame_problem:
+            print(f'部品は書き出しと同じです（{len(now)} セット）が、'
+                  f'**画面の書き出しを読めていません**（{frame_problem}）。2 で返します')
             return 2
         print(f'Figma は書き出しと同じです（{len(now)} セット'
               + (f' / スタイル {len(st)} 件' if st else '')
