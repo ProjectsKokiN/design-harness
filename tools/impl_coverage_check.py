@@ -424,7 +424,13 @@ DATE_RX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def token_names(doc):
-    """書き出しから、トークン・スタイルの Figma 名を集める。"""
+    """書き出しから、トークン・スタイルの Figma 名を集める。
+
+    **コレクションの下に `tokens` / `styles` の段を持つ形も読む**（#151・2026-09-28）。
+    PlantTalk の tokens.json は各コレクションが `{$modes, $count, $publish, $note, tokens: {...}}`、
+    スタイルが `{$count, $note, styles: {...}}` の形で、それまでは 1 件も拾えず
+    「0 件を照合」のまま通っていた（この案件では、トークンの網羅が最初から照らされていなかった）。
+    """
     names = []
     for coll in doc.values():
         if not isinstance(coll, dict):
@@ -434,6 +440,10 @@ def token_names(doc):
                 names.append(v["name"])
             elif isinstance(k, str) and "/" in k:
                 names.append(k)
+        for layer in ("tokens", "styles"):
+            inner = coll.get(layer)
+            if isinstance(inner, dict):
+                names += [k for k in inner if isinstance(k, str) and not k.startswith("$")]
     # collections 形式（aub / 414 の variables.json）
     for c in doc.get("collections", []) if isinstance(doc.get("collections"), list) else []:
         for v in c.get("variables", []):
@@ -553,7 +563,15 @@ def check_tokens(conf, base, today):
         if not rel:
             continue
         doc = json.loads((base / rel).read_text(encoding="utf-8"))
-        for n in token_names(doc):
+        found = token_names(doc)
+        if not found:
+            # **1 件も拾えないのは「実装が 0 件足りない」ではなく「読めていない」**（#151）。
+            # expected_tokens の宣言が無くても落とす（宣言が無い案件ほど気づけない）
+            problems.append(f"{path_key}（{rel}）からトークン・スタイルの名前を 1 件も拾えません。\n"
+                            f"    書き出しの形を読めていない可能性があります。"
+                            f"**『0 件を照合』は『見ていない』という意味です**")
+            continue
+        for n in found:
             if n in exact_ok or any(n.startswith(pr) for pr in prefix_ok):
                 continue
             checked += 1
@@ -1028,6 +1046,24 @@ def self_test():
         expect(0, cfg(tokens_export="vars2.json",
                       identifier_style={"dropFirstSegment": ["Duration"]}),
                "dropFirstSegment を宣言したのに落ちた")
+
+        # ── #151: コレクションの下に tokens / styles の段を持つ形（PlantTalk の tokens.json）──
+        (base / "vars3.json").write_text(json.dumps({
+            "$meta": {"note": "x"},
+            "Spacing": {"$count": 1, "$modes": ["Default"], "tokens": {"XL": {"value": 24}}},
+            "TextStyles": {"$count": 1, "styles": {"Body/Regular": {"size": 17}}}}),
+            encoding="utf-8")
+        theme("const xl = 1; const bodyRegular = 2;")
+        expect(0, cfg(tokens_export="vars3.json"), "tokens / styles の段の名前を拾えていない")
+        theme("const xl = 1;")
+        expect(1, cfg(tokens_export="vars3.json"),
+               "**styles の段にあるスタイルが実装に無いのに通した**（段を読んでいない）")
+        # **1 件も拾えない書き出しは「見ていない」として落とす**（宣言が無くても）
+        (base / "vars4.json").write_text(json.dumps({"Spacing": {"items": {"XL": 24}}}),
+                                         encoding="utf-8")
+        theme("const xl = 1;")
+        expect(1, cfg(tokens_export="vars4.json"),
+               "**名前を 1 件も拾えないのに『0 件を照合』で通した**（#151 の実害の形）")
 
     # ─── #34: 対応表の形を3つ受ける ─────────────────────────────
     import tempfile as _tf
