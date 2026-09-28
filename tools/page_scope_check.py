@@ -42,16 +42,22 @@ page-scope.json:
       "allowed": ["⚙️_Styles&Components"],
       "reason": "カタログ完成まで画面ページを見ない（使われ方からの推測を防ぐ）",
       "unlockedBy": "Dart のデザインシステムとカタログの完成",
-      "screens": "design/screens.json",
-      "conventions": "design/conventions.json",
-      "exports": ["../<ds>/figma/components.json"]
+      "screens": "../screens.json",
+      "conventions": "../conventions.json",
+      "exports": ["../../../design-systems/<名前>/figma/components.json"]
     }
+
+**パスはこのファイルの置き場（`design/figma/`）から書きます。**案件の根から書くと
+見つからず、この検査は 2（見ていない）を返します（2026-09-28。それまでは黙って
+飛ばして「OK」と言っていました）。
 
 フェーズを `screens` に進めると、画面ページの参照が解禁される。
 **進めるのはユーザーの判断**（AI が勝手に進めない）。
 """
 
 import argparse
+import contextlib
+import io
 import json
 import sys
 from pathlib import Path
@@ -113,6 +119,13 @@ def main(argv=None):
     if phase == "design-system" and conf.get("unlockedBy"):
         print(f"  解禁の条件: {conf['unlockedBy']}（進めるのはユーザーの判断）")
 
+    # **書いてある参照先が在るかを先に確かめる**（2026-09-28）。それまで「在れば見る・
+    # 無ければ黙って飛ばす」だったため、FlashEnglish（5 件）と aub（6 件）では参照先が
+    # **1 つも見つからないまま「OK: フェーズの約束どおりです」**と言っていた。ひな形の例が
+    # 案件の根から見たパスで書かれていたが、この検査は**このファイルの置き場から**読む
+    # （PlantTalk のレジストリの宣言は置き場からのパスで、8 件とも見つかる）。
+    unseen = unseen_refs(conf, base)
+
     problems = []
 
     if phase == "design-system":
@@ -163,13 +176,54 @@ def main(argv=None):
             if extra:
                 problems.append(f"{ep}: 許可外のページを参照しています: {extra}")
 
+    if unseen:
+        print("\n参照先を読めません。**この検査は、これらを見ていません**:", file=sys.stderr)
+        for u in unseen:
+            print(f"  - {u}", file=sys.stderr)
     if problems:
         print("\nフェーズの約束に反する状態です:", file=sys.stderr)
         for p in problems:
             print(f"  - {p}", file=sys.stderr)
         return 1
+    if unseen:
+        # 見たものに反する記録は無いが、見ていないものがある。**「OK」とは言わない**
+        return 2
     print("OK: フェーズの約束どおりです。")
     return 0
+
+
+def _repo_root(start):
+    for d in [start, *start.parents]:
+        if (d / ".git").exists():
+            return d
+    return None
+
+
+def unseen_refs(conf, base):
+    """宣言にある参照先（screens / conventions / exports）のうち、読めないものを返す。
+
+    - このファイルの置き場から見て無く、**案件の根から見ると在る** → 書き方の間違い。
+      直し方を添えて返す（ひな形の例がこの形だった）
+    - exports がどこにも無い → 返す（照合に使ってよい書き出しが無いのは宣言の間違い）
+    - screens / conventions がどこにも無い → **まだ作っていない**ことがあるので返さない。
+      そのかわり「まだありません」と表示する（黙って飛ばさない）
+    """
+    root = _repo_root(base)
+    where = base.relative_to(root).as_posix() + "/" if root else str(base)
+    refs = [(k, conf.get(k)) for k in ("screens", "conventions") if conf.get(k)]
+    refs += [("exports", ep) for ep in (conf.get("exports") or [])]
+    out = []
+    for key, rel in refs:
+        if (base / rel).exists():
+            continue
+        if root and (root / rel).exists():
+            out.append(f"{key}: {rel} — 案件の根から見たパスに見えます。"
+                       f"このファイルの置き場（{where}）から見たパスに直してください")
+        elif key == "exports":
+            out.append(f"exports: {rel} — ファイルがありません")
+        else:
+            print(f"  {key}: {rel} はまだありません（記録は 0 件として扱います）")
+    return out
 
 
 def self_test():
@@ -213,6 +267,42 @@ def self_test():
                                            encoding="utf-8")
         if main(cfg({"phase": "screens"})) != 0:
             print("self-test NG: screens フェーズで画面が許されなかった"); ok = False
+
+    # ─── 参照先が読めないときに「OK」と言わない（2026-09-28）──────────────
+    # FlashEnglish と aub は、ひな形の例どおり案件の根から見たパスで書いていたため、
+    # 参照先が 1 つも見つからないまま「OK」になっていた
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / ".git").mkdir()
+        fig = root / "design" / "figma"
+        fig.mkdir(parents=True)
+        (root / "design" / "screens.json").write_text('{"sections": []}', encoding="utf-8")
+        (root / "export.json").write_text('{"$meta": {"pages": ["P"]}}', encoding="utf-8")
+
+        def run(d):
+            (fig / "page-scope.json").write_text(json.dumps(d), encoding="utf-8")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                rc = main(["--config", str(fig / "page-scope.json")])
+            return rc, err.getvalue()
+        base_d = {"phase": "design-system", "allowed": ["P"]}
+        rc, err = run({**base_d, "screens": "design/screens.json"})
+        if rc != 2 or "案件の根から見たパス" not in err:
+            print(f"self-test NG: 案件の根から書いた参照先で OK と言った（rc={rc}）"); ok = False
+        rc, err = run({**base_d, "screens": "../screens.json", "exports": ["../../export.json"]})
+        if rc != 0:
+            print(f"self-test NG: 置き場から書いた参照先で落ちた（rc={rc}）{err}"); ok = False
+        rc, err = run({**base_d, "exports": ["../../ない.json"]})
+        if rc != 2 or "ファイルがありません" not in err:
+            print(f"self-test NG: 無い書き出しで OK と言った（rc={rc}）"); ok = False
+        rc, err = run({**base_d, "screens": "../まだ無い.json"})
+        if rc != 0:
+            print(f"self-test NG: まだ作っていない記録で落ちた（rc={rc}）"); ok = False
+        # 見ていないものと、見たものの違反が両方あれば 1（2 に薄めない）
+        (root / "bad.json").write_text('{"$meta": {"pages": ["Q"]}}', encoding="utf-8")
+        rc, err = run({**base_d, "exports": ["../../bad.json", "design/ない.json"]})
+        if rc != 1:
+            print(f"self-test NG: 違反と見ていないものが両方あるのに 1 でない（rc={rc}）"); ok = False
 
     # ─── #35: 散文をページ名として扱わない ─────────────────────────
     for s, want in (
