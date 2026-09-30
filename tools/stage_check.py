@@ -147,6 +147,47 @@ def logical_lines(text):
     return out
 
 
+#: 案件が期限つきで宣言する「self-test を持たない道具」（2026-09-30 ユーザー確定「A」）
+PROJ_EXC_KEY = "self-test を持たない道具"
+
+
+def project_exceptions(proj, today=None):
+    """案件の `design/stages.json` の宣言を読み、(効いている名前 → 期限, 効かない名前 → 理由) を返す。
+
+    aub の実害（2026-09-30）: #136 で案件の道具にも self-test を求めたところ、試験の無い道具が
+    22 本あり、例外表がハーネスの README にしか無いので**案件の中からは何も宣言できず**、
+    push できなくなった。**理由（why）と期限（reviewBy）つきで宣言した道具だけ**を例外にし、
+    期限が過ぎたら落とす。**案件の道具だけに効く**（ハーネスの道具は README の表で扱う）。
+    """
+    import datetime as _dt
+    today = today or _dt.date.today()
+    f = Path(proj) / "design" / "stages.json"
+    if not f.exists():
+        return {}, {}
+    try:
+        decl = json.loads(f.read_text(encoding="utf-8")).get(PROJ_EXC_KEY) or {}
+    except (OSError, ValueError):
+        return {}, {}
+    ok, bad = {}, {}
+    if not isinstance(decl, dict):
+        return {}, {}
+    for name, v in decl.items():
+        name = Path(str(name)).stem
+        if not isinstance(v, dict) or not str(v.get("why", "")).strip():
+            bad[name] = "宣言に why（理由）がありません"
+            continue
+        try:
+            due = _dt.date.fromisoformat(str(v.get("reviewBy", "")).strip())
+        except ValueError:
+            bad[name] = "宣言の reviewBy が日付ではありません（YYYY-MM-DD）"
+            continue
+        if due < today:
+            bad[name] = f"宣言の期限が切れています（{due}）。self-test を足すか、期限を延ばす理由を書いてください"
+            continue
+        ok[name] = due
+    return ok, bad
+
+
 def documented_exceptions(readme):
     """README の「self-test を持たない道具」表に載っている道具名。"""
     if not readme.exists():
@@ -1926,6 +1967,8 @@ def main(argv=None):
         return 2
 
     exceptions = documented_exceptions(args.readme)
+    _vp0 = args.verify.resolve().parent
+    proj_ok, proj_bad = project_exceptions(_vp0.parent if _vp0.name == "design" else _vp0)
     problems, foreign, checked = [], [], []
     slow, slow_note = [], []
 
@@ -1990,8 +2033,14 @@ def main(argv=None):
                         f"宣言していますが、**その本体がありません**")
                     continue
             if "self_test" not in src:
+                is_local = args.tools.resolve() not in path.resolve().parents
                 if name in exceptions:
                     foreign.append(f"{label}（{name}: 例外として明記済み）")
+                elif is_local and name in proj_ok:
+                    foreign.append(f"{label}（{name}: 案件が期限つきで宣言済み・期限 {proj_ok[name]}）")
+                elif is_local and name in proj_bad:
+                    problems.append(f"「{label}」が呼ぶ {name}.py に self-test がありません。"
+                                    f"{proj_bad[name]}")
                 else:
                     problems.append(
                         f"「{label}」が呼ぶ {name}.py に self-test がありません。\n"
@@ -2225,6 +2274,30 @@ def self_test():
             print("self-test NG: 案件の道具で self-test があるのに落ちました"); ok = False
         if run('step "案件の道具（無し）" "$PY" design/local_bad.py\n') != 1:
             print("self-test NG: **案件の道具の self-test 無しを見逃しました**"); ok = False
+
+        # ── **案件が期限つきで宣言した道具だけ例外にする**（2026-09-30・aub の 22 本）──────
+        _sj = base / "design" / "stages.json"
+
+        def exc(v):
+            _sj.write_text(json.dumps({PROJ_EXC_KEY: v}, ensure_ascii=False), encoding="utf-8")
+        exc({"local_bad": {"why": "試験を足すまで", "reviewBy": "2999-12-31"}})
+        if run('step "案件の道具（宣言済み）" "$PY" design/local_bad.py\n') != 0:
+            print("self-test NG: 期限つきで宣言した案件の道具で落ちました"); ok = False
+        exc({"local_bad": {"why": "試験を足すまで", "reviewBy": "2020-01-01"}})
+        if run('step "案件の道具（期限切れ）" "$PY" design/local_bad.py\n') != 1:
+            print("self-test NG: **期限の切れた宣言で通しました**"); ok = False
+        exc({"local_bad": {"reviewBy": "2999-12-31"}})
+        if run('step "案件の道具（理由なし）" "$PY" design/local_bad.py\n') != 1:
+            print("self-test NG: **理由の無い宣言で通しました**"); ok = False
+        readme.write_text("（例外表なし）\n", encoding="utf-8")
+        exc({"bad": {"why": "x", "reviewBy": "2999-12-31"}})
+        if run('step "ハーネスの道具" "$PY" "$HARNESS/tools/bad.py"\n') != 1:
+            print("self-test NG: **案件の宣言でハーネスの道具を例外にしました**"); ok = False
+        _sj.unlink()
+        # 後ろの場面のために、README の例外表を元に戻す（状態を持ち越さない）
+        readme.write_text("## self-test を持たない道具（意図的な例外）\n\n"
+                          "| 道具 | 理由 |\n|---|---|\n| `bad` | 外部に依存する |\n",
+                          encoding="utf-8")
 
         # **シムは本体を宣言すれば通る**（シム自身に self_test の字は無い）
         (base / "design" / "shim.py").write_text(

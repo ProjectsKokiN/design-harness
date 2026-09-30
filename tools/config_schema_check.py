@@ -47,6 +47,8 @@ BLOCKS = {
         "緩和":          (("what", "why", "reviewBy"), "listOfDict"),
         # Figma の作り直し中の宣言（#147・2026-09-30）。not_yet_check が読む
         "Figma の作り直し": (("why", "reviewBy", "Figma に関わるパス"), "dict"),
+        # 案件の道具で self-test を持たないもの（2026-09-30）。stage_check が読む
+        "self-test を持たない道具": (("why", "reviewBy"), "dictOfDict"),
     },
     "machine-scope.json": {
         "machines": ((), "dictOfAny"),
