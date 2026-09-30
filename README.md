@@ -39,6 +39,7 @@
 | **`tools/generated.py`** | **そのファイルは生成物か**を1か所で決める（生成器の書いた印から導出。一覧は宣言しない）。`machine_scope` と `generated_check` が共有 |
 | **`tools/generated_check.py`** | **生成物に機体固有の文字列が入っていないか**（ホームの下の絶対パス・円記号の区切り）。生成物を `shared` にする前提の安全装置 |
 | `tools/_utf8.py` | 出力の文字コードで死なないようにする（各道具が import するだけ。単体では回さない） |
+| `tools/_worktree.py` | **いま手を入れているファイル**（作業ツリー＋どのリモートにも無いコミット）を集める（各道具が import するだけ）。`figma_freshness`（変わった部品が作業と関係あるか・#138）と `not_yet_check`（Figma の作り直し中に無関係な push を通すか・#147）が同じ読み方で使う |
 | `tools/_submodules.py` | **submodule の置き場を `.gitmodules` から導く**（各道具が import するだけ。単体では回さない）。名前で `harness` を外していたため、ハーネス一式を `site/design/harness/` に置く案件では**案件のファイルまで全部外れて0 件**になっていた（#97 / #105） |
 | `tools/issue_scan.py` | 前回まとめた日時以降のやりとりを取り出す（`/harness-issues` が使う） |
 | **`seeds/<stack>/`** | 種のひな形（わざと違反させたコード）。案件の `design/seeds/` へコピーする |

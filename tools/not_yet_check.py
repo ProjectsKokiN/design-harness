@@ -50,6 +50,13 @@ gaps.json にも宣言し、**それで verify.sh は 0 のまま通り、push �
 書いてきます。そのときはコードが分からないので**この規則は当てず、そう言います**
 （黙って厳しくもしない・黙って緩めもしない）。
 
+## Figma の作り直し中は、無関係な push だけ条件4・7 を通す（#147・2026-09-30）
+
+`design/stages.json` の `Figma の作り直し` に why・reviewBy・`Figma に関わるパス` を書くと、
+**宣言したパスに1つも触れていない push だけ**、鮮度（条件4）と実装網羅（条件7）の違反を
+関門で通します（表示は落ちたまま）。関わるパスに触れた push・期限切れ・触ったファイルを
+git で読めないときは、今までどおり通しません。ほかの中核の条件は対象にしません。
+
 ## 終了コード
 
   0 … 落ちた段が全部、期限内の宣言で覆われている（**関門を通してよい**）
@@ -69,6 +76,11 @@ import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf
 
 KEY = "まだ測れない"
 NEEDED = ("why", "reviewBy")
+#: **Figma の作り直し中の宣言**（#147・2026-09-30 ユーザー確定「3はBでいい。」）
+REBUILD_KEY = "Figma の作り直し"
+REBUILD_PATHS = "Figma に関わるパス"
+#: 作り直し中に、無関係な push なら通してよい中核の条件（鮮度・実装網羅）
+REBUILD_CONDS = {"4", "7"}
 
 
 def norm(s: str) -> str:
@@ -111,7 +123,70 @@ def load(conf_path: Path):
     return decl
 
 
-def run(stages_file: Path, conf_path: Path, today: dt.date | None = None) -> int:
+def rebuild_scope(conf_path: Path, today: dt.date, root=None):
+    """**Figma の作り直し中に、この push が作り直しと無関係か**（#147・2026-09-30）。
+
+    実害（PlantTalk・2026-09-25）: Figma を大きく作り直した直後、作り直しと無関係な直し
+    （DNA の背景・`Sources/PlantTalk/DNA/` だけ）が、鮮度（条件4）と実装網羅（条件7）で
+    止まった。どちらも #134 で「確かめて違反なら宣言で覆えない」ので、作り直しが終わるまで
+    **案件の誰も push できなくなった**（未 push 9 件・Mac mini の確認も止まった）。
+
+    `design/stages.json` に次を書くと、**宣言したパスに1つも触れていない push だけ**、
+    条件4・7 の違反を関門で通す（表示は落ちたまま）:
+
+        "Figma の作り直し": {
+          "why": "2026-09-25 に Figma を作り直した。部品と画面がそろうまで",
+          "reviewBy": "2026-10-31",
+          "Figma に関わるパス": ["Sources/PlantTalk/UI/", "design/"]
+        }
+
+    **どこまで緩めるかは、宣言したパスで案件が決める**（AI が関係の有無を推し量らない）。
+    触ったファイルは作業ツリー＋どのリモートにも無いコミット（`_worktree.changed_files`）。
+    読めなければ「無関係」と言わない。
+
+    戻り: (通してよいか, 説明の行)
+    """
+    try:
+        data = json.loads(conf_path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return False, "宣言が読めないので、作り直しの宣言も見ていません"
+    v = data.get(REBUILD_KEY)
+    if v is None:
+        return False, (f"Figma を作り直している途中なら、`{REBUILD_KEY}` を宣言すると、"
+                       f"作り直しと無関係な push だけ通せます（#147）")
+    if not isinstance(v, dict):
+        return False, f"`{REBUILD_KEY}` は辞書で書いてください"
+    missing = [k for k in NEEDED if not str(v.get(k, "")).strip()]
+    paths = v.get(REBUILD_PATHS)
+    if not isinstance(paths, list) or not [x for x in paths if str(x).strip()]:
+        missing.append(REBUILD_PATHS)
+    if missing:
+        return False, f"`{REBUILD_KEY}` に {'と'.join(missing)} がありません"
+    try:
+        due = dt.date.fromisoformat(str(v["reviewBy"]).strip())
+    except ValueError:
+        return False, f"`{REBUILD_KEY}` の reviewBy が日付ではありません（YYYY-MM-DD）"
+    if due < today:
+        return False, (f"`{REBUILD_KEY}` の期限が切れています（{due}）。作り直しが終わったか、"
+                       f"期限を延ばす理由を書いてください")
+    from _worktree import changed_files, repo_root
+    base = root or repo_root(conf_path.parent)
+    if base is None:
+        return False, "git の根が見つからないので、触ったファイルを見ていません"
+    touched, complete = changed_files(base)
+    if not complete:
+        return False, "触ったファイルを git で全部は読めませんでした。**無関係とは言えません**"
+    prefixes = [str(x).strip().rstrip("/") for x in paths if str(x).strip()]
+    hit = sorted(t for t in touched
+                 if any(t == p or t.startswith(p + "/") for p in prefixes))
+    if hit:
+        return False, (f"この push は、作り直しに関わるパスに触れています（{len(hit)} 件。"
+                       f"例: {', '.join(hit[:3])}）。作り直しと一緒に直してください")
+    return True, (f"**作り直しと無関係な push です**（触ったファイル {len(touched)} 件は、"
+                  f"宣言したパス {', '.join(prefixes)} の外）。期限 {due}")
+
+
+def run(stages_file: Path, conf_path: Path, today: dt.date | None = None, root=None) -> int:
     today = today or dt.date.today()
     if not stages_file.is_file():
         print(f"落ちた段の一覧がありません: {stages_file}")
@@ -130,9 +205,18 @@ def run(stages_file: Path, conf_path: Path, today: dt.date | None = None) -> int
 
     by_norm = {norm(k): (k, v) for k, v in decl.items()}
     ok, bad, core_refused, no_code = [], [], [], 0
+    scope = None                       # 作り直しの宣言は、要るときに1回だけ見る
     for name, rc in failed:
         if rc is None:
             no_code += 1
+        # **作り直しと無関係な push なら、条件4・7 の違反を通す**（#147）
+        m = COND_RX.search(str(name or ""))
+        if rc == 1 and m and m.group(1) in REBUILD_CONDS:
+            if scope is None:
+                scope = rebuild_scope(conf_path, today, root)
+            if scope[0]:
+                ok.append(f"  {name} — {scope[1]}")
+                continue
         # **中核の段が「確かめて違反」なら、宣言では覆えない**（#134）
         if rc == 1 and is_core(name):
             hit0 = by_norm.get(norm(name))
@@ -140,7 +224,8 @@ def run(stages_file: Path, conf_path: Path, today: dt.date | None = None) -> int
             core_refused.append(
                 f"  **中核の段が、確かめたうえで違反を出しています**{declared}: {name}\n"
                 f"    これは「まだ測れない」ではありません。**測れて、合っていません。**\n"
-                f"    宣言では覆えません。直すか、Figma の側を直してください")
+                f"    宣言では覆えません。直すか、Figma の側を直してください"
+                + (f"\n    {scope[1]}" if scope and m and m.group(1) in REBUILD_CONDS else ""))
             continue
         hit = by_norm.get(norm(name))
         if not hit:
@@ -244,6 +329,76 @@ def self_test() -> int:
              go(["実装網羅", "別の段"], {"実装網羅": good})[0], 1)
         case("落ちた段が無ければ 2", go([], {})[0], 2)
 
+        # ── **Figma の作り直し中は、無関係な push だけ条件4・7 を通す**（#147）──────
+        import subprocess as _sp
+        repo = root / "repo"
+        (repo / "design").mkdir(parents=True)
+        (repo / "Sources" / "UI").mkdir(parents=True)
+        (repo / "Sources" / "DNA").mkdir(parents=True)
+        remote = root / "remote.git"
+
+        def g(*a, cwd=repo):
+            _sp.run(["git", "-C", str(cwd), "-c", "user.email=t@t", "-c", "user.name=t",
+                     "-c", "commit.gpgsign=false", *a], capture_output=True, text=True,
+                    encoding="utf-8", errors="replace")
+        _sp.run(["git", "init", "-q", "--bare", str(remote)], capture_output=True)
+        g("init", "-q")
+        for f in ("Sources/UI/tabs.swift", "Sources/DNA/bg.swift"):
+            (repo / f).write_text("x\n", encoding="utf-8")
+        rsf, rcf = repo / "failed.txt", repo / "design" / "stages.json"
+        rcf.write_text("{}", encoding="utf-8")
+        g("add", "-A"); g("commit", "-qm", "x")
+        g("remote", "add", "origin", str(remote)); g("push", "-q", "-u", "origin", "HEAD")
+        fresh = "鮮度（条件4: Figma 本体 → 書き出し）"
+        rebuild = {"why": "Figma を作り直した", "reviewBy": "2026-10-31",
+                   "Figma に関わるパス": ["Sources/UI/", "design/"]}
+
+        def rgo(failed, extra):
+            rsf.write_text("\n".join(failed) + "\n", encoding="utf-8")
+            rcf.write_text(json.dumps({KEY: {}, **extra}, ensure_ascii=False),
+                           encoding="utf-8")
+            g("add", "design/stages.json"); g("commit", "-qm", "decl")
+            g("push", "-q")                          # 宣言は push 済みにしておく
+            import contextlib, io
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = run(rsf, rcf, today, root=repo)
+            return rc, buf.getvalue()
+
+        (repo / "Sources" / "DNA" / "bg.swift").write_text("y\n", encoding="utf-8")   # 無関係な直し
+        rc, out = rgo([fresh + "\t1", core + "\t1"], {REBUILD_KEY: rebuild})
+        case("**作り直しと無関係な push なら、条件4・7 の違反を通す**", rc, 0)
+        if "作り直しと無関係な push です" not in out or "表示は落ちたまま" not in out:
+            bad.append("作り直しで通すときに、理由と「表示は落ちたまま」を言っていない")
+        case("作り直しの宣言が無ければ、今までどおり通さない",
+             rgo([fresh + "\t1"], {})[0], 1)
+        case("期限が切れた作り直しの宣言では通さない",
+             rgo([fresh + "\t1"], {REBUILD_KEY: {**rebuild, "reviewBy": "2026-09-18"}})[0], 1)
+        case("パスを書いていない作り直しの宣言では通さない",
+             rgo([fresh + "\t1"], {REBUILD_KEY: {**rebuild, "Figma に関わるパス": []}})[0], 1)
+        case("条件4・7 以外の中核（条件5）は、作り直しでも通さない",
+             rgo(["再現性の判定（条件5: 描画で別物）\t1"], {REBUILD_KEY: rebuild})[0], 1)
+        (repo / "Sources" / "UI" / "tabs.swift").write_text("z\n", encoding="utf-8")   # 関わるパス
+        rc, out = rgo([fresh + "\t1"], {REBUILD_KEY: rebuild})
+        case("**作り直しに関わるパスに触れた push は、今までどおり通さない**", rc, 1)
+        if "作り直しに関わるパスに触れています" not in out or "Sources/UI/tabs.swift" not in out:
+            bad.append("関わるパスに触れたときに、どのファイルかを言っていない")
+        _sp.run(["git", "-C", str(repo), "checkout", "--", "Sources/UI/tabs.swift"],
+                capture_output=True)
+        (repo / "Sources" / "UI" / "new.swift").write_text("n\n", encoding="utf-8")    # 新規も数える
+        case("関わるパスに足した新しいファイルも「触れた」と数える",
+             rgo([fresh + "\t1"], {REBUILD_KEY: rebuild})[0], 1)
+        (repo / "Sources" / "UI" / "new.swift").unlink()
+        plain = root / "plain"; (plain / "design").mkdir(parents=True)
+        pcf = plain / "design" / "stages.json"
+        pcf.write_text(json.dumps({KEY: {}, REBUILD_KEY: rebuild}, ensure_ascii=False),
+                       encoding="utf-8")
+        rsf.write_text(fresh + "\t1\n", encoding="utf-8")
+        import contextlib as _c2, io as _i2
+        with _c2.redirect_stdout(_i2.StringIO()):
+            rc_plain = run(rsf, pcf, today, root=plain)
+        case("git で触ったファイルを読めなければ、無関係と言わない", rc_plain, 1)
+
         # **期限内でも、落ちたことは出す**（嘘の緑にしない）
         rc, out = go(["実装網羅"], {"実装網羅": good})
         if "表示は落ちたまま" not in out:
@@ -262,7 +417,7 @@ def self_test() -> int:
             print(b)
         print(f"NG: 自己検査が {len(bad)} 件落ちました。**この道具が空振りしています。**")
         return 1
-    print("self-test: OK（自己検査 11 件とも期待どおりでした）")
+    print("self-test: OK（自己検査が全部期待どおりでした）")
     return 0
 
 

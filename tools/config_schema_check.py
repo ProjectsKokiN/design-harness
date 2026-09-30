@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
 
 # 宣言のかたまりごとに「要る鍵」を決める。**ここが正本。**
-# 値は (要る鍵, かたまりの型) で、型は "listOfDict"（一覧）か "dictOfDict"（名前つき）
+# 値は (要る鍵, かたまりの型) で、型は "listOfDict"（一覧）か "dictOfDict"（名前つき）か "dict"（1つ）
 BLOCKS = {
     "gaps.json": {
         "notVerifiable": (("item", "why", "reviewBy"), "listOfDict"),
@@ -45,6 +45,8 @@ BLOCKS = {
         "外した":        (("why", "かわりに", "reviewBy"), "dictOfDict"),
         "まだ測れない":   (("why", "reviewBy"), "dictOfDict"),
         "緩和":          (("what", "why", "reviewBy"), "listOfDict"),
+        # Figma の作り直し中の宣言（#147・2026-09-30）。not_yet_check が読む
+        "Figma の作り直し": (("why", "reviewBy", "Figma に関わるパス"), "dict"),
     },
     "machine-scope.json": {
         "machines": ((), "dictOfAny"),
@@ -113,6 +115,16 @@ def check_file(path: Path) -> tuple[int, list[str]]:
                     errs.append(
                         f"  **`{key}.{k2}` に {'・'.join(miss)} がありません**: {path}\n"
                         f"      いまの鍵: {list(item)} / 要る鍵: {'・'.join(needed)}")
+        elif kind == "dict":
+            if not isinstance(v, dict):
+                errs.append(f"  **`{key}` は辞書で書いてください**: {path}"
+                            f"（いまは {type(v).__name__}）")
+                continue
+            miss = [k for k in needed if not v.get(k) or (isinstance(v.get(k), str)
+                                                          and not v[k].strip())]
+            if miss:
+                errs.append(f"  **`{key}` に {'・'.join(miss)} がありません**: {path}\n"
+                            f"      いまの鍵: {list(v)} / 要る鍵: {'・'.join(needed)}")
         elif kind == "dictOfAny":
             if not isinstance(v, dict):
                 errs.append(f"  **`{key}` は辞書で書いてください**: {path}"
@@ -184,6 +196,13 @@ def self_test() -> int:
                                                 "reviewBy": "2026-11-30"}}})[0], 0)
         case("まだ測れない も見る",
              go("stages.json", {"まだ測れない": {"a": {"why": "x"}}})[0], 1)
+        rb = {"why": "x", "reviewBy": "2026-11-30", "Figma に関わるパス": ["design/"]}
+        case("作り直しの宣言が揃えば通る",
+             go("stages.json", {"Figma の作り直し": rb})[0], 0)
+        case("作り直しの宣言にパスが無ければ落ちる",
+             go("stages.json", {"Figma の作り直し": {**rb, "Figma に関わるパス": []}})[0], 1)
+        case("作り直しの宣言が辞書でなければ落ちる",
+             go("stages.json", {"Figma の作り直し": ["design/"]})[0], 1)
         case("machines が無い machine-scope は落ちる",
              go("machine-scope.json", {"shared": []})[0], 1)
         case("rules が無い rules.json は落ちる",
@@ -205,7 +224,7 @@ def self_test() -> int:
             print(b)
         print(f"NG: 自己検査が {len(bad)} 件落ちました。**この道具が空振りしています。**")
         return 1
-    print("self-test: OK（自己検査 12 件とも期待どおりでした）")
+    print("self-test: OK（自己検査が全部期待どおりでした）")
     return 0
 
 

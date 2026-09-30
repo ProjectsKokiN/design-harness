@@ -1779,38 +1779,7 @@ def vocab_check() -> int:
 
 
 
-def _changed_files(root):
-    """いま手を入れているファイル（作業ツリー＋未 push）を集める。
-
-    返り値は（ファイルの集まり, 全部見られたか）。**全部は見られなかったとき、
-    「無関係」とは言えません**（見ていないファイルに手が入っているかもしれない）。
-
-    2026-09-28 に 2 つ直しました（FlashEnglish の実測で、#138 の直しが効いていないと判明）:
-    - `git status --porcelain` の行を**先に strip してから 3 文字切っていた**ため、
-      「作業ツリーで変更しただけ」の行（先頭が空白の ` M lib/x.dart`）はパスの頭が欠けて、
-      **いま触っているファイルが「無関係」になっていた**。self-test は新規ファイル
-      （`?? `）でしか試しておらず、気づけませんでした
-    - 上流（`@{u}`）が無いと未 push のコミットを黙って見落とし、そこで直したファイルも
-      「無関係」になっていた。FlashEnglish は上流を設定しない作業用のブランチで作業する
-      ので、いつもこれに当たる。**上流の設定に頼らず、どのリモートにも無いコミット**
-      （`HEAD --not --remotes`）で直したファイルを数える
-    """
-    out, complete = set(), True
-    for args in (('status', '--porcelain'),
-                 ('log', '--name-only', '--format=', 'HEAD', '--not', '--remotes')):
-        r = subprocess.run(['git', '-c', 'core.quotepath=false', '-C', str(root), *args],
-                           capture_output=True, text=True, encoding='utf-8', errors='replace')
-        if r.returncode != 0:
-            complete = False
-            continue
-        for raw in r.stdout.splitlines():
-            line = raw[3:] if args[0] == 'status' else raw
-            line = line.strip().strip('"')
-            if ' -> ' in line:
-                line = line.split(' -> ', 1)[1].strip('"')
-            if line:
-                out.add(line)
-    return out, complete
+from _worktree import changed_files as _changed_files  # noqa: E402  共通の部品（#147 と同じ読み方）
 
 
 def impl_paths(value) -> list:
