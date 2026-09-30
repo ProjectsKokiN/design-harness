@@ -267,6 +267,37 @@ def check_impl_targets(map_path, root, lib_dir="lib"):
 _COMMENT_RX = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
 
 
+_LINE_REF_RX = re.compile(r"\.md:\d+")
+_HEADING_RX = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
+
+
+def decided_problem(ref, root):
+    """`decided`（決定の置き場）が読めないときの理由。読めれば None（2026-09-30）。
+
+    形は「ファイル#見出し」。ファイルは案件の根から見たパス。見出しは `#` の行の文字と
+    完全一致で探す（前後の空白と末尾の `#` は無視）。
+    """
+    ref = ref.strip()
+    if _LINE_REF_RX.search(ref):
+        return (f"`decided` が行番号で書かれています（{ref}）。**行番号は文書に1行足すと"
+                f"黙って別の文を指します。**「ファイル#見出し」で書いてください")
+    if "#" not in ref:
+        return f"`decided` は「ファイル#見出し」で書きます（いまは {ref}）"
+    rel, heading = ref.split("#", 1)
+    heading = heading.strip()
+    f = Path(root) / rel.strip()
+    try:
+        lines = f.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return f"`decided` のファイルがありません: {rel.strip()}"
+    for line in lines:
+        m = _HEADING_RX.match(line)
+        if m and m.group(1).strip() == heading:
+            return None
+    return (f"`decided` の見出しが {rel.strip()} にありません: {heading}"
+            f"（見出しを消したか、名前を変えた可能性）")
+
+
 def check_standards(map_path, root, lib_dir="lib"):
     """**プラットフォームの標準で実装した**部品を、実装ありと数えてよいかを見る（2026-09-25）。
 
@@ -279,11 +310,14 @@ def check_standards(map_path, root, lib_dir="lib"):
         {"figma": "Icon", "impl": [],
          "standard": {"uses": "Image(systemName:",
                       "why": "SF Symbols で描く。Figma の Icon は表示用の器",
-                      "decided": "DECISIONS.md:1596（ユーザー決定）"}}
+                      "decided": "DECISIONS.md#アイコンは SF Symbols で描く"}}
 
     - `uses` の文字列が、`lib_dir` の実装（コメントを外したもの）に**実際に出ること**を測る
     - `why` と `decided`（ユーザーの決定がどこに書いてあるか）が無ければ数えない。
       **AI がどれを作る・作らないを判断しない**（2026-08-29 の規則）ので、決めた人の記録を要る
+    - **`decided` は「ファイル#見出し」で書き、そのファイルと見出しが実在するかを見る**
+      （2026-09-30 ユーザー確定「2はBでいい。」）。行番号（`DECISIONS.md:1596`）は、
+      文書に1行足すだけで黙って別の文を指すので受けない
 
     戻り: ({figma 名: uses}, [(figma 名, 理由)])
     """
@@ -316,6 +350,10 @@ def check_standards(map_path, root, lib_dir="lib"):
         if missing:
             bad.append((figma, f"`standard` に {' / '.join(missing)} がありません"
                                f"（決めた人の記録が無い宣言は数えません）"))
+            continue
+        why_ref = decided_problem(st["decided"], root)
+        if why_ref:
+            bad.append((figma, why_ref))
             continue
         if not code:
             bad.append((figma, f"`{lib_dir}/` に実装が無いので、`{st['uses']}` を"
@@ -856,8 +894,10 @@ def self_test():
 
         # ─── プラットフォームの標準で実装（2026-09-25・PlantTalk）──────────
         # 宣言だけでは数えない。**使っていることを測る**。決めた人の記録も要る
+        (base / "DECISIONS.md").write_text(
+            "# 決定\n\n## アイコンは SF Symbols で描く\n\n本文\n", encoding="utf-8")
         std = {"uses": "Image(systemName:", "why": "SF Symbols で描く",
-               "decided": "DECISIONS.md（ユーザー決定）"}
+               "decided": "DECISIONS.md#アイコンは SF Symbols で描く"}
         (base / "lib" / "v.dart").write_text(
             "// Image(systemName: はコメントでは数えない\nclass V {}\n", encoding="utf-8")
 
@@ -875,6 +915,19 @@ def self_test():
         std_map({**std, "decided": ""})
         if main(cfg) != 1:
             print("self-test NG: **決めた人の記録が無い宣言を数えた**"); ok = False
+        # **決定の置き場は見出しで参照し、実在を確かめる**（2026-09-30・「2はBでいい。」）
+        (base / "lib" / "v.dart").write_text(
+            "class V { var i = Image(systemName: \"leaf\") }\n", encoding="utf-8")
+        for bad_ref, what in (("DECISIONS.md:3", "行番号"),
+                              ("DECISIONS.md#消した見出し", "無い見出し"),
+                              ("ない.md#アイコンは SF Symbols で描く", "無いファイル"),
+                              ("DECISIONS.md（ユーザー決定）", "見出しの無い書き方")):
+            std_map({**std, "decided": bad_ref})
+            if main(cfg) != 1:
+                print(f"self-test NG: **{what}の決定の参照を数えた**（{bad_ref}）"); ok = False
+        # 行番号には「行番号で書かれている」と直し方を出す（ほかの判定に紛れさせない）
+        if "行番号" not in (decided_problem("DECISIONS.md:3", base) or ""):
+            print("self-test NG: 行番号の参照に、行番号だと言わない"); ok = False
         std_map({k: v for k, v in std.items() if k != "why"})
         if main(cfg) != 1:
             print("self-test NG: **理由の無い宣言を数えた**"); ok = False
