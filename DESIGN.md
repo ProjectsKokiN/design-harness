@@ -283,18 +283,28 @@ aub-familywalk の実測（2026-09-03）: カタログの鮮度のハッシュ�
 落ちたため足しました（**嘘の `flutter` を書かせないため**）。
 
 - SafeArea / ノッチ対応（`flutter` と同じ）
-- **タップ領域は最小 44pt**（HIG の値。`flutter` 節が 48dp なのは Android と揃えるため。
-  iOS 単独なら 44 が素直です）
+- **タップ領域は Apple と同じ 2 段で見る: 標準 44×44pt・最小 28×28pt**（HIG の Accessibility。
+  2026-09-30 ユーザー確定「5はAでいい。」・#155）。自前の部品は 44pt を目指し、
+  Apple 自身の部品と同じ大きさ（例: セグメンテッドコントロールの高さ 32pt）は最小 28pt まで認めます。
+  **28pt を下回るものは例外として案件の DESIGN.md に理由を書く。**
+  それまで「最小 44pt」の 1 段だけで、PlantTalk は案件に例外を書いて Apple の最小に合わせていました。
+  `flutter` 節が 48dp なのは Android と揃えるため
 - **文字の大きさは倍率ではなく Dynamic Type の段で見る。**
   受け入れ条件は `XCUIApplication.performAccessibilityAudit(.dynamicType)` が通ること。
   **固定サイズ（`.system(size:)`）を使わない**——使うと段に載らず、この検査も成立しません
-- **文字・区切り線・背景は Apple のセマンティックカラーを名前で参照する**
-  （`.primary` / `Color(.label)` / `Color(.separator)`）。**値で書かない。**
+- **文字・区切り線・背景の色は、案件が決めた色の正を名前で参照する。値で書かない**
+  （2026-09-30 ユーザー確定「4はAでいい。」・#154）。色の正は案件の DESIGN.md に宣言します。
+  Apple のセマンティックカラーを正にした案件は `.primary` / `Color(.label)` / `Color(.separator)`、
+  Figma の自前の変数を正にした案件（PlantTalk の ColorSemantic）はそのトークンを名前で参照します。
+  それまで Apple のセマンティックカラーに決め打ちで、自前の色を正にした PlantTalk は
+  案件に読み替えの例外を書いていました。
   iOS 26 以降のガラスは背面の内容で明るさが変わるので、固定した色は読めなくなります。
   `rules-swift.json` の `no-apple-color-by-value` と対です
 - 画面回転・分割ビューで破綻しない（対応しない場合は明示的に固定する）
 
-**確信度 中。** 44pt と Dynamic Type は HIG と XCTest の仕様から導いた値で、
+**確信度 中。** 44pt・28pt と Dynamic Type は HIG と XCTest の仕様から導いた値で、
+**`performAccessibilityAudit` の hitRegion がどの大きさから指摘するかは確かめていません**（28〜44pt の部品を
+指摘するなら、テンプレートの除外で扱う）。
 **実機で確かめたのは読み上げの検査だけ**です（2026-09-18・Mac mini）。
 実機で合わない点が出たら、ここを直してください。
 
