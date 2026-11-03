@@ -169,8 +169,28 @@ class Ctx:
         return s.get("name") if s else None
 
 
+def bvars(n):
+    """節点の boundVariables を器の欄の名前で返す。
+
+    REST は幅・高さの変数を `size: {x, y}` で返し、器は `width`・`height` で返す（2026-11-03・414 で見つかった。
+    アイコンの寸法が Width&Heights の変数に結ばれているのに、bind= と上書きから width・height が落ちていた）。
+    器の boundVariables では width・height が先に来るので、先に置く
+    """
+    bv = n.get("boundVariables") or {}
+    size_bv = bv.get("size") if isinstance(bv.get("size"), dict) else {}
+    out = {}
+    if size_bv.get("x"):
+        out["width"] = size_bv["x"]
+    if size_bv.get("y"):
+        out["height"] = size_bv["y"]
+    for k, v in bv.items():
+        if k != "size":
+            out[k] = v
+    return out
+
+
 def bn(ctx, n, f):
-    bv = (n.get("boundVariables") or {}).get(f)
+    bv = bvars(n).get(f)
     return ctx.var(bv, n, f) if bv else None
 
 
@@ -306,7 +326,7 @@ def ov_value(ctx, node, f):
         return node.get("visible", True)
     if f == "boundVariables":
         out = {}
-        for k, v in (node.get("boundVariables") or {}).items():
+        for k, v in bvars(node).items():
             if k == "individualStrokeWeights" and isinstance(v, dict):
                 # REST は線ごとの太さの変数を BORDER_*_WEIGHT でまとめて返す。器は strokeTopWeight などの欄で返す
                 for side, key in (("BORDER_TOP_WEIGHT", "strokeTopWeight"), ("BORDER_RIGHT_WEIGHT", "strokeRightWeight"),
@@ -1003,6 +1023,14 @@ def self_test():
             ck("|In|RECTANGLE|" in whole, "グループの中の子が行に無い")
             ck("line=1,CENTER,90" in whole and "stroke=SOLID:#000000" in whole, f"線の向き・塗りが行に無い（#184）:\n{whole}")
             # 辺ごとに太さが違うと、strokeWeight= と outline= の両方が MIXED（器は figma.mixed を rn で MIXED にする）
+            # 幅・高さの変数（REST は size.x / size.y）を、bind= と上書きの両方で width・height として書く（414）
+            sz_n = {"id": "s", "type": "FRAME", "layoutMode": "VERTICAL",
+                    "boundVariables": {"size": {"x": {"type": "VARIABLE_ALIAS", "id": VID}},
+                                       "paddingTop": {"type": "VARIABLE_ALIAS", "id": VID}}}
+            sctx = Ctx({VID: "Gap/M"}, {}, {}, {}, {}, {}, {VID: 16})
+            ck("bind=paddingTop:Gap/M,width:Gap/M" in shape(sctx, sz_n, None)
+               and list(ov_value(sctx, sz_n, "boundVariables"))[:2] == ["width", "paddingTop"],
+               "**幅・高さに結んだ変数（size.x / size.y）を書かない**（414 のアイコンの寸法）")
             el = {"id": "e", "type": "ELLIPSE", "boundVariables": {"cornerRadius": {"type": "VARIABLE_ALIAS", "id": VID}}}
             ck("radius=16" in shape(Ctx({VID: "Gap/M"}, {}, {}, {}, {}, {}, {VID: 16}), el, None),
                "**楕円の角丸（結んだ変数の値）を書かない**（器は値で書く・414）")
