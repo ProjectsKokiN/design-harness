@@ -85,3 +85,13 @@ return JSON.stringify({ $meta: { declared: c.declared, pages: c.pages }, result 
 - **2026-09-02**: 414 の Figma で `Lists/Subtle` が `Lists` に改名され、同名が
   2つになった。器も鮮度検査も止まった（**止まるのが正しい**。黙って上書きすると
   26件のうち1件が別物にすり替わったまま下流の照合が全部通る）
+
+## 大きい画面は REST で取る（#179・2026-11-03）
+
+`export_frames.js` は use_figma の1回の戻り（約18KB）に収まる量しか返せない。画面が大きく、分割（`frame_io.py`）でも
+書き写す量が現実的でないときは、`tools/export_frames_rest.py` で **REST API から同じ行の形**を作ってファイルへ直接書く。
+
+- 変数は REST では id しか返らないので、`export_variables.js` の出力（2026-11-03 から `id`・`key`・全モードの値を書く）を `--variables` に渡す
+- 同じ行になるかは、器に行ごとのハッシュだけを返させ（`TRANSFER_MODE = 'manifest'`）、`--compare-hashes` で照合する
+- portfolio の 23 画面（964 行）で 960 行が一致。残り 4 行は REST では区別できない違い（部品の上書きで、効果のスタイルだけか中身もか）
+- 両方の器で、部品の性質（props）は**名前の順**に並べる（Plugin API の返す順に決まりが無く、REST と合わせられないため）

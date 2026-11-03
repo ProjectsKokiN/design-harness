@@ -133,7 +133,11 @@ async function fillsOf(n) {
 /** インスタンスの性質の値（#150）。VARIANT は of= に出すので書かない。名前の #id は落とす */
 async function propsOf(n) {
   const props = {};
-  for (const [k, v] of Object.entries(n.componentProperties || {})) {
+  // **名前の順に並べる**（#179・2026-11-03）。Plugin API が返す順は定義の順でも ID の順でもなく、REST の器と
+  // 合わせられないため。順に意味は無い
+  const entries = Object.entries(n.componentProperties || {})
+    .sort((a, b) => { const x = a[0].replace(/#[^#]*$/, ''), y = b[0].replace(/#[^#]*$/, ''); return x < y ? -1 : x > y ? 1 : 0; });
+  for (const [k, v] of entries) {
     const key = k.replace(/#[^#]*$/, '');
     if (v.type === 'BOOLEAN' || v.type === 'TEXT') props[key] = v.value;
     else if (v.type === 'INSTANCE_SWAP') {

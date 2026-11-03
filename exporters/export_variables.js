@@ -49,6 +49,8 @@ for (const col of await figma.variables.getLocalVariableCollectionsAsync()) {
     row.scopes = v.scopes;
     // **key を書く**（候補6・2026-11-03）。作り直すと key が変わり、使う側のつながりが切れる
     if (v.key) row.key = v.key;
+    // **id も書く**（#179・2026-11-03）。REST は変数を id でしか返さないので、名前に引く対応表になる
+    row.id = v.id;
     if (v.description) row.description = v.description;
     rows.push(row);
   }
