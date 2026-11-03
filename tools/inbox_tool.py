@@ -256,6 +256,29 @@ def do_add(path, root, to, title, body, date, with_target, target_repo=None):
     return 0
 
 
+ARCHIVE_SECTION_RX = re.compile(r"^## (\d{4}-\d{2}-\d{2}) ", re.M)
+
+
+def insert_archive(a, block):
+    """アーカイブに節を足す。**案件の並び（新しい順か古い順か）に合わせる**（#183）。
+
+    2026-11-03 まで、題が ARCHIVE_TITLE と一字一句同じときだけ先頭に入れ、違えば末尾に足していた。
+    FlashEnglish は題が違い（「— アーカイブ（完了した依頼）」）、新しい順に並べているのに末尾へ足され、並びが混ざった。
+    **題ではなく、すでにある日付つきの節の並びから決める。** 最初の節が最後の節より新しい（か同じ）なら新しい順。
+    日付つきの節が無ければ、題の直後（新しい順）に入れる。
+    """
+    heads = list(ARCHIVE_SECTION_RX.finditer(a))
+    if heads and heads[0].group(1) < heads[-1].group(1):
+        return a.rstrip("\n") + "\n\n" + block           # 古い順 → 末尾
+    if heads:
+        at = heads[0].start()                              # 新しい順 → 最初の節の前
+        return a[:at] + block.rstrip("\n") + "\n\n" + a[at:]
+    nl = a.index("\n") + 1 if "\n" in a else len(a)
+    while nl < len(a) and a[nl] == "\n":
+        nl += 1
+    return a[:nl] + ("\n" if nl == len(a) and not a.endswith("\n\n") else "") + block + a[nl:]
+
+
 def do_complete(path, archive, query, recipient=None):
     """節を `[完了]` にしてアーカイブへ移す。
 
@@ -304,14 +327,7 @@ def do_complete(path, archive, query, recipient=None):
         print(f"注意: 索引の行が {removed} 件消えました（1 件のはず）。索引を目で確かめてください")
     path.write_text("".join(keep), encoding="utf-8")
     if archive.exists():
-        a = archive.read_text(encoding="utf-8")
-        if a.startswith(ARCHIVE_TITLE):
-            nl = a.index("\n") + 1
-            while nl < len(a) and a[nl] == "\n":
-                nl += 1
-            a = a[:nl] + block + a[nl:]
-        else:
-            a = a.rstrip("\n") + "\n\n" + block
+        a = insert_archive(archive.read_text(encoding="utf-8"), block)
     else:
         a = ARCHIVE_TITLE + "\n\n" + block
     archive.write_text(a, encoding="utf-8")
@@ -699,6 +715,18 @@ def self_test():
             check(s in a, f"**本文がアーカイブに入っていない**: {s!r}")
         check("## セッションログの書き方" in t and "## ビルドを頼むときの決まり" in t,
               "**文書の構造の見出しまで移した**（切りすぎ）")
+
+        # アーカイブの並び（#183）: 題が違っても、既にある節の並びに合わせる
+        new_first = "# 別の題\n\n説明\n\n## 2026-10-03 宛先: A [完了] — 新\n\nx\n\n## 2026-09-01 宛先: A [完了] — 古\n\ny\n"
+        blk = "## 2026-11-03 宛先: A [完了] — 今日\n\nz\n"
+        got = insert_archive(new_first, blk)
+        check(got.index("今日") < got.index("— 新") and got.startswith("# 別の題\n\n説明"),
+              f"**新しい順のアーカイブで先頭に入れない**（題が違うとき）:\n{got}")
+        old_first = "# 別の題\n\n## 2026-09-01 宛先: A [完了] — 古\n\ny\n\n## 2026-10-03 宛先: A [完了] — 新\n\nx\n"
+        got = insert_archive(old_first, blk)
+        check(got.rstrip().endswith("z") and got.index("— 新") < got.index("今日"), f"**古い順のアーカイブで末尾に足さない**:\n{got}")
+        got = insert_archive(ARCHIVE_TITLE + "\n\n", blk)
+        check(got.startswith(ARCHIVE_TITLE) and "今日" in got, f"節の無いアーカイブに入れられない:\n{got}")
 
         # 曖昧な指定は止まる（3 件に当たる）
         rc, _ = run("--complete", "宛先:")
