@@ -46,9 +46,17 @@ def blocks_of(doc):
         if isinstance(fr, dict) and isinstance(fr.get("rows"), list):
             out.append((f"画面 {fr.get('name') or fid}", fr["rows"]))
     for key in ("componentSets", "singleComponents"):
-        for name, s in (doc.get(key) or {}).items():
-            for vname, v in (s.get("variants") or {}).items():
-                if isinstance(v.get("rows"), list):
+        sets = doc.get(key) or {}
+        if not isinstance(sets, dict):
+            continue
+        for name, s in sets.items():
+            # **古い形の書き出し**（414 の components.json は variants が数）は行を持たないので数えない。
+            # 例外で止めず、行が1つも無ければ「見ていない」（2）になる（2026-11-03 FlashEnglish のセッションが踏んだ）
+            variants = s.get("variants") if isinstance(s, dict) else None
+            if not isinstance(variants, dict):
+                continue
+            for vname, v in variants.items():
+                if isinstance(v, dict) and isinstance(v.get("rows"), list):
                     out.append((f"部品 {name}" + ("" if vname == "-" else f"/{vname}"), v["rows"]))
     return out
 
@@ -158,6 +166,10 @@ def self_test():
             "0|Size=M|COMPONENT|10|10|0|0|fill=SOLID:#000000"]}}}}}), encoding="utf-8")
         rc, out = check([comp])
         ck(rc == 1 and any("部品 Button/Size=M" in x for x in out), f"部品の直値を場所つきで言わない: {out}")
+        old = Path(td) / "old.json"
+        old.write_text(json.dumps({"componentSets": {"Button": {"variants": 4, "props": {}}}}), encoding="utf-8")
+        rc, out = check([old])
+        ck(rc == 2, f"古い形（variants が数）で 2 を返さない: {rc} {out}")
         ck(main([str(comp)]) == 1 and main([str(Path(td) / "none.json")]) == 2, "入口の終了コードが違う")
         import contextlib, io
         with contextlib.redirect_stderr(io.StringIO()):
