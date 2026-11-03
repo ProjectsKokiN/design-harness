@@ -65,6 +65,15 @@ FLUTTER_SHAPES = {
     "stroke": r"Border(?:Side)?(?:\.all)?\((?:[^()]|\([^()]*\)){0,300}?color:\s*",
     "effect": r"BoxShadow\((?:[^()]|\([^()]*\)){0,300}?color:\s*",
 }
+#: 生成した規則の仕込み（_selftest）の型。{c} に `AppColor.xxx` が入る（#180）。
+#: 生成物に仕込みが無いと、段「ルールの仕込み」が「確かめられない」で止まり、
+#: 案件で手で足すと --check-flutter（作り直して一致するか）が崩れる
+FLUTTER_EXAMPLES = {
+    "text": "Text('a', style: TextStyle(fontSize: 14, color: {c}))",
+    "surface": "Container(decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), color: {c}))",
+    "stroke": "BoxDecoration(border: Border.all(width: 1, color: {c}))",
+    "effect": "BoxDecoration(boxShadow: [BoxShadow(blurRadius: 4, color: {c})])",
+}
 RULE_RX = re.compile(r"([^{}]+)\{([^{}]*)\}")
 COMMENT_RX = re.compile(r"/\*.*?\*/", re.S)
 VAR_RX = re.compile(r"var\(\s*(--[\w-]+)")
@@ -301,6 +310,10 @@ def flutter_rules(variables, klass="AppColor"):
             "severity": "error",
             "forbidden": f"{USAGE_JA[usage]}に、{USAGE_JA[usage]}用でないトークン（{', '.join(bad_roles)}）を使う（Figma の用途から生成）",
             "instead": f"{USAGE_JA[usage]}には {', '.join(ok_roles)} の役割のトークンを使う",
+            "_selftest": {
+                "bad": [FLUTTER_EXAMPLES[usage].format(c=f"{klass}.{camel(r)}NeutralDefault") for r in bad_roles],
+                "good": [FLUTTER_EXAMPLES[usage].format(c=f"{klass}.{camel(r)}NeutralDefault") for r in ok_roles],
+            },
         })
     return rules, from_names
 
@@ -403,6 +416,13 @@ def self_test():
         ck(surf is not None and re.search(surf["pattern"], "BoxDecoration(color: AppColor.textNeutralDefault)")
            and not re.search(surf["pattern"], "BoxDecoration(color: AppColor.frameNeutralDefault)"),
            f"生成した Flutter の規則が当たらない・当たりすぎる: {surf}")
+        # 生成物は仕込みを持ち、それぞれが当たる・当たらない（#180）
+        for r in rules:
+            st = r.get("_selftest") or {}
+            ck(st.get("bad") and st.get("good")
+               and all(re.search(r["pattern"], s) for s in st["bad"])
+               and not any(re.search(r["pattern"], s) for s in st["good"]),
+               f"生成した規則の仕込みが無いか、当たり方が違う: {r['id']} {st}")
         out_json = root / "scope.generated.json"
         cfg.write_text(json.dumps({"variables": "figma/v414.json"}), encoding="utf-8")
         ck(main(["--config", str(cfg), "--emit-flutter", str(out_json)]) == 0 and out_json.exists(), "生成できない")
