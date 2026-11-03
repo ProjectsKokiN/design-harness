@@ -120,9 +120,14 @@ def build(file_key, pages, var_paths, excluded, previous=None, tok=None):
         out[name] = entry
     body = rest.js(out)
     meta = {
-        "declared": {"componentSets": sum(1 for s in found.values() if s["kind"] == "set"),
-                     "singleComponents": sum(1 for s in found.values() if s["kind"] == "single"),
-                     "pages": len(seen)},
+        # **このファイルに入っている数**を宣言する（外したセットは excludedSets で別に数える）。
+        # 読み手（FlashEnglish の gen_layout.py）は「入っているセットの数 == declared.componentSets」を見る。
+        # 外す前の数を書くと食い違う（2026-11-04・414 で見つかった）
+        "declared": {"componentSets": sum(1 for s in out.values() if s["kind"] == "set"),
+                     "singleComponents": sum(1 for s in out.values() if s["kind"] == "single"),
+                     "variants": sum(len(s["variants"]) for s in out.values()),
+                     "rows": sum(len(v["rows"]) for s in out.values() for v in s["variants"].values()),
+                     "excludedSets": len(excluded), "pages": len(seen)},
         "pages": seen,
         "excluded": {n: {"why": excluded[n]["why"], "board": found[n]["board"], "order": found[n]["order"]}
                      for n in sorted(excluded)},
@@ -213,7 +218,8 @@ def self_test():
                f"外したセットの置き場所を実測していない: {doc['$meta']['excluded']}")
             ck(carried == list(CARRY) and doc["$meta"]["restDigests"] == {"Button": "x"}
                and "器との照合" not in doc["$meta"], "鮮度の記録を引き継がない、または照合の結果まで引き継いだ")
-            ck(doc["$meta"]["declared"] == {"componentSets": 2, "singleComponents": 1, "pages": 1}
+            ck(doc["$meta"]["declared"] == {"componentSets": 1, "singleComponents": 1, "variants": 3, "rows": 6,
+                                            "excludedSets": 1, "pages": 1}
                and doc["$meta"]["pages"] == ["System"], f"数え方が器と違う（許可ページだけ数える）: {doc['$meta']['declared']}")
             ck(doc["digest"]["value"] == rest.fnv(rest.js(cs)), "ハッシュが本体と合わない")
             for bad, why in (({"Icons": {}}, "why の無い外し"), ({"Nope": {"why": "x"}}, "Figma に無いセットの外し")):
@@ -284,8 +290,8 @@ def main(argv=None):
         return 2
     a.out.write_text(rest.safe(json.dumps(doc, ensure_ascii=False, indent=1)) + "\n", encoding="utf-8")
     d = doc["$meta"]["declared"]
-    print(f"セット {d['componentSets']}・単体 {d['singleComponents']}（外した {len(excluded)}）・"
-          f"変異 {doc['digest']['variants']} を書きました: {a.out}"
+    print(f"セット {d['componentSets']}・単体 {d['singleComponents']}（外した {d['excludedSets']}）・"
+          f"変異 {d['variants']}・行 {d['rows']} を書きました: {a.out}"
           f"（読めなかったもの {len(doc['$meta']['読めなかったもの'])} 件・引き継いだ {', '.join(carried) or 'なし'}）")
     print("**器との照合をやり直してください**（export_frames_rest.py --compare-hashes）")
     return 0
