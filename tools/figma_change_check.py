@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""ノードIDで改名・単体から変異セットへの変更を見つけ、古い参照を探す（#169）。"""
+"""ノードIDで改名・単体から変異セットへの変更を見つけ、古い参照を探す（#169）。
+
+**作り直しも見つける**（候補6・2026-11-03）。部品・変数を作り直すと、ID も key も変わるので、
+ID で見る改名の照合には現れない。**名前が同じなのに key が変わったもの**を名指しする
+（作り直すと、使う側の画面とのつながりが切れる。外部の実践例 ds-base-ui の教訓）。
+key は書き出し器が 2026-11-03 から書く。どちらかの書き出しに key が無ければ「見ていない」と言う。
+変数の書き出し（collections）どうしなら、改名の照合は飛ばして key だけを見る。
+"""
 import argparse
 import json
 import re
@@ -38,6 +45,37 @@ def nodes(doc):
 def changes(before, after):
     old, new = nodes(before), nodes(after)
     return [{'id': k, 'before': old[k], 'after': new[k]} for k in old.keys() & new.keys() if old[k] != new[k]]
+
+
+def keys_by_name(doc):
+    """名前 → key。部品セット・変異（`セット/変異`）・変数（`コレクション/名前`）。"""
+    out = {}
+    for key in ('componentSets', 'singleComponents'):
+        for name, node in (doc.get(key) or {}).items():
+            if node.get('key'):
+                out[f'部品 {name}'] = node['key']
+            for vname, v in (node.get('variants') or {}).items():
+                if v.get('key'):
+                    out[f'部品 {name}/{vname}'] = v['key']
+    cols = doc.get('collections') or {}
+    for cname, col in (cols.items() if isinstance(cols, dict) else ()):
+        for v in (col.get('variables') or []) if isinstance(col, dict) else []:
+            if isinstance(v, dict) and v.get('key') and v.get('name'):
+                out[f'変数 {cname}/{v["name"]}'] = v['key']
+    return out
+
+
+def recreated(before, after):
+    """`(作り直されたもの, 見たか)`。どちらかに key が1つも無ければ見ていない。"""
+    old, new = keys_by_name(before), keys_by_name(after)
+    if not old or not new:
+        return [], False
+    return [{'name': n, 'before': old[n], 'after': new[n]}
+            for n in sorted(old.keys() & new.keys()) if old[n] != new[n]], True
+
+
+def _variables_only(doc):
+    return 'collections' in doc and not any(k in doc for k in ('frames', 'componentSets', 'singleComponents'))
 
 
 def references(changed, paths):
@@ -86,6 +124,26 @@ def self_test():
         assert main(['--before', str(before), '--after', str(after)]) == 0
         f.write_text('Header/Works', encoding='utf-8')
         assert main(['--before', str(before), '--after', str(after), '--references', str(f)]) == 1
+    # **作り直し**（候補6）: 同じ名前で key が変わったものを名指しする
+    ka = {'componentSets': {'Button': {'id': '1:1', 'key': 'K1', 'variants': {'Size=M': {'id': '1:2', 'key': 'V1'}}}}}
+    kb = {'componentSets': {'Button': {'id': '9:9', 'key': 'K2', 'variants': {'Size=M': {'id': '9:8', 'key': 'V2'}}}}}
+    r, seen = recreated(ka, kb)
+    assert seen and {x['name'] for x in r} == {'部品 Button', '部品 Button/Size=M'}, r
+    assert recreated(ka, ka) == ([], True)
+    assert recreated(a, b) == ([], False)            # key が無い書き出しは「見ていない」
+    va = {'collections': {'色': {'variables': [{'name': 'Frame/Default', 'key': 'A'}]}}}
+    vb = {'collections': {'色': {'variables': [{'name': 'Frame/Default', 'key': 'B'}]}}}
+    assert recreated(va, vb)[0][0]['name'] == '変数 色/Frame/Default'
+    with tempfile.TemporaryDirectory() as td:
+        before, after = Path(td) / 'before.json', Path(td) / 'after.json'
+        before.write_text(json.dumps(ka), encoding='utf-8')
+        after.write_text(json.dumps(kb), encoding='utf-8')
+        assert main(['--before', str(before), '--after', str(after)]) == 1, '作り直しを通した'
+        before.write_text(json.dumps(va), encoding='utf-8')
+        after.write_text(json.dumps(vb), encoding='utf-8')
+        assert main(['--before', str(before), '--after', str(after)]) == 1, '変数の作り直しを通した'
+        after.write_text(json.dumps(va), encoding='utf-8')
+        assert main(['--before', str(before), '--after', str(after)]) == 0, '変わっていない変数を落とした'
     try:
         nodes({'componentSets': {'A': {}}})
     except ValueError:
@@ -108,14 +166,24 @@ def main(argv=None):
     try:
         if not args.before or not args.after:
             raise ValueError('--beforeと--afterが必要です')
-        c = changes(json.loads(args.before.read_text(encoding='utf-8')), json.loads(args.after.read_text(encoding='utf-8')))
+        before = json.loads(args.before.read_text(encoding='utf-8'))
+        after = json.loads(args.after.read_text(encoding='utf-8'))
+        c = [] if _variables_only(before) and _variables_only(after) else changes(before, after)
         refs = references(c, args.references)
+        rec, seen = recreated(before, after)
     except (OSError, ValueError, TypeError) as e:
         print(f'改名を照合できません: {e}', file=sys.stderr)
         return 2
-    print(json.dumps({'changed': c, 'referenceCandidates': refs}, ensure_ascii=False))
+    print(json.dumps({'changed': c, 'referenceCandidates': refs, 'recreated': rec}, ensure_ascii=False))
     print('参照候補は文字列で検出します。候補の意味とIDが変わった部品の対応は未検証です')
-    return 1 if refs else 0
+    if not seen:
+        print('**作り直しは見ていません**（どちらかの書き出しに key がありません。2026-11-03 以降の書き出し器で取り直す）')
+    if rec:
+        print(f'**作り直されたもの {len(rec)} 件**（名前は同じで key が変わった。使う側とのつながりが切れます）:',
+              file=sys.stderr)
+        for x in rec:
+            print(f'  {x["name"]}', file=sys.stderr)
+    return 1 if refs or rec else 0
 
 
 if __name__ == '__main__':

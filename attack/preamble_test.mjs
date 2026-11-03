@@ -107,12 +107,12 @@ check(h('a') === h('a'), 'ハッシュが同じ文字列で違う');
     getStyledTextSegments: () => segs,
   });
   const variant = (name, t, w) => ({
-    type: 'COMPONENT', name, id: 'v:' + name, width: w, height: 32, x: 0, y: 0,
+    type: 'COMPONENT', name, id: 'v:' + name, key: 'k:' + name, width: w, height: 32, x: 0, y: 0,
     children: [t],
   });
   const seg = (style, size) => ({ fontName: { family: 'SF Pro', style }, fontSize: size });
   const mk = (variants) => {
-    const set = { type: 'COMPONENT_SET', name: 'Chips/Text', id: '1:1', children: variants };
+    const set = { type: 'COMPONENT_SET', name: 'Chips/Text', id: '1:1', key: 'k:set', children: variants };
     for (const v of variants) { v.parent = set; for (const c of v.children) c.parent = v; }
     const page = {
       name: 'Comp', loadAsync: async () => {},
@@ -143,6 +143,9 @@ check(h('a') === h('a'), 'ハッシュが同じ文字列で違う');
   check(off[0]?.startsWith('0|State=Off|COMPONENT|52|32'), '全部の変異を出していない');
   check(out.digest?.variants === 2, `変異の数を数えていない: ${out.digest?.variants}`);
   check(out.componentSets?.['Chips/Text']?.variantTotal === 2, '全部の変異の数（variantTotal）を書いていない');
+  // **key を書く**（候補6・2026-11-03）。作り直しで key が変わったことに気づくため
+  check(out.componentSets?.['Chips/Text']?.key === 'k:set', '部品セットの key を書いていない');
+  check(out.componentSets?.['Chips/Text']?.variants?.['State=On']?.key === 'k:State=On', '変異の key を書いていない');
 
   const dup = await run(mk([
     variant('State=On', text('A', [seg('Regular', 13)]), 48),

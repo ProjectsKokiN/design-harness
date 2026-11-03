@@ -19,7 +19,7 @@
 // ## 出すもの
 //
 //   componentSets: { <セット名>: { id, kind: 'set'|'single',
-//                    variants: { <変異名>: { id, rows: [...] } } } }
+//                    variants: { <変異名>: { id, key, rows: [...] } } } }（key は 2026-11-03 から）
 //
 //   1行 = 深さ|名前|型|w|h|x|y|k=v|k=v...（`export_frames.js` と同じ形）
 //
@@ -243,6 +243,20 @@ async function shape(n) {
       n.counterAxisSizingMode === 'AUTO' ? 'HUG' : 'FIXED',
       n.primaryAxisAlignItems, n.counterAxisAlignItems].join(','));
   }
+  // **余白・寸法に結んだ変数**（候補6・2026-11-03）。`layout=` は数字だけなので、変数に結んでいるかが
+  // 行から分からず、Figma の中の直値を数えられなかった
+  const binds = [];
+  for (const k of ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'itemSpacing',
+      'counterAxisSpacing', 'width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight']) {
+    const v = await bn(n, k); if (v) binds.push(k + ':' + v);
+  }
+  if (binds.length) p.push('bind=' + binds.join(','));
+  // **デザイナーが「意図した直値」と印を付けた欄**（ds-base-ui の setSharedPluginData に倣う。
+  // 印は namespace 'harness'・key 'raw' に欄の名前をカンマ区切りで入れる）
+  try {
+    const raw = n.getSharedPluginData ? n.getSharedPluginData('harness', 'raw') : '';
+    if (raw) p.push('raw=' + raw.replace(/[|\n]/g, ' '));
+  } catch (_) { /* 読めない節点は印なしとして扱う */ }
   // **親が Auto Layout のときの伸び方**（FILL / HUG / FIXED）。
   //
   // 2026-09-02 まで書いていなかった。`layout=` は**その節点が親として**
@@ -384,9 +398,11 @@ for (const [kind, list] of [['set', c.sets], ['single', c.singles]]) {
       const rows = [];
       await walk(v, 0, rows);
       variants[key] = { id: v.id, rows };
+      if (v.key) variants[key].key = v.key;   // 候補6: 作り直しに気づくため
     }
     // **全部で何変異あるかを書く。**区切って回したとき、足りているかを数で確かめるため
     out[name] = { id: node.id, kind, variantTotal: all.length, variants };
+    if (node.key) out[name].key = node.key;
   }
 }
 if (dupVariants.length) return safe(JSON.stringify({ error: '同名の変異', names: dupVariants }));

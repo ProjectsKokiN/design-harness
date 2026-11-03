@@ -64,3 +64,22 @@ test('本物の分割書き出しをPythonで全体照合して復元する',asy
   assert.equal(result.frames['1:1'].rows.length,2);assert.ok(result.frames['1:1'].rows[1].includes('絵😀'));
   assert.equal(result.$meta.declared.screens,1);
 });
+test('余白・寸法に結んだ変数と、意図した直値の印を書く（候補6）',async()=>{
+  const {shape}=await functions();
+  const base={type:'FRAME',layoutMode:'VERTICAL',paddingTop:16,paddingRight:0,paddingBottom:0,paddingLeft:0,itemSpacing:8,
+    primaryAxisSizingMode:'AUTO',counterAxisSizingMode:'FIXED',primaryAxisAlignItems:'MIN',counterAxisAlignItems:'MIN'};
+  const bound=await shape({...base,boundVariables:{paddingTop:{id:'v'}},
+    getSharedPluginData:(ns,k)=>ns==='harness'&&k==='raw'?'itemSpacing':''});
+  assert.ok(bound.includes('bind=paddingTop:Size/XL'),bound);
+  assert.ok(bound.includes('raw=itemSpacing'),bound);
+  const plain=await shape(base);
+  assert.ok(!plain.includes('bind=')&&!plain.includes('raw='),plain);
+});
+test('変数の key を書く（候補6）',async()=>{
+  const src=await readFile(new URL('exporters/export_variables.js',root),'utf8');
+  const figma={fileKey:'fixture',variables:{getLocalVariableCollectionsAsync:async()=>[{name:'色',variableIds:['v'],modes:[{modeId:'l',name:'Light'}]}],
+    getVariableByIdAsync:async()=>({name:'Frame/Default',key:'k123',resolvedType:'COLOR',valuesByMode:{l:{r:1,g:1,b:1}},scopes:['FRAME_FILL']})},
+    getLocalTextStylesAsync:async()=>[],getLocalEffectStylesAsync:async()=>[],getLocalPaintStylesAsync:async()=>[]};
+  const d=JSON.parse(await new AsyncFunction('figma',src)(figma));
+  assert.equal(d.collections['色'].variables[0].key,'k123');
+});

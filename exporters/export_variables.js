@@ -47,6 +47,8 @@ for (const col of await figma.variables.getLocalVariableCollectionsAsync()) {
       else row.values[m.name] = typeof raw === 'number' ? r2(raw) : raw;
     }
     row.scopes = v.scopes;
+    // **key を書く**（候補6・2026-11-03）。作り直すと key が変わり、使う側のつながりが切れる
+    if (v.key) row.key = v.key;
     if (v.description) row.description = v.description;
     rows.push(row);
   }

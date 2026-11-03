@@ -19,7 +19,10 @@
 | `engine/web_render_check.mjs` | 動きを有効にしたまま画面を表示し、文字の切れ・隠れ・はみ出し・単位だけの改行・壊れた画像、隠れたままの画像と字・一瞬消える・打ち切られた動き、2つ以上の高さでの間隔と重なりを数値で数える（候補1・#176・#177） |
 | `engine/web_browser_check.mjs` | Chromium・WebKitのスクロールとVECTORの画素を試す。実機Safariの限界も出す |
 | `tools/frame_io.py` | 画面をIDで照合し、分割した行を件数・ハッシュで復元する |
-| `tools/figma_change_check.py` | 同じノードIDでの改名・種類変更と古い参照候補を出す |
+| `tools/figma_change_check.py` | 同じノードIDでの改名・種類変更と古い参照候補を出す。名前が同じで key が変わった部品・変数（作り直し）も名指しする（候補6） |
+| `tools/token_role_check.py` | 色のトークンを Figma の用途（scopes・役割の名前）と、Figma に実在する文字色 × 面の組み合わせで使っているか（CSS）。`--emit-flutter` で Flutter の用途の規則を Figma から生成し、`--check-flutter` で古くなっていないかを見る（候補3） |
+| `tools/figma_raw_values.py` | Figma の中で変数・スタイルに結ばれていない色・角丸・余白・線の太さ・文字を並べる**報せ**（実装の合否には使わない）。意図した直値は Figma の節点の印（`harness`/`raw`）で外す（候補6） |
+| `tools/design_coverage.py` | デザイナー本人が見た画面の割合。本人が会話で言ったら `--record` で記録し、見た目のファイルが変わると未判断に戻る（候補10） |
 | `tools/stage_run.py` | 検査の段を時間切れつきで回す（止まったら子のプロセスごと止めて終了コード2）。`--repeat N` で同じ段を続けて回し、たまに落ちる検査を見つける（#174・#178） |
 | `tools/deploy_check.py` | 公開前のGit状態を確認する。未コミット・未追跡・確認不能なら停止する |
 | `docs/web-setup.md` | Web案件の導入・React・WebKit・期待値・公開前検査の接続手順 |

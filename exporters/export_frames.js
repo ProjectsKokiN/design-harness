@@ -252,6 +252,20 @@ async function shape(n) {
       n.counterAxisSizingMode === 'AUTO' ? 'HUG' : 'FIXED',
       n.primaryAxisAlignItems, n.counterAxisAlignItems].join(','));
   }
+  // **余白・寸法に結んだ変数**（候補6・2026-11-03）。`layout=` は数字だけなので、変数に結んでいるかが
+  // 行から分からず、Figma の中の直値を数えられなかった
+  const binds = [];
+  for (const k of ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'itemSpacing',
+      'counterAxisSpacing', 'width', 'height', 'minWidth', 'maxWidth', 'minHeight', 'maxHeight']) {
+    const v = await bn(n, k); if (v) binds.push(k + ':' + v);
+  }
+  if (binds.length) p.push('bind=' + binds.join(','));
+  // **デザイナーが「意図した直値」と印を付けた欄**（ds-base-ui の setSharedPluginData に倣う。
+  // 印は namespace 'harness'・key 'raw' に欄の名前をカンマ区切りで入れる）
+  try {
+    const raw = n.getSharedPluginData ? n.getSharedPluginData('harness', 'raw') : '';
+    if (raw) p.push('raw=' + raw.replace(/[|\n]/g, ' '));
+  } catch (_) { /* 読めない節点は印なしとして扱う */ }
   // **親が Auto Layout のときの伸び方**（FILL / HUG / FIXED）。
   //
   // 2026-09-02 まで書いていなかった。`layout=` は**その節点が親として**

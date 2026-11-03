@@ -57,6 +57,13 @@ gaps.json にも宣言し、**それで verify.sh は 0 のまま通り、push �
 関門で通します（表示は落ちたまま）。関わるパスに触れた push・期限切れ・触ったファイルを
 git で読めないときは、今までどおり通しません。ほかの中核の条件は対象にしません。
 
+## Figma が変わったら、見送りは失効する（候補6の5・2026-11-03）
+
+宣言に `figmaSha256`（`{"design/figma/frames.json": "<SHA-256>"}` の形）を書くと、**書き出しの中身が
+宣言したときと変わった時点で、期限内でも通しません。**見送ったのは「その時の Figma」に対してで、
+Figma が変わったら測り直すのが筋です（外部の実践例 Impeccable の、見送りの記録を入力のハッシュに
+結ぶ仕組みから）。ハッシュは `not_yet_check.py --sha <ファイル>` で出します。読めないときも通しません。
+
 ## 終了コード
 
   0 … 落ちた段が全部、期限内の宣言で覆われている（**関門を通してよい**）
@@ -67,6 +74,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -251,6 +259,25 @@ def run(stages_file: Path, conf_path: Path, today: dt.date | None = None, root=N
                        f"    理由: {v['why'][:80]}\n"
                        f"    **測れるようになったか、期限を延ばす理由を書いてください**")
             continue
+        bound = v.get("figmaSha256")
+        if bound is not None:
+            if not isinstance(bound, dict) or not bound:
+                bad.append(f"  figmaSha256 の形が違います（{{ファイル: ハッシュ}} で書いてください）: {key}")
+                continue
+            moved = []
+            for rel, sha in bound.items():
+                try:
+                    now = hashlib.sha256((Path(root or ".") / rel).read_bytes()).hexdigest()
+                except OSError:
+                    moved.append(f"{rel}（読めません）")
+                    continue
+                if now != str(sha).strip().lower():
+                    moved.append(rel)
+            if moved:
+                bad.append(f"  **Figma の書き出しが宣言したときから変わったので、この見送りは失効しました**: {key}\n"
+                           f"    変わったもの: {', '.join(moved)}\n"
+                           f"    **測り直すか、いまの書き出しに対して宣言し直してください**（--sha でハッシュを出す）")
+                continue
         ok.append(f"  {key}（期限 {due}）— {v['why'][:70]}")
 
     if no_code:
@@ -417,6 +444,42 @@ def self_test() -> int:
             print(b)
         print(f"NG: 自己検査が {len(bad)} 件落ちました。**この道具が空振りしています。**")
         return 1
+    # **Figma が変わったら、見送りは失効する**（候補6の5）
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d2:
+        r2 = Path(d2)
+        (r2 / "design" / "figma").mkdir(parents=True)
+        fx = r2 / "design" / "figma" / "frames.json"
+        fx.write_text('{"frames": {}}', encoding="utf-8")
+        sha = hashlib.sha256(fx.read_bytes()).hexdigest()
+        sf2, cf2 = r2 / "failed.txt", r2 / "stages.json"
+        sf2.write_text("実装網羅\t2\n", encoding="utf-8")
+
+        def go2(bound):
+            cf2.write_text(json.dumps({KEY: {"実装網羅": {"why": "部品がまだ無い", "reviewBy": "2026-10-31",
+                                                     "figmaSha256": bound}}}, ensure_ascii=False), encoding="utf-8")
+            import contextlib, io
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                return run(sf2, cf2, dt.date(2026, 9, 19), root=r2), buf.getvalue()
+        rc, _ = go2({"design/figma/frames.json": sha})
+        case("書き出しが変わっていなければ、見送りを通す", rc, 0)
+        fx.write_text('{"frames": {"1:1": {}}}', encoding="utf-8")
+        rc, out = go2({"design/figma/frames.json": sha})
+        case("**書き出しが変わったら、期限内でも見送りを通さない**", rc, 1)
+        case("失効したと言う", "失効しました" in out, True)
+        rc, _ = go2({"design/figma/none.json": sha})
+        case("書き出しが読めなければ通さない", rc, 1)
+        rc, _ = go2([])
+        case("figmaSha256 の形が違えば通さない", rc, 1)
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            case("--sha でハッシュを出す", main(["--sha", str(fx)]), 0)
+            case("--sha で読めなければ 2", main(["--sha", str(r2 / "none")]), 2)
+    if bad:
+        print("self-test: NG")
+        for b_ in bad:
+            print("  " + b_)
+        return 1
     print("self-test: OK（自己検査が全部期待どおりでした）")
     return 0
 
@@ -425,10 +488,18 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="まだ測れない段を宣言で覆う")
     ap.add_argument("--stages-file", type=Path, help="落ちた段の名前を1行ずつ書いたファイル")
     ap.add_argument("--config", type=Path, default=Path("design/stages.json"))
+    ap.add_argument("--sha", type=Path, help="宣言の figmaSha256 に書くハッシュを出す")
     ap.add_argument("--self-test", action="store_true")
     a = ap.parse_args(argv)
     if a.self_test:
         return self_test()
+    if a.sha:
+        try:
+            print(hashlib.sha256(a.sha.read_bytes()).hexdigest())
+        except OSError as e:
+            print(f"読めません: {a.sha} — {e}")
+            return 2
+        return 0
     if not a.stages_file:
         print("--stages-file を指定してください")
         return 2

@@ -335,6 +335,11 @@ step "実装網羅（条件7: Figma にあるものは全部実装）" \
   "$PY" "$HARNESS/tools/impl_coverage_check.py" --config impl-coverage.json
 note "照合体制（参考: 条件2 は 2026-09-03 に廃止。検査としては有用）" \
   "$PY" "$HARNESS/tools/coverage_check.py" --config coverage.json
+# **デザイナーへの報せ**（候補6・候補10・2026-11-03）。実装の合否には使わない
+note "Figma の直値（変数・スタイルに結ばれていない値）" \
+  "$PY" "$HARNESS/tools/figma_raw_values.py" design/figma/frames.json design/figma/components.json
+note "デザイナーが見た画面（見た後に変わったら未判断に戻る）" \
+  "$PY" "$HARNESS/tools/design_coverage.py" --config design/design-coverage.json
 step "生成器の入力（書き出し以外を読んでいないか）" \
   "$PY" "$HARNESS/tools/gen_input_check.py"
 step "鮮度差（書き出し → 生成物・記録）" \
