@@ -35,6 +35,14 @@ PoV 詳細だけ、実装が `main.page` の**内側に** `.pov-page.is-single` 
   祖先 `.footer` が部品として対応づけられている。部品の中身は部品の責任
   （値の照合は screen-spec 側）。**ただし同じ要素への追加クラスは救わない**
 
+## 部品の中を、外から上書きしない（候補4・2026-11-03）
+
+**部品の余白は部品が持つ。**設定に `componentCss`（部品の CSS を置くファイル）を書いた案件では、
+それ以外のファイルから**部品の中（祖先が部品の根）の余白・寸法**や、**部品の根の内側の余白・寸法**
+（padding・gap・width・height）を変える規則を落とす。部品を**置く位置**（margin・inset・top など）は
+外の責任なので通す。外部の実践例（shadcn/lint の no-restyle「Button の余白は Button が持つ」）から。
+書いていない案件は今までどおり部品の中を見ず、「見ていない」と出す。
+
 ## 分母を出す
 
 **走査した CSS のファイル数・規則の数・トークンを持つ規則の数・対応表の要素数**を必ず出す。
@@ -60,6 +68,9 @@ import _utf8  # noqa: F401
 SPACING_PROPS = ("padding", "margin", "gap", "row-gap", "column-gap", "inset",
                  "top", "right", "bottom", "left",
                  "width", "height", "min-width", "max-width", "min-height", "max-height")
+#: 部品の**内側**を決める性質（外から変えてはいけない）。margin・inset・top などは置く位置なので含めない
+INNER_PROPS = ("padding", "gap", "row-gap", "column-gap",
+               "width", "height", "min-width", "max-width", "min-height", "max-height")
 #: トークン名の頭。案件の設定で足せる
 DEFAULT_TOKENS = ("--gap-", "--pad-", "--space-", "--size-")
 BLOCK_COMMENT_RX = re.compile(r"/\*.*?\*/", re.S)
@@ -193,16 +204,39 @@ def check(cfg_path: Path):
                    "  **0 件は「揃っている」ではなく「見ていない」です。**"
                    "トークンの頭（tokens）が案件の名前と合っているか確かめてください"]
 
-    bad, waived, lines = [], 0, []
+    comp_css = None
+    if conf.get("componentCss"):
+        comp_css = set()
+        for pat in conf["componentCss"]:
+            comp_css |= {Path(x).resolve() for x in glob.glob(str((cfg_dir / pat).resolve()), recursive=True)}
+        if not comp_css:
+            return 2, [f"**部品の CSS（componentCss）が1つも見つかりません**: {conf['componentCss']}",
+                       "  部品の中を外から上書きしているかを確かめられません"]
+
+    bad, waived, lines, overrides = [], 0, [], []
     for f, line, sel, decls in carriers:
         cs = compounds(sel)
         if not cs:
             continue
         subj = normalize(cs[-1])
+        inside = any(normalize(c) in roots for c in cs[:-1])
+        # **部品の中・部品の内側を、部品の CSS 以外から変えていないか**（候補4）
+        if comp_css is not None and f.resolve() not in comp_css and (inside or subj in roots):
+            inner = [d for d in decls
+                     if inside or d.split(":")[0].strip() in INNER_PROPS
+                     or d.split(":")[0].strip().split("-")[0] in ("padding",)]
+            if inner:
+                if sel in allow and str(allow[sel]).strip():
+                    waived += 1
+                elif sel in allow:
+                    overrides.append((f, line, sel, inner, "**宣言に理由がありません**"))
+                else:
+                    overrides.append((f, line, sel, inner, None))
+                continue
         if subj in owners:
             continue
         # 対応づけられた部品の**中**（祖先が部品の根）は部品の責任
-        if any(normalize(c) in roots for c in cs[:-1]):
+        if inside:
             continue
         key = sel
         if key in allow:
@@ -216,7 +250,15 @@ def check(cfg_path: Path):
 
     head = (f"余白の持ち主: CSS {len(css_files)} 本・規則 {n_rules} 本・"
             f"トークンを持つ規則 {len(carriers)} 本・対応表の要素 {len(owners)} 件"
-            f"（うち部品の根 {len(roots)}）・宣言つき {waived} 件")
+            f"（うち部品の根 {len(roots)}）・宣言つき {waived} 件"
+            + (f"・部品の CSS {len(comp_css)} 本" if comp_css is not None
+               else "・**部品の中を外から上書きしているかは見ていません**（componentCss が無い）"))
+    if overrides:
+        lines.append("**部品の中の余白・寸法を、部品の CSS 以外から変えています**（部品の余白は部品が持つ）:")
+        for f, line, sel, decls, note in overrides:
+            lines.append(f"  {f.name}:{line}  `{sel}`  {'; '.join(decls)[:80]}" + (f"  ← {note}" if note else ""))
+        lines += ["  直し方: 部品の CSS（componentCss）で、部品の変異（variant）として持たせる。",
+                  "  画面ごとに違う余白が Figma にあるなら、それは部品の変異か、部品の外の器の余白です"]
     if bad:
         lines.append("**Figma に対応の無い要素が、余白・寸法のトークンを持っています:**")
         for f, line, sel, decls, note in bad:
@@ -229,6 +271,9 @@ def check(cfg_path: Path):
             f"  `{cfg_path.name}` の allow に**理由つきで**宣言する（理由の無い宣言は落とします）",
             f"  {head}",
         ]
+        return 1, lines
+    if overrides:
+        lines.append(f"  {head}")
         return 1, lines
     return 0, [head, "  対応の無い持ち主はありません"]
 
@@ -310,6 +355,39 @@ def self_test():
         # 10) コメントの中は数えない
         rc, _ = run("/* .ghost{padding:var(--gap-xxl)} */\nmain.page{padding:var(--gap-xxl) 0}\n")
         ck(rc == 0, f"コメントの中の規則を数えた: {rc}")
+
+        # 12a) **部品の中を外から上書きしない**（候補4）。componentCss を書いた案件だけ見る
+        comp = root / "components.css"
+        def run_c(shared_css, comp_text="", allow=None):
+            css.write_text(shared_css, encoding="utf-8")
+            comp.write_text(comp_text, encoding="utf-8")
+            cfg.write_text(json.dumps({"screenMap": "values/screen-map.json",
+                                       "componentMap": "values/components.json",
+                                       "css": ["shared.css", "components.css"],
+                                       "componentCss": ["components.css"], "allow": allow or {}},
+                                      ensure_ascii=False), encoding="utf-8")
+            return check(cfg)
+        rc, out = run_c("main.page{padding:var(--gap-xxl) 0}\n.page .footer .links{gap:var(--gap-s)}\n")
+        ck(rc == 1 and any("部品の CSS 以外" in x for x in out), f"**部品の中を外から変えたのを通した**: {rc} {out}")
+        rc, _ = run_c("main.page{padding:var(--gap-xxl) 0}\n", ".footer .links{gap:var(--gap-s)}\n")
+        ck(rc == 0, f"部品の CSS の中の規則を咎めた: {rc}")
+        rc, _ = run_c("main.page{padding:var(--gap-xxl) 0}\n.page .footer{margin-top:var(--gap-xl)}\n")
+        ck(rc == 0, f"部品を置く位置（margin）を咎めた: {rc}")
+        rc, _ = run_c("main.page{padding:var(--gap-xxl) 0}\n.page .footer{padding:var(--gap-s)}\n")
+        ck(rc == 1, f"**部品の根の内側の余白を外から変えたのを通した**: {rc}")
+        rc, _ = run_c(".page .footer{padding:var(--gap-s)}\n", "",
+                      {".page .footer": "Figma の Footer にこの画面だけの変異が無い。追加を依頼中"})
+        ck(rc == 0, f"理由つきの宣言を落とした: {rc}")
+        rc, _ = run_c(".page .footer{padding:var(--gap-s)}\n", "", {".page .footer": ""})
+        ck(rc == 1, f"**理由の無い宣言で上書きを通した**: {rc}")
+        cfg.write_text(json.dumps({"screenMap": "values/screen-map.json",
+                                   "componentMap": "values/components.json",
+                                   "css": ["shared.css"], "componentCss": ["nothing-*.css"]},
+                                  ensure_ascii=False), encoding="utf-8")
+        rc, _ = check(cfg)
+        ck(rc == 2, f"部品の CSS が見つからないのに 2 でない: {rc}")
+        rc, out = run("main.page{padding:var(--gap-xxl) 0}\n")
+        ck(rc == 0 and any("見ていません" in x for x in out), f"componentCss が無いのに、見ていないと言わない: {out}")
 
         # 11) 対応表が無い → 2
         (root / "values" / "screen-map.json").unlink()

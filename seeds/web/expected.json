@@ -17,5 +17,12 @@
   "no-raw-font-weight": 1,
   "no-non-token-color": 3,
   "no-inline-style-values": 1,
-  "no-js-style-values": 1
+  "no-js-style-values": 1,
+  "img-needs-alt": 1,
+  "role-img-needs-name": 1,
+  "img-needs-size": 1,
+  "no-zoom-lock": 1,
+  "blank-needs-noopener": 1,
+  "no-http-resource": 1,
+  "no-clickable-div": 1
 }

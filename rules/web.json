@@ -165,6 +165,76 @@
       "forbidden": "色にトークン以外を書くこと。色名（white / rebeccapurple …）・hex・rgb() など、許した書き方の**外側を全部**止める。列挙式だと必ず漏れるため、逆にした（2026-08-25 フェーズ6）。",
       "instead": "var(--...) を使う。ほかに書けるのは transparent / currentColor / inherit / none / unset / initial / revert だけ。新しい色が要るときは Figma に足してもらう。",
       "soften_without_figma": true
+    },
+    {
+      "id": "img-needs-alt",
+      "severity": "error",
+      "multiline": true,
+      "extensions": [".html", ".mjs", ".js", ".jsx", ".tsx"],
+      "pattern": "<img\\b(?![^>]*\\balt\\s*=)[^>]*>",
+      "forbidden": "alt の無い画像。読み上げで何の画像か分からず、読み込めなかったときに何も残らない（外部の実践例 Anti-Slop・2026-11-03）。",
+      "instead": "alt を書く。飾りの画像は alt=\"\"（空）と書いて、飾りであることを宣言する。",
+      "_selftest": {"bad": ["<img src=\"a.png\" width=\"10\" height=\"10\">"], "good": ["<img src=\"a.png\" alt=\"\" width=\"10\" height=\"10\">"]}
+    },
+    {
+      "id": "role-img-needs-name",
+      "severity": "error",
+      "multiline": true,
+      "extensions": [".html", ".mjs", ".js", ".jsx", ".tsx"],
+      "pattern": "<[a-zA-Z][\\w-]*\\b(?=[^>]*\\brole\\s*=\\s*[\\\"']img[\\\"'])(?![^>]*\\baria-(?:label|labelledby)\\s*=)[^>]*>",
+      "forbidden": "role=\"img\" なのに名前（aria-label / aria-labelledby）が無い要素。背景画像を画像として見せる作りで、読み上げに名前が届かない。",
+      "instead": "aria-label で何の画像かを書く。飾りなら role=\"img\" を外して aria-hidden=\"true\" にする。",
+      "_selftest": {"bad": ["<span class=\"c-image\" role=\"img\" style=\"--img:x\"></span>"], "good": ["<span class=\"c-image\" role=\"img\" aria-label=\"作品の写真\"></span>"]}
+    },
+    {
+      "id": "img-needs-size",
+      "severity": "error",
+      "multiline": true,
+      "extensions": [".html", ".mjs", ".js", ".jsx", ".tsx"],
+      "pattern": "<img\\b(?![^>]*\\bwidth\\s*=)[^>]*>|<img\\b(?![^>]*\\bheight\\s*=)[^>]*>",
+      "forbidden": "width と height の無い画像。読み込むまで場所が決まらず、読み込んだ瞬間に下の中身が動く。",
+      "instead": "width と height を書く（CSS で大きさを変えても、縦横比の予約に使われる）。",
+      "_selftest": {"bad": ["<img src=\"a.png\" alt=\"\">"], "good": ["<img src=\"a.png\" alt=\"\" width=\"10\" height=\"10\">"]}
+    },
+    {
+      "id": "no-zoom-lock",
+      "severity": "error",
+      "multiline": true,
+      "extensions": [".html", ".mjs", ".js", ".jsx", ".tsx"],
+      "pattern": "<meta\\b[^>]*name\\s*=\\s*[\\\"']viewport[\\\"'][^>]*(?:user-scalable\\s*=\\s*(?:no|0)|maximum-scale\\s*=\\s*1(?:\\.0+)?(?![\\d.]))",
+      "forbidden": "スマホで拡大できなくする指定（user-scalable=no / maximum-scale=1）。品質フロア（200% まで拡大できる）を破る。",
+      "instead": "width=device-width,initial-scale=1 だけにする。",
+      "_selftest": {"bad": ["<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,maximum-scale=1\">"], "good": ["<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\">"]}
+    },
+    {
+      "id": "blank-needs-noopener",
+      "severity": "error",
+      "multiline": true,
+      "extensions": [".html", ".mjs", ".js", ".jsx", ".tsx"],
+      "pattern": "<a\\b(?=[^>]*\\btarget\\s*=\\s*[\\\"']_blank[\\\"'])(?![^>]*\\brel\\s*=\\s*[\\\"'][^\\\"']*noopener)[^>]*>",
+      "forbidden": "新しいタブで開くリンクに rel=\"noopener\" が無い。開いた先のページから元のページを操作できる。",
+      "instead": "rel=\"noopener noreferrer\" を付ける。",
+      "_selftest": {"bad": ["<a href=\"https://x\" target=\"_blank\">x</a>"], "good": ["<a href=\"https://x\" target=\"_blank\" rel=\"noopener noreferrer\">x</a>"]}
+    },
+    {
+      "id": "no-http-resource",
+      "severity": "error",
+      "multiline": true,
+      "extensions": [".html", ".mjs", ".js", ".jsx", ".tsx"],
+      "pattern": "\\b(?:src|href)\\s*=\\s*[\\\"']http://(?!localhost|127\\.0\\.0\\.1)",
+      "forbidden": "http:// で読み込む画像・ファイル・リンク。https のページでは読み込まれない（混在コンテンツ）。",
+      "instead": "https:// にする。",
+      "_selftest": {"bad": ["<img src=\"http://example.com/a.png\" alt=\"\" width=\"1\" height=\"1\">"], "good": ["<img src=\"https://example.com/a.png\" alt=\"\" width=\"1\" height=\"1\">", "<a href=\"http://localhost:8802/\">x</a>"]}
+    },
+    {
+      "id": "no-clickable-div",
+      "severity": "error",
+      "multiline": true,
+      "extensions": [".html", ".mjs", ".js", ".jsx", ".tsx"],
+      "pattern": "<div\\b[^>]*\\bon[cC]lick\\s*=",
+      "forbidden": "div に直接クリックの処理を付けること。キーボードで届かず、読み上げでも押せるものと分からない。",
+      "instead": "button（押す）か a（移動する）を使う。見た目は CSS で整える。",
+      "_selftest": {"bad": ["<div class=\"card\" onclick=\"open()\">x</div>"], "good": ["<button class=\"card\" type=\"button\" onclick=\"open()\">x</button>"]}
     }
   ]
 }

@@ -50,8 +50,10 @@ class Improvements(unittest.TestCase):
             root = Path(td)
             (root / 'design').mkdir()
             rules = root / 'design/rules.json'
+            # 共通の Web ルールの本数は手で書かない（2026-11-03 に 13 → 20 本になり、ここが落ちた）
+            web_rules = len(json.loads((ROOT / 'rules/web.json').read_text(encoding='utf-8'))['rules'])
             rules.write_text(json.dumps({'extends': [str(ROOT / 'rules/web.json')],
-                'file_extensions': ['.css'], 'expected_rules': 13, 'expected_targets': 1,
+                'file_extensions': ['.css'], 'expected_rules': web_rules, 'expected_targets': 1,
                 'project_root': '..', 'rules': []}), encoding='utf-8')
             source = root / 'view.tsx'
             def run(code, argv=None):

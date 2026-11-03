@@ -32,9 +32,18 @@ React対象が無い案件でも、共有側のReact試験を確認するとき�
   "exclude_paths": ["design/harness", "design/seeds", "node_modules", "dist"],
   "exclude_files": ["tokens.css", "tokens.json"],
   "ignore_reason_min": 10,
-  "expected_rules": 13
+  "expected_rules": 20,
+  "token_sources": ["site/tokens.css"]
 }
 ```
+
+`token_sources` に、トークン（CSS のカスタムプロパティ）を定義している**生成物**のファイルを書くと、違反の文に
+**同じ値のトークンの名前と定義の場所**が出ます（例: `候補: 16px → var(--gap-m)（site/tokens.css:42）`）。
+**同じ値が無いときは近い値を出さず、「近い値で代用しない」と出します。**読めないときは「探していません」と出します。
+
+共通の Web ルールは 2026-11-03 に 13 本から 20 本になりました。足したのは画像の alt・寸法、`role="img"` の名前、
+拡大の禁止、`target="_blank"` の noopener、`http://` の読み込み、div のクリックです（外部の実践例 Anti-Slop の、
+機械で判定できるものだけ）。案件の `expected_rules` も実測に合わせて上げてください。
 
 共通の `seeds/web/` を案件の `design/seeds/` に置き、案件固有のルールにも種を追加します。全体走査で実際の対象ファイル数を確認し、`expected_targets` に記録します。取得・生成した値だけを持つトークン定義は除外しますが、手書きの画面を丸ごと除外しません。
 

@@ -433,6 +433,70 @@ def ignored_rule_ids(content):
 # スキャン
 # --------------------------------------------------------------------------
 
+#: 直値を取り出す形（代わりのトークンを探すため・候補8・2026-11-03）
+RAW_VALUE_RX = re.compile(r"#[0-9a-fA-F]{3,8}\b|-?\d+(?:\.\d+)?(?:px|rem|em|%)?(?![\w-])")
+#: CSS のカスタムプロパティの定義
+CUSTOM_PROP_RX = re.compile(r"(--[\w-]+)\s*:\s*([^;{}]+);")
+_TOKEN_INDEX = {}
+
+
+def _norm_value(v):
+    v = " ".join(v.strip().lower().split())
+    if re.fullmatch(r"#[0-9a-f]{3}", v):
+        v = "#" + "".join(c * 2 for c in v[1:])
+    return v
+
+
+def token_index(config, project_root):
+    """`token_sources`（案件が書く・トークンを定義している CSS）から、値 → [(名前, 場所)] を作る。
+
+    **同じ値だけを結ぶ。近い値は候補にしない**（近い値で代用させると Figma と別の値が入る）。
+    書いていなければ None（候補を出さない。これまでの代替の文だけ）。
+    """
+    srcs = config.get("token_sources")
+    if not srcs:
+        return None
+    key = (str(project_root), tuple(srcs))
+    if key in _TOKEN_INDEX:
+        return _TOKEN_INDEX[key]
+    index, missing = {}, []
+    for rel in srcs:
+        f = Path(project_root) / rel
+        try:
+            text = f.read_text(encoding="utf-8")
+        except OSError:
+            missing.append(rel)
+            continue
+        for m in CUSTOM_PROP_RX.finditer(text):
+            line = text[:m.start()].count("\n") + 1
+            index.setdefault(_norm_value(m.group(2)), []).append((m.group(1), f"{rel}:{line}"))
+    _TOKEN_INDEX[key] = (index, missing)
+    return _TOKEN_INDEX[key]
+
+
+def suggest_tokens(snippet, tindex):
+    """行の中の直値ごとに、同じ値のトークンを探して案内の行を返す。"""
+    if tindex is None:
+        return []
+    index, missing = tindex
+    out = []
+    if missing:
+        out.append(f"    候補: トークンの定義が読めません（{', '.join(missing)}）。代わりを探していません")
+        return out
+    seen = set()
+    for m in RAW_VALUE_RX.finditer(snippet):
+        v = _norm_value(m.group(0))
+        if v in seen or v in ("0", "0px"):
+            continue
+        seen.add(v)
+        hits = index.get(v)
+        if hits:
+            out.append(f"    候補: {m.group(0)} → " + " / ".join(f"var({n})（{where}）" for n, where in hits[:3]))
+    if not out and seen:
+        out.append("    候補: 同じ値のトークンはありません。**近い値で代用しない**（Figma の値を確かめる）")
+    return out
+
+
 def scan(content, config, path, project_root, soften=False):
     """全ルールを適用し (errors, warns, observations) を返す。
 
@@ -448,6 +512,7 @@ def scan(content, config, path, project_root, soften=False):
     _scan = strip_comments(content, COMMENT_STYLE.get(path.suffix, ""))
     _scan_lines = _scan.splitlines()
     errors, warns, observations = [], [], []
+    tindex = token_index(config, project_root)
     reason_min = int(config.get("ignore_reason_min", 0))
     require_expiry = bool(config.get("ignore_requires_expiry", False))
     file_ignored = ignored_rule_ids(content)
@@ -476,6 +541,9 @@ def scan(content, config, path, project_root, soften=False):
             f"    代替: {rule.get('instead', '')}\n"
             f"    該当: {snippet.strip()[:120]}"
         )
+        hints = suggest_tokens(snippet, tindex)
+        if hints:
+            entry += "\n" + "\n".join(hints)
         if rule.get("severity", "error") == "error" and not softened:
             errors.append(entry)
         else:
@@ -1039,6 +1107,31 @@ def self_test() -> int:
                                      ensure_ascii=False), encoding="utf-8")
         _cfg = load_rules(_rules)
         cases.append(("解けない extends を持ち上げる", bool(_cfg.get(UNRESOLVED))))
+
+        # **代わりのトークンを、同じ値のときだけ名前と場所つきで案内する**（候補8・2026-11-03）
+        (_r / "tokens.css").write_text(":root{\n  --gap-m: 16px;\n  --text-neutral-default: #222222;\n}\n",
+                                       encoding="utf-8")
+        _sp = {"id": "no-raw-spacing", "pattern": r"padding\s*:\s*\d", "severity": "error",
+               "forbidden": "余白の直値", "instead": "tokens.css の変数"}
+        _c = {"rules": [_sp], "file_extensions": [".css"], "token_sources": ["tokens.css"]}
+        _e, _, _ = scan("a{padding:16px}\n", _c, _r / "x.css", _r)
+        cases.append(("同じ値のトークンを名前と定義の場所で案内する",
+                      len(_e) == 1 and "var(--gap-m)" in _e[0] and "tokens.css:2" in _e[0]))
+        _e, _, _ = scan("a{padding:15px}\n", _c, _r / "x.css", _r)
+        cases.append(("**同じ値が無ければ近い値を出さず、代用しないと言う**",
+                      len(_e) == 1 and "近い値で代用しない" in _e[0] and "var(" not in _e[0]))
+        _hx = {"id": "no-raw-hex", "pattern": r"#[0-9a-fA-F]{3,8}\b", "severity": "error",
+               "forbidden": "色の直値", "instead": "tokens.css の変数"}
+        _e, _, _ = scan("a{color:#222}\n", {**_c, "rules": [_hx]}, _r / "x.css", _r)
+        cases.append(("3桁の hex も6桁と同じ値として引く",
+                      len(_e) == 1 and "var(--text-neutral-default)" in _e[0]))
+        _e, _, _ = scan("a{padding:16px}\n", {**_c, "token_sources": ["nothing.css"]}, _r / "x.css", _r)
+        cases.append(("定義が読めないときは、探していないと言う",
+                      len(_e) == 1 and "探していません" in _e[0]))
+        _e, _, _ = scan("a{padding:16px}\n", {k: v for k, v in _c.items() if k != "token_sources"},
+                        _r / "x.css", _r)
+        cases.append(("token_sources が無ければ候補を出さない（これまでどおり）",
+                      len(_e) == 1 and "候補:" not in _e[0]))
         (_r / "a.swift").write_text("let a = 1\n", encoding="utf-8")
         _rc = main(["--all", "--rules", str(_rules)], rules_path=_rules)
         cases.append(("**解けないときは 2（確かめられなかった）で止まる**", _rc == 2))
