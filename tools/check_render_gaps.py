@@ -4,6 +4,9 @@
 【この検査が捕まえるもの】負の spread・内側の影・PROGRESSIVE・行間・
 未知のウェイトなど、**値が一致しても描画で別物になる指定**（production-gate 条件5）。
 あわせて「Figma の全セットに判定があるか」（網羅）と「Figma に無い記録」（棚卸し）。
+スタイル（エフェクト・塗り）も figma/styles.json と突き合わせて網羅を見る（#187）。落とすのは config に
+figma_styles を明示した案件だけで、判定を書けないものは styles_unrated に理由つきで宣言できる。
+棚卸しは、記録の行に "棚卸し": "確定（日付・根拠）" があれば「済み」と数える（#188）。
 【捕まえないもの】値そのものの一致（数値照合の領域）と、判定の中身の正しさ
 （判定は人が実測して書く。ここは判定の有無と形しか見ない）。
 【確かめた方法】--self-test（入力が欠けたら落ちること・網羅の穴で落ちること）。
@@ -36,6 +39,9 @@ RENAMED = {}            # 書き出し側の名前 → 判定記録側の名前
 LEDGER = None           # 判定の根拠を書いた台帳（案件ごとに違う）
 DS_NAME = "?"           # デザインシステム名（表示用）
 FRAMES_EXPORT = None     # 書き出し自身が報告する描画の未検証範囲
+FIGMA_STYLES = None     # スタイルの全量書き出し（figma/styles.json）。#187
+STYLES_UNRATED = {}     # 判定をまだ書けないスタイルの宣言 {名前: 理由}。× を △ に落とす
+STYLES_STRICT = False   # config に figma_styles を明示したときだけ、スタイルの穴で落とす
 
 # Flutter が素直に出せるフォントウェイト
 SUPPORTED_WEIGHTS = {100, 200, 300, 400, 500, 600, 700, 800, 900}
@@ -149,14 +155,10 @@ def check_coverage(doc):
     # 「Figma に見当たらない記録」は再現性の△とは別の軸で数える
     # （414 要望8・2026-08-28: 同じ△に入れると「近似が20件」とも
     # 「棚卸しが11件」とも読めず、改善と片付けの区別がつかなかった）。
-    stale = sorted(n for c in doc.get("componentSets", [])
-                   if isinstance(c, dict) and (n := c.get("name"))
-                   and n not in figma_names and n not in RENAMED.values())
-    if stale:
-        print(f"記録の整合: Figma に無い記録 {len(stale)} 件"
-              f"（棚卸し待ち・各行の note に対応先を書くこと）")
-        for n in stale:
-            print(f"  - {n}")
+    stale_rows = [c for c in doc.get("componentSets", [])
+                  if isinstance(c, dict) and (n := c.get("name"))
+                  and n not in figma_names and n not in RENAMED.values()]
+    report_stale("記録", stale_rows)
 
     total = len(figma_names)
     covered = total - len(missing)
@@ -173,6 +175,71 @@ def check_coverage(doc):
     return out
 
 
+def settled(row):
+    """記録の行が棚卸し済みか。行の `"棚卸し"` が「確定」で始まれば済み（#188・2026-11-04）。
+
+    414 は対応先を確定した行を消さずに残している（手書きの実測と注記がそこにしか無いため）。
+    済んだ行を「棚卸し待ち」と言い続けると、本当に待っているものが埋もれる
+    """
+    v = row.get("棚卸し") if isinstance(row, dict) else None
+    return isinstance(v, str) and v.strip().startswith("確定")
+
+
+def report_stale(kind, rows):
+    """Figma に無い記録を「棚卸し待ち」と「棚卸し済み」に分けて出す。"""
+    waiting = sorted(r.get("name") for r in rows if not settled(r))
+    done = sorted(r.get("name") for r in rows if settled(r))
+    if waiting:
+        print(f"{kind}の整合: Figma に無い記録 {len(waiting)} 件"
+              f"（棚卸し待ち・各行の note に対応先を書き、確定したら \"棚卸し\": \"確定（日付・根拠）\" を入れる）")
+        for n in waiting:
+            print(f"  - {n}")
+    if done:
+        print(f"{kind}の整合: 棚卸し済み {len(done)} 件（Figma に無いが、対応先を確定した記録）")
+
+
+def check_style_coverage(doc):
+    """スタイルの判定の網羅を見る（#187・2026-11-04）。
+
+    それまでエフェクト・塗りのスタイルの検査は記録（components.json）に載ったものだけを見ていた。
+    **Figma に在って記録に無いスタイルは一度も検査されず**、それでも exit 0 だった
+    （414: Figma のエフェクト 12 件に対し記録 7 件・塗り 5 件に対し 2 件。部品の網羅と同じ病）。
+    figma/styles.json の effect・paint と、記録の effectStyles・paintStyles を名前で突き合わせる。
+    人がまだ判定を書けないものは config の styles_unrated に理由つきで宣言すると △ に落ちる
+    """
+    out = []
+    if FIGMA_STYLES is None:
+        print("スタイルの網羅: 見ていません（figma/styles.json が無く、config の figma_styles も無い）")
+        return out
+    figma = json.loads(FIGMA_STYLES.read_text(encoding="utf-8"))
+    total, holes = 0, 0
+    for fkey, rkey, label in (("effect", "effectStyles", "EffectStyle"), ("paint", "paintStyles", "PaintStyle")):
+        fnames = {s.get("n") or s.get("name") for s in figma.get(fkey) or [] if isinstance(s, dict)}
+        fnames.discard(None)
+        rows = [s for s in doc.get(rkey) or [] if isinstance(s, dict)]
+        rated = {RENAMED.get(s.get("name"), s.get("name")) for s in rows}
+        rated |= {s.get("name") for s in rows}
+        for n in sorted(fnames):
+            total += 1
+            if n in rated or any(RENAMED.get(n) == r for r in rated):
+                continue
+            holes += 1
+            why = STYLES_UNRATED.get(n)
+            if isinstance(why, str) and why.strip():
+                out.append(("△", f"{label} {n}", f"判定がまだ無い（宣言済み: {why}）"))
+            else:
+                out.append(("×" if STYLES_STRICT else "△", f"{label} {n}",
+                            "Figma のスタイルの書き出しに在るが、記録に判定が無い。"
+                            "実測して記録に足すか、判定を書けない理由を config の styles_unrated に書くこと"
+                            + ("" if STYLES_STRICT else "（config に figma_styles を書くと、この穴で落ちる検査になる）")))
+        report_stale(label, [s for s in rows if s.get("name") not in fnames
+                             and RENAMED.get(s.get("name")) not in fnames])
+    print(f"スタイルの網羅: Figma の {total} 件中 {total - holes} 件に判定あり（穴 {holes}）")
+    if total == 0:
+        out.append(("×", "figma/styles.json", "スタイルの書き出しに effect・paint が 1 件もない。『穴 0』は『何も見ていない』"))
+    return out
+
+
 def export_limits(doc):
     out = []
     for item in (doc.get('$meta') or {}).get('読めなかったもの', []):
@@ -185,7 +252,7 @@ def export_limits(doc):
 def load_config(argv=None):
     global COMPONENTS, TOKENS, FIGMA_COMPONENTS, IGNORED_TOKENS, RENAMED
     global LEDGER, DS_NAME
-    global FRAMES_EXPORT
+    global FRAMES_EXPORT, FIGMA_STYLES, STYLES_UNRATED, STYLES_STRICT
     ap = argparse.ArgumentParser(
         description="Figma の指定のうちスタックで再現できないものと、判定の網羅を見る")
     ap.add_argument("--config", type=Path,
@@ -208,6 +275,16 @@ def load_config(argv=None):
     FRAMES_EXPORT = base / conf['frames_export'] if conf.get('frames_export') else None
     IGNORED_TOKENS = set(conf.get("ignored_tokens", []))
     RENAMED = dict(conf.get("renamed", {}))
+    # スタイルの書き出し（#187）。設定に無ければ、部品の書き出しの隣の styles.json を使う。
+    # **落とすのは config に figma_styles を明示した案件だけ**（2026-11-04 Dev 判断）。見つけただけの案件で
+    # 落とすと、ハーネスを上げた途端に verify が赤くなる（aub で 11 件・414 で 15 件）。明示するまでは △ で報せる
+    STYLES_STRICT = bool(conf.get("figma_styles"))
+    if conf.get("figma_styles"):
+        FIGMA_STYLES = base / conf["figma_styles"]
+    else:
+        guess = FIGMA_COMPONENTS.parent / "styles.json"
+        FIGMA_STYLES = guess if guess.is_file() else None
+    STYLES_UNRATED = {k: v for k, v in (conf.get("styles_unrated") or {}).items() if not k.startswith("$")}
     # 台帳とデザインシステム名は案件ごとに違う。固定文字列にしない
     # （qnd/design-systems 2026-08-28: planttalk で走らせても
     # 「414/FLUTTER_GAPS.md を参照」と出ていた）
@@ -224,6 +301,8 @@ def main(argv=None):
     # ファイルが1つでも欠けるとその検査を黙って飛ばして exit 0 を返していた。
     # 「違反 0 件」と「そもそも見ていない」が出力上まったく同じになる型の穴。
     missing = [str(x) for x in (COMPONENTS, TOKENS, FIGMA_COMPONENTS) if not x.exists()]
+    if FIGMA_STYLES is not None and not FIGMA_STYLES.is_file():
+        missing.append(str(FIGMA_STYLES))
     if FRAMES_EXPORT and not FRAMES_EXPORT.is_file():
         missing.append(str(FRAMES_EXPORT))
     if missing:
@@ -240,6 +319,7 @@ def main(argv=None):
     findings += check_effect_styles(doc)
     findings += check_components(doc)
     findings += check_coverage(doc)
+    findings += check_style_coverage(doc)
     findings += check_tokens(json.loads(TOKENS.read_text(encoding="utf-8")))
     if FRAMES_EXPORT:
         findings += export_limits(json.loads(FRAMES_EXPORT.read_text(encoding='utf-8')))
@@ -314,6 +394,37 @@ def self_test():
         # 網羅の穴（Figma にあるのに判定が無い）
         expect(1, setup(**{"figma.json": {"componentSets": {"Button": {}, "Card": {}}}}),
                "判定の無いセットがあるのに落ちなかった")
+
+        # スタイルの網羅（#187）: 書き出しに在って記録に無いスタイルで落ちる。宣言すれば △ に落ちる
+        styles = {"effect": [{"n": "Shadow/M"}, {"n": "Shadow/L"}], "paint": [{"n": "Header"}]}
+        rec = {"componentSets": [{"name": "Button", "flutter": "○"}],
+               "effectStyles": [{"name": "Shadow/M", "effects": []}], "paintStyles": [{"name": "Header"}]}
+        expect(0, setup(**{"styles.json": {"effect": [{"n": "Shadow/M"}], "paint": [{"n": "Header"}]},
+                           "components.json": rec}), "スタイルがそろっているのに落ちた")
+        expect(0, setup(**{"styles.json": styles, "components.json": rec}),
+               "figma_styles を明示していないのに、スタイルの穴で落とした（△ で報せるだけのはず）")
+        argv = setup(**{"styles.json": styles, "components.json": rec})
+        conf = json.loads((base / "c.json").read_text(encoding="utf-8"))
+        conf["figma_styles"] = "styles.json"
+        (base / "c.json").write_text(json.dumps(conf), encoding="utf-8")
+        expect(1, argv, "**記録に無いスタイル（Shadow/L）があるのに落ちなかった**（figma_styles を明示）")
+        conf["styles_unrated"] = {"Shadow/L": "実測待ち"}
+        (base / "c.json").write_text(json.dumps(conf), encoding="utf-8")
+        expect(0, argv, "理由つきで宣言したスタイルを × のまま落とした")
+        conf["styles_unrated"] = {"Shadow/L": ""}
+        (base / "c.json").write_text(json.dumps(conf), encoding="utf-8")
+        expect(1, argv, "理由の無い宣言で通した")
+        (base / "styles.json").unlink()
+
+        # 棚卸し（#188）: 確定と書いた行は「待ち」に数えない
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            report_stale("記録", [{"name": "Old", "棚卸し": "確定（2026-11-04・ノード ID 照合）"}, {"name": "Gone"}])
+        if "棚卸し待ち" not in buf.getvalue() or "Gone" not in buf.getvalue() or "棚卸し済み 1 件" not in buf.getvalue() \
+                or "  - Old" in buf.getvalue():
+            print(f"self-test NG: 棚卸し済みの行を待ちと数えた、または済みを数えない: {buf.getvalue()}"); ok = False
 
         # 書き出しが空（「穴 0」が「何も見ていない」を意味する場合）
         expect(1, setup(**{"figma.json": {"componentSets": {}}}),
