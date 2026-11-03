@@ -15,6 +15,9 @@ Figma の直値を直すかどうかはデザイナーが決める）。verify.s
              （**bind= は 2026-11-03 からの書き出し器が書く。**書き出しに1件も無ければ余白は見ていないと言う）
     線の太さ strokeWeight= の数字
     文字     ts=（文字スタイル）の無い文字
+    寸法     width・height の**片方だけ**が bind= にあり、もう片方が固定（sz= が FIXED か、sz= が無い）のもの（#190）。
+             Figma は縦横比を固定した節点で幅を変数に結ぶと、高さの結びを外す（2026-11-04 portfolio で実測。
+             unlockAspectRatio してから両方を結ぶ）。片方だけの結びは、もう片方が直値になっている
 
 **意図した直値**は、Figma の節点に印を付けて外す（`setSharedPluginData('harness', 'raw', '<欄,欄>')`。
 欄は fill・radius・padding・gap・strokeWeight・textStyle）。書き出し器が `raw=` として行に書く。
@@ -89,9 +92,15 @@ def scan_rows(where, rows, has_bind):
             found.append(("線の太さ", place, sw))
         if kind == "TEXT" and "ts" not in seg and "textStyle" not in raw:
             found.append(("文字", place, "文字スタイルが無い"))
+        bound = {b.split(":")[0] for b in seg.get("bind", "").split(",") if b}
+        if has_bind and ("width" in bound) != ("height" in bound):
+            have, other = ("width", "height") if "width" in bound else ("height", "width")
+            sz = seg.get("sz", "FIXED,FIXED").split(",")
+            fixed = (sz[1] if other == "height" else sz[0]) == "FIXED" if len(sz) == 2 else True
+            if fixed and other not in raw:
+                found.append(("寸法", place, f"{have} だけ結び、{other} は直値（縦横比の固定で結びが外れていないか）"))
         if has_bind and "layout" in seg:
             vals = seg["layout"].split(",")[:5]
-            bound = {b.split(":")[0] for b in seg.get("bind", "").split(",") if b}
             for f, v in zip(SPACING_FIELDS, vals):
                 key = "gap" if f == "itemSpacing" else "padding"
                 if NUM_RX.match(v) and float(v) != 0 and f not in bound and key not in raw and f not in raw:
@@ -155,6 +164,16 @@ def self_test():
         for k in ("色 1 件", "角丸 1 件", "線の太さ 1 件", "文字 1 件", "余白 1 件"):
             ck(k in text, f"{k} を数えていない: {text}")
         ck("itemSpacing=8" in text and "paddingTop" not in text.split("余白")[1], f"結んだ余白まで直値と言った: {text}")
+        # 寸法の片方だけの結び（#190）。両方・どちらも無し・もう片方が伸びる（HUG）・印つきは報せない
+        rc, out = run(["0|Top|FRAME|10|10|0|0|bind=paddingTop:Gap/M",
+                       "1|Icon|INSTANCE|24|24|0|0|bind=width:Icon/M|sz=FIXED,FIXED"])
+        ck(rc == 1 and any("寸法 1 件" in x for x in out) and any("width だけ結び" in x for x in out),
+           f"**幅だけ結んだ寸法を報せない**: {out}")
+        rc, out = run(["0|Top|FRAME|10|10|0|0|bind=paddingTop:Gap/M",
+                       "1|A|INSTANCE|24|24|0|0|bind=width:Icon/M,height:Icon/M|sz=FIXED,FIXED",
+                       "1|B|FRAME|24|24|0|0|bind=width:Icon/M|sz=FIXED,HUG",
+                       "1|C|FRAME|24|24|0|0|bind=width:Icon/M|raw=height"])
+        ck(rc == 0, f"両方の結び・伸びる高さ・印つきを報せた: {out}")
         rc, out = run(["0|Top|FRAME|10|10|0|0|strokeTopWeight=1|strokeWeight=1"])
         ck(rc == 0, f"線の無い節点の既定の太さを直値と言った: {rc} {out}")
         rc, out = run(["0|Top|FRAME|10|10|0|0|fill=SOLID:#ff0000|radius=8|raw=fill,radius"])
