@@ -75,8 +75,10 @@ TSX/JSXでは、色・余白・角丸を構文から読みます。解析でき�
 
 次に `TRANSFER_MODE` を `rows` にし、`ROW_INDICES` に必要な行の番号を指定します。範囲が大きすぎる場合は、転送前に分割が必要だと説明します。古い書き出しと行ハッシュを照合し、変わった行だけ取得できます。
 
+「読めなかったもの」は manifest と行の断片には件数とハッシュだけが載ります。本体は `TRANSFER_MODE` を `notread` にし、`NOT_READ_RANGE`（`[始め, 終わり)`）で分けて取り、`--chunks` に一緒に渡します（#182。毎回全部を返すと 1 画面 7〜10KB になり、取れる行が減っていました）。
+
 ```sh
-python3 design/harness/tools/frame_io.py --manifest manifest.json --chunks rows-a.json rows-b.json --previous design/figma/frames.json
+python3 design/harness/tools/frame_io.py --manifest manifest.json --chunks rows-a.json rows-b.json notread-0.json --previous design/figma/frames.json
 ```
 
 標準出力に復元した完全なJSONが出ます。欠けた行・異なる版・誤ったハッシュがある場合は停止します。成功した出力だけを案件の保存手順で保存します。部分取得をそのままframes.jsonとして扱いません。

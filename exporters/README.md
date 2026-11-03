@@ -106,3 +106,13 @@ return JSON.stringify({ $meta: { declared: c.declared, pages: c.pages }, result 
 - `idsHash` の無い manifest は古い器で、`ids` を持たない
 - 決めた経緯: ユーザーの選択（原文）「行の外に ID の一覧を足す」。行の中に `id=` を足すと同じ形の兄弟を畳めなくなり、
   全案件で行のハッシュが変わる。名前の並びで引くと、同じ名前の兄弟（FlashEnglish の ButtonsGroup 2つ）を取り違える
+
+## 線とグリッドの欄（#184・2026-11-03）
+
+器（画面・部品）と REST 版は、線のある節点に `stroke=`（変数の名前か塗りの値）と `outline=太さ,位置`、線（LINE）に
+`line=太さ,位置,向き（度）`、グリッドに `grid=行数,列数,行のすき間,列のすき間,行の大きさ,列の大きさ`、グリッドの子に
+`cell=行,列,行の幅,列の幅,横寄せ,縦寄せ` を書きます。portfolio が案件の拡張（build-frames.mjs）で足していた欄を共通にしました。
+REST はグリッドの大きさを CSS の書き方（`repeat(4,minmax(0,1fr))` など）で返すので、器の書き方（`FLEX:1;HUG:1;FIXED:80`）に直します。
+portfolio の 23 画面で、拡張つきの器の行と 1070 行中 1066 行が一致しました（残り 4 行は上の「REST では区別できない違い」）。
+
+REST 版に部品の変異の ID を直接渡したときは、部品のセットを親として引いて `sz=` を書きます（器は親の layoutMode を見るため）。

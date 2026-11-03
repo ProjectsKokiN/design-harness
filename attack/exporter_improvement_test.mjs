@@ -69,8 +69,12 @@ test('本物の分割書き出しをPythonで全体照合して復元する',asy
   const figma={root:{children:[page]},variables:{getVariableByIdAsync:async()=>null},getStyleByIdAsync:async()=>null};
   const manifest=JSON.parse(await new AsyncFunction('figma',src.replace("const TRANSFER_MODE = 'full'","const TRANSFER_MODE = 'manifest'"))(figma));
   const chunks=JSON.parse(await new AsyncFunction('figma',src.replace("const TRANSFER_MODE = 'full'","const TRANSFER_MODE = 'rows'").replace('const ROW_INDICES = []','const ROW_INDICES = [0,1]'))(figma));
-  const script='import sys,json; sys.path.insert(0,"tools"); from frame_io import merge; d=json.load(sys.stdin); print(json.dumps(merge(d["manifest"],[d["chunks"]]),ensure_ascii=False))';
-  const result=JSON.parse(execFileSync(process.env.PYTHON??(process.platform==='win32'?'python':'python3'),['-c',script],{cwd:fileURLToPath(root),input:JSON.stringify({manifest,chunks}),encoding:'utf8'}));
+  const notread=JSON.parse(await new AsyncFunction('figma',src.replace("const TRANSFER_MODE = 'full'","const TRANSFER_MODE = 'notread'"))(figma));
+  // 「読めなかったもの」は件数とハッシュだけが manifest・行の断片に載り、本体は notread で取る（#182）
+  assert.equal(typeof manifest.$meta.notReadHash,'number');assert.ok(!('読めなかったもの' in chunks.$meta));
+  assert.equal(notread.mode,'notread');assert.equal(notread.$meta.notReadHash,manifest.$meta.notReadHash);
+  const script='import sys,json; sys.path.insert(0,"tools"); from frame_io import merge; d=json.load(sys.stdin); print(json.dumps(merge(d["manifest"],[d["chunks"],d["notread"]]),ensure_ascii=False))';
+  const result=JSON.parse(execFileSync(process.env.PYTHON??(process.platform==='win32'?'python':'python3'),['-c',script],{cwd:fileURLToPath(root),input:JSON.stringify({manifest,chunks,notread}),encoding:'utf8'}));
   assert.equal(result.frames['1:1'].rows.length,2);assert.ok(result.frames['1:1'].rows[1].includes('絵😀'));
   assert.equal(result.$meta.declared.screens,1);
   assert.deepEqual(result.frames['1:1'].ids,['1:1','leaf']);

@@ -238,7 +238,14 @@ async function shape(n) {
   const fl = await fillsOf(n); if (fl) p.push('fill=' + fl);
   // **塗りのスタイル**（#149）。それまで書いておらず、Header / Footer の塗りのスタイルが行から消えていた
   const fst = await sn(rv(n, 'fillStyleId')); if (fst) p.push('fillStyle=' + fst);
-  if (n.strokes && n.strokes.length) p.push('stroke=' + (await bn(n, 'strokes') || 'あり'));
+  // 線の塗り・太さと向き・グリッド（#184。portfolio が案件の拡張 build-frames.mjs で足していた欄を共通にした）
+  if (n.strokes && n.strokes.length) {
+    p.push('stroke=' + (await bn(n, 'strokes') || await paintOf(n.strokes[0])));
+    if (n.type !== 'LINE') p.push('outline=' + [(await bn(n, 'strokeWeight')) || R(n.strokeWeight), n.strokeAlign].join(','));
+  }
+  if (n.type === 'LINE') {
+    p.push('line=' + [(await bn(n, 'strokeWeight')) || R(n.strokeWeight), n.strokeAlign, Math.round(n.rotation)].join(','));
+  }
   const es = await sn(n.effectStyleId); if (es) p.push('effect=' + es);
   if (n.layoutMode && n.layoutMode !== 'NONE') {
     p.push('layout=' + [n.paddingTop, n.paddingRight, n.paddingBottom, n.paddingLeft,
@@ -246,6 +253,15 @@ async function shape(n) {
       n.primaryAxisSizingMode === 'AUTO' ? 'HUG' : 'FIXED',
       n.counterAxisSizingMode === 'AUTO' ? 'HUG' : 'FIXED',
       n.primaryAxisAlignItems, n.counterAxisAlignItems].join(','));
+  }
+  if (n.layoutMode === 'GRID') {
+    const sz = a => (a || []).map(x => x.type === 'FIXED' ? 'FIXED:' + R(x.value) : x.type + ':' + R(x.value)).join(';');
+    p.push('grid=' + [n.gridRowCount, n.gridColumnCount, (await bn(n, 'gridRowGap')) || R(n.gridRowGap),
+      (await bn(n, 'gridColumnGap')) || R(n.gridColumnGap), sz(n.gridRowSizes), sz(n.gridColumnSizes)].join(','));
+  }
+  if (n.parent && n.parent.layoutMode === 'GRID') {
+    p.push('cell=' + [rv(n, 'gridRowAnchorIndex'), rv(n, 'gridColumnAnchorIndex'), rv(n, 'gridRowSpan'), rv(n, 'gridColumnSpan'),
+      rv(n, 'gridChildHorizontalAlign'), rv(n, 'gridChildVerticalAlign')].join(','));
   }
   // **余白・寸法に結んだ変数**（候補6・2026-11-03）。`layout=` は数字だけなので、変数に結んでいるかが
   // 行から分からず、Figma の中の直値を数えられなかった

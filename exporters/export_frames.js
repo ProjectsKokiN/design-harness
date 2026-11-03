@@ -247,7 +247,14 @@ async function shape(n) {
   const fl = await fillsOf(n); if (fl) p.push('fill=' + fl);
   // **塗りのスタイル**（#149）。それまで書いておらず、Header / Footer の塗りのスタイルが行から消えていた
   const fst = await sn(rv(n, 'fillStyleId')); if (fst) p.push('fillStyle=' + fst);
-  if (n.strokes && n.strokes.length) p.push('stroke=' + (await bn(n, 'strokes') || 'あり'));
+  // 線の塗り・太さと向き・グリッド（#184。portfolio が案件の拡張 build-frames.mjs で足していた欄を共通にした）
+  if (n.strokes && n.strokes.length) {
+    p.push('stroke=' + (await bn(n, 'strokes') || await paintOf(n.strokes[0])));
+    if (n.type !== 'LINE') p.push('outline=' + [(await bn(n, 'strokeWeight')) || R(n.strokeWeight), n.strokeAlign].join(','));
+  }
+  if (n.type === 'LINE') {
+    p.push('line=' + [(await bn(n, 'strokeWeight')) || R(n.strokeWeight), n.strokeAlign, Math.round(n.rotation)].join(','));
+  }
   const es = await sn(n.effectStyleId); if (es) p.push('effect=' + es);
   if (n.layoutMode && n.layoutMode !== 'NONE') {
     p.push('layout=' + [n.paddingTop, n.paddingRight, n.paddingBottom, n.paddingLeft,
@@ -255,6 +262,15 @@ async function shape(n) {
       n.primaryAxisSizingMode === 'AUTO' ? 'HUG' : 'FIXED',
       n.counterAxisSizingMode === 'AUTO' ? 'HUG' : 'FIXED',
       n.primaryAxisAlignItems, n.counterAxisAlignItems].join(','));
+  }
+  if (n.layoutMode === 'GRID') {
+    const sz = a => (a || []).map(x => x.type === 'FIXED' ? 'FIXED:' + R(x.value) : x.type + ':' + R(x.value)).join(';');
+    p.push('grid=' + [n.gridRowCount, n.gridColumnCount, (await bn(n, 'gridRowGap')) || R(n.gridRowGap),
+      (await bn(n, 'gridColumnGap')) || R(n.gridColumnGap), sz(n.gridRowSizes), sz(n.gridColumnSizes)].join(','));
+  }
+  if (n.parent && n.parent.layoutMode === 'GRID') {
+    p.push('cell=' + [rv(n, 'gridRowAnchorIndex'), rv(n, 'gridColumnAnchorIndex'), rv(n, 'gridRowSpan'), rv(n, 'gridColumnSpan'),
+      rv(n, 'gridChildHorizontalAlign'), rv(n, 'gridChildVerticalAlign')].join(','));
   }
   // **余白・寸法に結んだ変数**（候補6・2026-11-03）。`layout=` は数字だけなので、変数に結んでいるかが
   // 行から分からず、Figma の中の直値を数えられなかった
@@ -394,8 +410,9 @@ async function walk(n, depth, rows, ids = []) {
 const SECTIONS = ['{{節の名前}}'];   // ← ここを書き換えて複数回まわす
 // 1枚だけ回したいとき（節が 20KB に収まらないとき）。空なら節の全部。
 const ONLY_IDS = [];
-const TRANSFER_MODE = 'full'; // full / manifest / rows
+const TRANSFER_MODE = 'full'; // full / manifest / rows / notread
 const ROW_INDICES = [];      // rowsモードで取得する行の0始まりの番号
+const NOT_READ_RANGE = [0, 50]; // notreadモードで返す「読めなかったもの」の範囲 [始め, 終わり)
 const page = figma.root.children.find(p => p.name === '{{ページ名}}');
 await page.loadAsync();
 const out = {};
@@ -426,16 +443,21 @@ if (TRANSFER_MODE !== 'full') {
         ids[i] = fr.ids[i];
       }
       frames[id] = { frameHash, rows, ids };
-    } else throw new Error('未知のTRANSFER_MODE: ' + TRANSFER_MODE);
+    } else if (TRANSFER_MODE !== 'notread') throw new Error('未知のTRANSFER_MODE: ' + TRANSFER_MODE);
   }
-  const result = safe(JSON.stringify({ mode: TRANSFER_MODE, frames, $meta: { 読めなかったもの: NOT_READ } }));
+  // **「読めなかったもの」は件数とハッシュだけを載せ、本体は notread モードで分けて取る**（#182）。
+  // 毎回全部を返すと 1 画面 7〜10KB になり、portfolio の Profile では 1 回に取れる行が 8〜17 行まで減った
+  const notRead = { notReadCount: NOT_READ.length, notReadHash: h(JSON.stringify(NOT_READ)) };
+  const result = safe(JSON.stringify(TRANSFER_MODE === 'notread'
+    ? { mode: 'notread', start: NOT_READ_RANGE[0], items: NOT_READ.slice(NOT_READ_RANGE[0], NOT_READ_RANGE[1]), $meta: notRead }
+    : { mode: TRANSFER_MODE, frames, $meta: notRead }));
   // 転送が途中で切れるより、分割が必要だと明示して止める。
   let bytes = 0;
   for (const ch of result) {
     const code = ch.codePointAt(0);
     bytes += code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
   }
-  if (bytes > 18000) return JSON.stringify({ error: '分割の範囲が大きすぎます。ONLY_IDSまたはROW_INDICESを絞ってください' });
+  if (bytes > 18000) return JSON.stringify({ error: '分割の範囲が大きすぎます。ONLY_IDS・ROW_INDICES・NOT_READ_RANGE を絞ってください' });
   return result;
 }
 // **区切り文字を逃がして返す**（#148）。FNV は元の文字で取ってある（JSON として読めば元に戻る）

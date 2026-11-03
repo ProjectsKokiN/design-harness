@@ -416,8 +416,15 @@ def shape(ctx, n, parent):
     fst = ctx.style((n.get("styles") or {}).get("fill"))
     if fst:
         p.append("fillStyle=" + fst)
+    # 線の塗り・太さと向き（#184。器と同じ欄）
     if n.get("strokes"):
-        p.append("stroke=" + (bn(ctx, n, "strokes") or "あり"))
+        p.append("stroke=" + (bn(ctx, n, "strokes") or paint_of(ctx, n, n["strokes"][0])))
+        if t != "LINE":
+            p.append("outline=" + (bn(ctx, n, "strokeWeight") or num(R(n.get("strokeWeight", 1)))) + ","
+                     + (n.get("strokeAlign") or "INSIDE"))
+    if t == "LINE":
+        p.append("line=" + (bn(ctx, n, "strokeWeight") or num(R(n.get("strokeWeight", 1)))) + ","
+                 + (n.get("strokeAlign") or "INSIDE") + "," + str(rotation_deg(n)))
     es = ctx.style((n.get("styles") or {}).get("effect"))
     if es:
         p.append("effect=" + es)
@@ -439,6 +446,17 @@ def shape(ctx, n, parent):
             "FIXED" if (n.get("primaryAxisSizingMode") or "AUTO") == "FIXED" else "HUG",
             "FIXED" if (n.get("counterAxisSizingMode") or "AUTO") == "FIXED" else "HUG",
             n.get("primaryAxisAlignItems") or "MIN", n.get("counterAxisAlignItems") or "MIN"]))
+    if lm == "GRID":
+        p.append("grid=" + ",".join([
+            str(n.get("gridRowCount", 0)), str(n.get("gridColumnCount", 0)),
+            bn(ctx, n, "gridRowGap") or num(R(n.get("gridRowGap", 0))),
+            bn(ctx, n, "gridColumnGap") or num(R(n.get("gridColumnGap", 0))),
+            grid_sizes(n.get("gridRowsSizing"), n.get("gridRowCount", 0)),
+            grid_sizes(n.get("gridColumnsSizing"), n.get("gridColumnCount", 0))]))
+    if parent is not None and parent.get("layoutMode") == "GRID":
+        p.append("cell=" + ",".join(str(n.get(k, d)) for k, d in (
+            ("gridRowAnchorIndex", 0), ("gridColumnAnchorIndex", 0), ("gridRowSpan", 1), ("gridColumnSpan", 1),
+            ("gridChildHorizontalAlign", "AUTO"), ("gridChildVerticalAlign", "AUTO"))))
     binds = []
     for k in ("paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "itemSpacing",
               "counterAxisSpacing", "width", "height", "minWidth", "maxWidth", "minHeight", "maxHeight"):
@@ -493,6 +511,65 @@ def shape(ctx, n, parent):
         if ovs:
             p.append("ov=" + esc(js(ovs)))
     return "|".join(p)
+
+
+def rotation_deg(n):
+    """器の Math.round(n.rotation)。relativeTransform [[cos, sin, x], [-sin, cos, y]] から角度（度）を出す"""
+    rt = n.get("relativeTransform")
+    if isinstance(rt, list) and len(rt) == 2:
+        deg = math.degrees(math.atan2(rt[0][1], rt[0][0]))
+    else:
+        deg = math.degrees(n.get("rotation") or 0)
+    return int(math.floor(deg + 0.5)) + 0
+
+
+def _split_top(s, seps=","):
+    """区切りで切る（括弧の中は切らない）。seps に空白を入れると空白でも切る"""
+    out, depth, cur = [], 0, ""
+    for ch in s:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if depth == 0 and (ch in seps or (" " in seps and ch.isspace())):
+            if cur.strip():
+                out.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        out.append(cur.strip())
+    return out
+
+
+def grid_sizes(css, count):
+    """REST の gridRowsSizing（CSS の grid-template の書き方）を、器の gridRowSizes の書き方（HUG:1;FLEX:1;FIXED:80）にする。
+
+    REST は `repeat(4,minmax(0,1fr))`・`fit-content(100%)`・`80px` の形で返す（2026-11-03 portfolio で確かめた）。
+    読めない形は `?` にして、黙って別の値にしない
+    """
+    def one(tok):
+        tok = tok.strip()
+        m = re.fullmatch(r"minmax\(\s*0(?:px)?\s*,\s*([\d.]+)fr\s*\)|([\d.]+)fr", tok)
+        if m:
+            return "FLEX:" + num(R(float(m.group(1) or m.group(2))))
+        if re.fullmatch(r"fit-content\(\s*100%\s*\)|auto|min-content|max-content", tok):
+            return "HUG:1"
+        m = re.fullmatch(r"([\d.]+)px", tok)
+        if m:
+            return "FIXED:" + num(R(float(m.group(1))))
+        return "?"
+    if not css:
+        return ";".join(["HUG:1"] * count) if count else ""
+    out = []
+    # 項目は空白で並ぶ（`minmax(0,1fr) fit-content(100%) …`。2026-11-03 portfolio の 160:5511 で先頭に空白つき）
+    for part in _split_top(css, " "):
+        m = re.fullmatch(r"repeat\(\s*(\d+)\s*,\s*(.*)\)", part)
+        if m:
+            out += [one(x) for x in _split_top(m.group(2), " ")] * int(m.group(1))
+        else:
+            out.append(one(part))
+    return ";".join(out)
 
 
 def rel_xy(n, parent_box):
@@ -634,13 +711,25 @@ def export(file_key, ids, var_paths, parents=None, sections=None, tok=None):
             if v and v.get("document"):
                 comp_sizes[cid] = size(v["document"])
     ctx = Ctx(names, keys, styles, components, sets, comp_sizes, values, modes)
+    # **変異を直接渡したときは、部品のセットを親として引く**（2026-11-03・414 で見つかった）。
+    # 器は親の layoutMode を見て sz= を書く。/nodes は親を返さないので、セットを別に取らないと変異の行だけ sz= が抜ける
+    set_of = {fid: (components.get(fid) or {}).get("componentSetId") for fid in ids}
+    want = sorted({s for s in set_of.values() if s})
+    owners = {}
+    for k in range(0, len(want), 50):
+        part = get(f"/files/{file_key}/nodes", {"ids": ",".join(want[k:k + 50]), "depth": "1"}, tok)
+        for sid, v in part["nodes"].items():
+            if v and v.get("document"):
+                d = dict(v["document"])
+                d.pop("children", None)
+                owners[sid] = d
     out = {}
     for fid in ids:
         node = (data["nodes"].get(fid) or {}).get("document")
         if not node:
             raise RuntimeError(f"節点が取れません: {fid}")
         rows, nids = [], []
-        walk(ctx, node, 0, rows, None, (parents or {}).get(fid), ids=nids)
+        walk(ctx, node, 0, rows, owners.get(set_of.get(fid)), (parents or {}).get(fid), ids=nids)
         out[fid] = {**({"section": sections[fid]} if sections and fid in sections else {}), "name": node["name"],
                     "rows": rows, "ids": nids}
     body = js(out)
@@ -833,6 +922,17 @@ def self_test():
                  "absoluteBoundingBox": {"x": 116, "y": 80, "width": 20, "height": 20},
                  "children": [{"id": "1:7", "name": "In", "type": "RECTANGLE",
                                "absoluteBoundingBox": {"x": 116, "y": 80, "width": 20, "height": 20}}]},
+                {"id": "1:10", "name": "Rule", "type": "LINE", "strokeWeight": 1, "strokeAlign": "CENTER",
+                 "strokes": [{"type": "SOLID", "color": {"r": 0, "g": 0, "b": 0, "a": 1}}],
+                 "relativeTransform": [[0, 1, 116], [-1, 0, 100]],
+                 "absoluteBoundingBox": {"x": 116, "y": 100, "width": 1, "height": 20}},
+                {"id": "1:11", "name": "Grid", "type": "FRAME", "layoutMode": "GRID", "gridRowCount": 1,
+                 "gridColumnCount": 2, "gridRowGap": 4, "gridColumnGap": 8, "gridRowsSizing": "fit-content(100%)",
+                 "gridColumnsSizing": "repeat(2,minmax(0,1fr))", "strokes": [{"type": "SOLID", "color": {"r": 1, "g": 0, "b": 0, "a": 1}}],
+                 "strokeWeight": 2, "strokeAlign": "INSIDE",
+                 "absoluteBoundingBox": {"x": 116, "y": 104, "width": 100, "height": 10},
+                 "children": [{"id": "1:12", "name": "Cell", "type": "RECTANGLE", "gridColumnAnchorIndex": 1,
+                               "absoluteBoundingBox": {"x": 170, "y": 104, "width": 40, "height": 10}}]},
                 {"id": "1:8", "name": "Btn", "type": "INSTANCE", "componentId": "C:1",
                  "componentProperties": {"Size": {"type": "VARIANT", "value": "M"}},
                  "absoluteBoundingBox": {"x": 116, "y": 120, "width": 120, "height": 40},
@@ -848,7 +948,10 @@ def self_test():
                                    "components": {"C:1": {"name": "Size=M", "componentSetId": "CS:1"}},
                                    "componentSets": {"CS:1": {"name": "Button"}}},
                            "C:1": {"document": {"id": "C:1", "name": "Size=M", "type": "COMPONENT",
-                                                "absoluteBoundingBox": {"x": 0, "y": 0, "width": 100, "height": 40}}}}}
+                                                "layoutSizingHorizontal": "FIXED", "layoutSizingVertical": "HUG",
+                                                "absoluteBoundingBox": {"x": 0, "y": 0, "width": 100, "height": 40}}},
+                           "CS:1": {"document": {"id": "CS:1", "name": "Button", "type": "COMPONENT_SET",
+                                                 "layoutMode": "HORIZONTAL", "children": [{"id": "C:1"}]}}}}
         calls = []
 
         def fake_get(path, params=None, tok=None):
@@ -880,13 +983,27 @@ def self_test():
                "絶対配置の印・位置が行に無い（#181）")
             ck("Dot×2|ELLIPSE" in whole and "at=16,60 32,60" in whole, f"同じ形の兄弟を畳めない:\n{whole}")
             ck("|In|RECTANGLE|" in whole, "グループの中の子が行に無い")
+            ck("line=1,CENTER,90" in whole and "stroke=SOLID:#000000" in whole, f"線の向き・塗りが行に無い（#184）:\n{whole}")
+            ck("grid=1,2,4,8,HUG:1,FLEX:1;FLEX:1" in whole and "outline=2,INSIDE" in whole
+               and "cell=0,1,1,1,AUTO,AUTO" in whole, f"グリッド・線の太さ・置き場所が行に無い（#184）:\n{whole}")
             ck("of=Button/M" in whole and "override=100x40->120x40" in whole, "部品と寸法の上書きが行に無い")
             ck("Hidden" not in whole, "部品の中の隠れた子を書いた（器は引かない）")
+            # グリッドの大きさの書き方（REST の CSS の形 → 器の HUG:1;FLEX:1;FIXED:80）
+            ck(grid_sizes("repeat(4,minmax(0,1fr))", 4) == "FLEX:1;FLEX:1;FLEX:1;FLEX:1"
+               and grid_sizes("  minmax(0,1fr) fit-content(100%) 80px", 3) == "FLEX:1;HUG:1;FIXED:80"
+               and grid_sizes("repeat(2,fit-content(100%))", 2) == "HUG:1;HUG:1"
+               and grid_sizes("subgrid", 1) == "?" and grid_sizes(None, 2) == "HUG:1;HUG:1",
+               "グリッドの大きさの書き方を器と同じに直せない")
+            ck(rotation_deg({"relativeTransform": [[0, 1, 0], [-1, 0, 0]]}) == 90
+               and rotation_deg({"relativeTransform": [[1, 0, 0], [0, 1, 0]]}) == 0, "線の向きを器と同じに出せない")
             nids = doc["frames"]["1:1"]["ids"]
             ck(len(nids) == len(rows) and nids[0] == "1:1" and ["1:4", "1:5"] in nids
                and nids[next(i for i, r in enumerate(rows) if "|Title|" in r)] == "1:2",
                f"ID の一覧が行と並ばない（畳んだ行は配列）: {nids}")
             ck(doc["digest"]["value"] == fnv(js(doc["frames"])), "ハッシュが本体と合わない")
+            # 変異を直接渡すと、部品のセットを親として sz= を書く（器と同じ。2026-11-03・414）
+            v = export("F", ["C:1"], [str(vf)])["frames"]["C:1"]["rows"][0]
+            ck("|sz=FIXED,HUG" in v, f"**変異の行に sz= が無い**（セットを親として引いていない）: {v}")
             out = Path(td) / "rest.json"
             ck(main(["--file", "F", "--ids", "1:1", "--variables", str(vf), "--out", str(out)]) == 0
                and json.loads(out.read_text(encoding="utf-8"))["frames"]["1:1"]["rows"] == rows,

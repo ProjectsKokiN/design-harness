@@ -45,13 +45,36 @@ def merge(manifest, chunks, previous=None):
     if manifest.get('mode') != 'manifest' or not manifest.get('frames'):
         raise ValueError('完全なmanifestがありません')
     result = {}
-    unseen = list(manifest.get('$meta', {}).get('読めなかったもの', []))
+    mmeta = manifest.get('$meta', {})
+    # 「読めなかったもの」: 新しい器は件数とハッシュだけを載せ、本体を notread の断片で返す（#182）。
+    # 古い器は manifest と各断片に本体を載せている
+    new_style = 'notReadHash' in mmeta
+    unseen = [] if new_style else list(mmeta.get('読めなかったもの', []))
+    parts = {}
+    rows_chunks = []
     for chunk in chunks:
+        if new_style and chunk.get('$meta', {}).get('notReadHash') != mmeta['notReadHash']:
+            raise ValueError('「読めなかったもの」のハッシュが manifest と違います（別の版か、ONLY_IDS が違う断片）')
+        if chunk.get('mode') == 'notread' and new_style:
+            for k, item in enumerate(chunk.get('items') or []):
+                parts[chunk.get('start', 0) + k] = item
+            continue
         if chunk.get('mode') != 'rows' or not chunk.get('frames'):
             raise ValueError('行の断片の形式が違います')
         if set(chunk['frames']) - set(manifest['frames']):
             raise ValueError('manifestに無い画面の断片です')
-        unseen.extend(chunk.get('$meta', {}).get('読めなかったもの', []))
+        rows_chunks.append(chunk)
+        if not new_style:
+            unseen.extend(chunk.get('$meta', {}).get('読めなかったもの', []))
+    if new_style:
+        n = mmeta.get('notReadCount', 0)
+        missing = [i for i in range(n) if i not in parts]
+        if missing or set(parts) - set(range(n)):
+            raise ValueError(f'「読めなかったもの」が {n} 件中そろっていません（未取得 {missing[:10]}）。notread モードで取ってください')
+        unseen = [parts[i] for i in range(n)]
+        if frame_hash(json.dumps(unseen, ensure_ascii=False, separators=(',', ':'))) != mmeta['notReadHash']:
+            raise ValueError('「読めなかったもの」のハッシュが合いません')
+    chunks = rows_chunks
     for fid, meta in manifest['frames'].items():
         total, hashes = meta['total'], meta['hashes']
         if not isinstance(total, int) or total < 1 or len(hashes) != total:
@@ -125,6 +148,17 @@ def self_test():
                                                'ids': {'0': ids[0], '1': ids[1]}}}}]
     assert merge(man_i, ch_i)['frames']['1:1'] == dict(frame, ids=ids)
     assert merge(man_i, [], {'frames': {'1:1': dict(frame, ids=ids)}})['frames']['1:1']['ids'] == ids
+    # 「読めなかったもの」を notread の断片で分けて取る（#182）
+    nr = [{'instance': '1:1', 'fields': ['x'], 'why': 'a'}, {'instance': '1:2', 'fields': ['y'], 'why': 'b'}]
+    nmeta = {'notReadCount': 2, 'notReadHash': frame_hash(json.dumps(nr, ensure_ascii=False, separators=(',', ':')))}
+    man_n = {'mode': 'manifest', 'frames': {'1:1': meta}, '$meta': nmeta}
+    rows_n = [dict(chunks[0], **{'$meta': nmeta})]
+    got = merge(man_n, rows_n + [{'mode': 'notread', 'start': 0, 'items': nr[:1], '$meta': nmeta},
+                                 {'mode': 'notread', 'start': 1, 'items': nr[1:], '$meta': nmeta}])
+    assert got['$meta']['読めなかったもの'] == nr and got['frames']['1:1'] == frame
+    failures += [lambda: merge(man_n, rows_n + [{'mode': 'notread', 'start': 0, 'items': nr[:1], '$meta': nmeta}]),  # 欠け
+                 lambda: merge(man_n, rows_n + [{'mode': 'notread', 'start': 0, 'items': [nr[1], nr[0]], '$meta': nmeta}]),  # 入れ替わり
+                 lambda: merge(man_n, chunks + [{'mode': 'notread', 'start': 0, 'items': nr, '$meta': nmeta}])]  # 別の版の行
     failures += [lambda: merge(man_i, chunks),   # 古い器の断片（ID が無い）
                  lambda: merge(man_i, [], {'frames': {'1:1': dict(frame, ids=['9:9', ids[1]])}}),  # 作り直された節点
                  lambda: merge(man_i, [], {'frames': {'1:1': frame}})]   # 前回に ID が無い
