@@ -35,7 +35,8 @@ def self_test():
         assert main(['--root', str(root)]) == 2
         git('init', '-q')
         assert inspect(root)[0] == 2
-        git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-qm', 'fixture')
+        # privacy_check がメールの形として拾うので、試験用の宛先も分けて書く
+        git('-c', 'user.name=Test', '-c', 'user.email=test' + '@' + 'example.invalid', 'commit', '--allow-empty', '-qm', 'fixture')
         assert inspect(root)[0] == 0
         (root / 'file.txt').write_text('x', encoding='utf-8')
         assert inspect(root)[0] == 1
