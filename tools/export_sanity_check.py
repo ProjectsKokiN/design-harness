@@ -49,6 +49,10 @@ Auto Layout の中に絶対配置の子が混ざる設計（写真を散らす�
 - 縦のはみ出し。ここは**横だけ**を見ます
 - 高さ。縦は文字の量で伸びるので、書き出しの1点では判定できない
 - `sz=FILL` の子。**親に合わせて縮む**ので、書かれた w は測ったときの値
+- **絶対配置の子**（`layoutPositioning="ABSOLUTE"`）。写真に重ねたバッジ・板の角の
+  ステッカーのような**意図した重ね**で、並びに入らない（2026-11-03・#181。aub の 11 件は
+  すべてこれで、9/5 から「Figma 側の矛盾」と誤って宣言し続けていた）。
+  **印の無い古い書き出しでは見分けられない**ので、そのときは取り直すよう案内する
 - 確かめた方法: --self-test（はみ出しと薄い余りを仕込むと落ちること）
 """
 
@@ -105,6 +109,11 @@ def parse_row(line):
             "count": int(m.group(1)) if m else 1, "kv": kv}
 
 
+def is_absolute(row):
+    """絶対配置の子か。器は `layoutPositioning="ABSOLUTE"`（JSON の書き方）で書く。"""
+    return row["kv"].get("layoutPositioning", "").strip('"') == "ABSOLUTE"
+
+
 def layout_of(row):
     """`layout=` を読む。無ければ None（Auto Layout ではない）。"""
     v = row["kv"].get("layout")
@@ -153,6 +162,8 @@ def check_frame(name, rows, min_slack):
                 continue
             if str(k["kv"].get("sz", "")).startswith("FILL"):
                 continue          # 親に合わせて縮む。書かれた幅は測ったときの値
+            if is_absolute(k):
+                continue          # 並びに入らない意図した重ね（#181）
             for x in k["xs"]:
                 edge = x + k["w"]
                 if worst is None or edge > worst[0]:
@@ -225,6 +236,7 @@ def main(argv=None):
     today = _date.today().isoformat()
 
     errs, thin, seen, waived = [], [], 0, []
+    marked = False
     hit_keys = set()
     for key, fr in sorted(frames.items()):
         if key.startswith("$"):
@@ -234,6 +246,7 @@ def main(argv=None):
             continue
         seen += 1
         rows = [r for r in (parse_row(x) for x in raw if isinstance(x, str)) if r]
+        marked = marked or any("layoutPositioning" in r["kv"] for r in rows)
         e, t = check_frame(fr.get("name", key) if isinstance(fr, dict) else key,
                            rows, args.min_slack)
         for where, msg in e:
@@ -263,6 +276,11 @@ def main(argv=None):
     if errs:
         print(f"書き出しの中に矛盾があります（画面 {seen} 枚）:", file=sys.stderr)
         print("\n".join(errs[:20]), file=sys.stderr)
+        if not marked:
+            print("\n  この書き出しには絶対配置の印（layoutPositioning）がありません。"
+                  "**重ねた飾りを、はみ出しとして数えている恐れがあります。**\n"
+                  "  いまの器（exporters/export_frames.js か tools/export_frames_rest.py）で"
+                  "取り直してください（#181）。", file=sys.stderr)
         if thin:
             print(f"\n  余りが {args.min_slack:g} 未満（{len(thin)}件）:",
                   file=sys.stderr)
@@ -345,6 +363,32 @@ def self_test():
             ok = False
         if "幅の合計" in out or "76" in out:
             print("self-test NG: 並び順を仮定して数を膨らませた"); ok = False
+
+        # **絶対配置の印がある子は数えない**（#181・意図した重ね）
+        rc, out = run({"1:1": {"name": "X", "rows": rows(
+            "0|X|FRAME|390|844|0|0|layout=20,20,20,20,0,VERTICAL,FIXED,FIXED,MIN,MIN",
+            "1|Row|FRAME|350|100|20|20|layout=0,0,0,0,25,HORIZONTAL,FIXED,HUG,SPACE_BETWEEN,CENTER",
+            "2|A|FRAME|148|100|0|0|sz=HUG,HUG|layoutPositioning=\"AUTO\"",
+            "2|B|RECTANGLE|180|180|148|0|sz=FIXED,FIXED|layoutPositioning=\"AUTO\"",
+            "2|C|INSTANCE|48|48|307.5|0|sz=FIXED,FIXED|layoutPositioning=\"ABSOLUTE\"")}})
+        if rc != 0:
+            print(f"self-test NG: 絶対配置の重ねをはみ出しと数えた（{rc}）\n   {out[:400]}")
+            ok = False
+        # 並びの子なら同じ位置でも落とす（印で何でも通すわけではない）
+        rc, out = run({"1:1": {"name": "X", "rows": rows(
+            "0|X|FRAME|390|844|0|0|layout=20,20,20,20,0,VERTICAL,FIXED,FIXED,MIN,MIN",
+            "1|Row|FRAME|350|100|20|20|layout=0,0,0,0,25,HORIZONTAL,FIXED,HUG,SPACE_BETWEEN,CENTER",
+            "2|C|INSTANCE|48|48|307.5|0|sz=FIXED,FIXED|layoutPositioning=\"AUTO\"")}})
+        if rc != 1 or "取り直して" in out:
+            print(f"self-test NG: 並びの子のはみ出しを見逃したか、印があるのに取り直せと言った（{rc}）")
+            ok = False
+        # 印の無い古い書き出しで落ちたら、取り直しを案内する
+        rc, out = run({"1:1": {"name": "X", "rows": rows(
+            "0|X|FRAME|390|844|0|0|layout=20,20,20,20,0,VERTICAL,FIXED,FIXED,MIN,MIN",
+            "1|Row|FRAME|350|100|20|20|layout=0,0,0,0,25,HORIZONTAL,FIXED,HUG,SPACE_BETWEEN,CENTER",
+            "2|C|INSTANCE|48|48|307.5|0|sz=FIXED,FIXED")}})
+        if rc != 1 or "取り直して" not in out:
+            print(f"self-test NG: 印の無い書き出しで取り直しを案内しない（{rc}）"); ok = False
 
         # **FILL の子は判定しない**（親に合わせて縮む）
         rc, out = run({"1:1": {"name": "F", "rows": rows(
