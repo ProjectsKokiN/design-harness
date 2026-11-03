@@ -18,7 +18,11 @@ const MIN_FRAMES=4;   // 動きの記録がこれより少なければ「見て�
 
 // ページの中に入れる記録係。読み込みの最初から動く
 const INIT=`(() => {
-  const S = window.__hr = {cancels: [], frames: 0, flashes: [], sampling: true};
+  const S = window.__hr = {cancels: [], frames: 0, flashes: [], sampling: true, lastMut: performance.now()};
+  // **ページの書き換えが止まったか**も見る。タイマーで1字ずつ出す作り（portfolio の reveal.js）は
+  // CSS のアニメーションに出てこないので、それだけを待つと出し終わる前に数えてしまう（2026-11-03 実測）
+  new MutationObserver(() => { S.lastMut = performance.now(); })
+    .observe(document, {subtree: true, childList: true, attributes: true, characterData: true});
   const desc = el => el.getAttribute && (el.getAttribute('data-layout-id') ? '[data-layout-id="'+el.getAttribute('data-layout-id')+'"]'
     : el.id ? '#'+el.id : el.tagName.toLowerCase() + (el.classList && el.classList.length ? '.'+[...el.classList].join('.') : ''));
   S.desc = desc;
@@ -135,13 +139,13 @@ function collect(allow) {
 }
 
 async function settle(page, ms) {
-  // 有限の動きが走り終わるまで待つ（繰り返し続ける飾りの動きは待たない）
+  // 有限の動きが走り終わり、**ページの書き換えが 0.3 秒止まる**まで待つ（繰り返し続ける飾りの動きは待たない）
   try {
     await page.waitForFunction(() => document.getAnimations().every(a => {
       if (a.playState !== 'running') return true;
       const t = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming() : null;
       return t && t.endTime === Infinity;
-    }), null, {timeout: ms, polling: 50});
+    }) && performance.now() - window.__hr.lastMut > 300, null, {timeout: ms, polling: 50});
     await page.waitForTimeout(100);
     return true;
   } catch { return false; }
@@ -194,12 +198,20 @@ export async function check(config) {
             // スクロールで現れるもの（下にあるもの）も、止まった状態で数える
             const height = await page.evaluate(() => document.documentElement.scrollHeight);
             for (let y = vp.height; y < height; y += vp.height) {
-              await page.evaluate(v => window.scrollTo(0, v), y);
+              // **人のスクロールに近づける**: 画面の 1/4 ずつ、間を空けて進める。一気に飛ぶと、WebKit は
+              // 「画面に入った」の通知を出さないことがあり、出るはずの字を「隠れたまま」と数えた（2026-11-03 portfolio で実測）
+              for (let k = 1; k <= 4; k++) {
+                await page.evaluate(v => window.scrollTo(0, v), y - vp.height + (vp.height * k) / 4);
+                await page.waitForTimeout(60);
+              }
               await settle(page, settleMs);
-              add(`スクロール ${y}px`, (await page.evaluate(collect, allow)).filter(f => !['occluded'].includes(f.check)));
+              // スクロールの段の「打ち切り」は数えない。**検査が一気にスクロールしたこと自体**で、見出しの出し入れなどが
+              // 途中で切り替わる（2026-11-03 portfolio で実測）。打ち切りは読み込み直後とホバーの後で数える
+              add(`スクロール ${y}px`, (await page.evaluate(collect, allow)).filter(f => !['occluded', 'cancel'].includes(f.check)));
             }
             await page.evaluate(() => window.scrollTo(0, 0));
             await settle(page, settleMs);
+            await page.evaluate(() => { window.__hr.cancels = []; });   // 上へ戻した操作による打ち切りも捨てる
             for (const sel of p.hover ?? []) {
               const node = page.locator(sel).first();
               if (!await node.count()) { results.push({...where, status: 'failed', kind: 'hover', why: `ホバーの対象がありません: ${sel}`}); continue; }
