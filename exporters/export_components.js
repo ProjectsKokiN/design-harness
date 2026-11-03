@@ -257,6 +257,18 @@ async function shape(n) {
   }
   // 重なり順（Auto Layout の itemReverseZIndex）。true のときだけ書く（並びは描画順ではない・#10。2026-11-04 FlashEnglish の依頼）
   if (rv(n, 'itemReverseZIndex') === true) p.push('itemReverseZIndex=true');
+  // **節点に明示した変数のモード**（#191・2026-11-04）。コレクション名 → モード名を名前の順で書く。
+  // portfolio のスマホの画面で Typography だけ SP にして Width&Height を付け忘れた 32 か所が、どの検査にも出なかった
+  const evm = rv(n, 'explicitVariableModes');
+  if (evm && typeof evm === 'object' && Object.keys(evm).length) {
+    const m = {};
+    for (const [cid, mid] of Object.entries(evm)) {
+      const col = await figma.variables.getVariableCollectionByIdAsync(cid);
+      const mode = col && col.modes.find(x => x.modeId === mid);
+      m[col ? col.name : cid] = mode ? mode.name : mid;
+    }
+    p.push('modes=' + esc(JSON.stringify(Object.fromEntries(Object.keys(m).sort().map(k => [k, m[k]])))));
+  }
   if (n.layoutMode === 'GRID') {
     const sz = a => (a || []).map(x => x.type === 'FIXED' ? 'FIXED:' + R(x.value) : x.type + ':' + R(x.value)).join(';');
     p.push('grid=' + [n.gridRowCount, n.gridColumnCount, (await bn(n, 'gridRowGap')) || rn(n, 'gridRowGap'),

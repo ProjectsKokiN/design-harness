@@ -340,6 +340,8 @@ note "Figma の直値（変数・スタイルに結ばれていない値）" \
   "$PY" "$HARNESS/tools/figma_raw_values.py" design/figma/frames.json design/figma/components.json
 note "デザイナーが見た画面（見た後に変わったら未判断に戻る）" \
   "$PY" "$HARNESS/tools/design_coverage.py" --config design/design-coverage.json
+note "変数のモードの食い違い（同じ画面で SP と PC が混ざる・#191）" \
+  "$PY" "$HARNESS/tools/mode_consistency_check.py" --frames design/figma/frames.json --variables design/figma/variables.json
 step "生成器の入力（書き出し以外を読んでいないか）" \
   "$PY" "$HARNESS/tools/gen_input_check.py"
 step "鮮度差（書き出し → 生成物・記録）" \

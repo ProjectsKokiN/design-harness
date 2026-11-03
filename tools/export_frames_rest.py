@@ -128,6 +128,7 @@ class Ctx:
         self.styles, self.components, self.component_sets = styles, components, component_sets
         self.comp_sizes = comp_sizes
         self.not_read, self.seen = [], set()
+        self.collections = {}   # コレクション ID → (名前, {モード ID: モード名})（#191）
 
     def miss(self, node, fields, why):
         k = (node.get("id"), tuple(fields), why)
@@ -480,6 +481,17 @@ def shape(ctx, n, parent):
             n.get("primaryAxisAlignItems") or "MIN", n.get("counterAxisAlignItems") or "MIN"]))
     if n.get("itemReverseZIndex") is True:
         p.append("itemReverseZIndex=true")   # 器と同じく true のときだけ（2026-11-04）
+    evm = n.get("explicitVariableModes") or {}
+    if evm:
+        # 節点に明示した変数のモード（#191）。器と同じく コレクション名 → モード名 を名前の順で
+        m = {}
+        for cid, mid in evm.items():
+            col = ctx.collections.get(cid)
+            if not col:
+                ctx.miss(n, ["explicitVariableModes"], f"コレクション {cid} が対応表にありません"
+                                                       "（2026-11-04 以降の export_variables.js の書き出しを --variables に渡す）")
+            m[col[0] if col else cid] = (col[1].get(mid, mid) if col else mid)
+        p.append("modes=" + esc(js({k: m[k] for k in sorted(m, key=lambda s: s.encode("utf-16-be"))})))
     if lm == "GRID":
         p.append("grid=" + ",".join([
             str(n.get("gridRowCount", 0)), str(n.get("gridColumnCount", 0)),
@@ -725,6 +737,17 @@ def get(path, params=None, tok=None):
         raise RuntimeError(f"Figma の応答 {e.code}: {path}") from None
 
 
+def load_collections(paths):
+    """コレクション ID → (名前, {モード ID: モード名})。export_variables.js が 2026-11-04 から書く id・modeIds から作る（#191）"""
+    cols = {}
+    for p in paths:
+        d = json.loads(Path(p).read_text(encoding="utf-8"))
+        for name, c in ((d.get("collections") or {}) if isinstance(d, dict) else {}).items():
+            if isinstance(c, dict) and c.get("id"):
+                cols[c["id"]] = (name, {mid: m for m, mid in (c.get("modeIds") or {}).items()})
+    return cols
+
+
 def load_variables(paths):
     names, keys, values, modes = {}, {}, {}, {}
 
@@ -778,6 +801,7 @@ def export(file_key, ids, var_paths, parents=None, sections=None, tok=None):
             if v and v.get("document"):
                 comp_sizes[cid] = size(v["document"])
     ctx = Ctx(names, keys, styles, components, sets, comp_sizes, values, modes)
+    ctx.collections = load_collections(var_paths)
     # **変異を直接渡したときは、部品のセットを親として引く**（2026-11-03・414 で見つかった）。
     # 器は親の layoutMode を見て sz= を書く。/nodes は親を返さないので、セットを別に取らないと変異の行だけ sz= が抜ける
     set_of = {fid: (components.get(fid) or {}).get("componentSetId") for fid in ids}
@@ -1065,6 +1089,9 @@ def self_test():
             return page if path == "/files/F" else nodes
 
         vf = Path(td) / "vars.json"
+        cv = Path(td) / "cols.json"
+        cv.write_text(js({"collections": {"Typography": {"id": "C1", "modes": ["PC", "SP"], "modeIds": {"PC": "M1", "SP": "M2"},
+                                                         "variables": []}}}), encoding="utf-8")
         vf.write_text(js({"map": {VID: ["a" * 40, "Gap/M"]}, "values": {VID: 16}}), encoding="utf-8")
         keep_get, keep_tok = globals()["get"], os.environ.get("FIGMA_TOKEN")
         globals()["get"] = fake_get
@@ -1125,6 +1152,13 @@ def self_test():
             ck(doc["digest"]["value"] == fnv(js(doc["frames"])), "ハッシュが本体と合わない")
             ck(doc["frames"]["1:1"].get("board") == "Main" and doc["frames"]["1:1"].get("order") == [0, 100, 0, 100],
                f"図の上の置き場所（ボード・並び順）が無い: {doc['frames']['1:1'].get('board')} {doc['frames']['1:1'].get('order')}")
+            mctx = Ctx({}, {}, {}, {}, {}, {})
+            mctx.collections = {"c1": ("Typography", {"m1": "SP"}), "c2": ("Width&Height", {"m2": "PC"})}
+            ck('modes={"Typography":"SP","Width&Height":"PC"}' in shape(mctx, {"id": "q", "type": "FRAME",
+                                                                              "explicitVariableModes": {"c2": "m2", "c1": "m1"}}, None),
+               "明示したモードを器と同じ形（コレクション名 → モード名・名前の順）で書かない（#191）")
+            ck(load_collections([str(cv)]) == {"C1": ("Typography", {"M1": "PC", "M2": "SP"})},
+               "Variables の書き出しからコレクションとモードの対応表を作れない")
             rz = {"id": "z", "type": "FRAME", "layoutMode": "HORIZONTAL", "itemReverseZIndex": True}
             ck("itemReverseZIndex=true" in shape(Ctx({}, {}, {}, {}, {}, {}), rz, None)
                and "itemReverseZIndex" not in shape(Ctx({}, {}, {}, {}, {}, {}), dict(rz, itemReverseZIndex=False), None),

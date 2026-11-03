@@ -137,3 +137,10 @@ id・kind・variantTotal・variants・board・order・key）で書き、外し�
 部品の書き出し（器・REST 版とも）も、変異ごとに行と同じ順の `ids` を書きます（2026-11-04）。`--compare-hashes` は
 部品の書き出し（componentSets）を変異の ID で引いて照合するので、器に変異ごとの行のハッシュと `idsHash` を返させれば、
 ID の一覧まで一度に比べられます。
+
+## 節点に明示した変数のモード（#191・2026-11-04）
+
+器（画面・部品）と REST 版は、変数のモードを明示した節点に `modes={"コレクション名":"モード名",…}`（名前の順）を書きます。
+REST はコレクションとモードを ID でしか返さないので、`export_variables.js`（2026-11-04 から各コレクションに `id`・`modeIds` を書く）
+の書き出しを `--variables` に渡してください。`tools/mode_consistency_check.py` が、同じ画面の中でコレクションごとのモードが
+食い違う節点（例: Typography は SP・Width&Height は PC のまま）を報せます。

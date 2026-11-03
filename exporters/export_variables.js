@@ -54,7 +54,10 @@ for (const col of await figma.variables.getLocalVariableCollectionsAsync()) {
     if (v.description) row.description = v.description;
     rows.push(row);
   }
-  out.collections[col.name] = { modes, variables: rows };
+  // **コレクションとモードの ID も書く**（#191・2026-11-04）。画面の書き出しは節点に明示したモードを
+  // コレクション ID → モード ID で持つので（REST）、名前に引く対応表になる
+  out.collections[col.name] = { modes, variables: rows, id: col.id,
+    modeIds: Object.fromEntries(col.modes.map(m => [m.name, m.modeId])) };
 }
 
 for (const s of await figma.getLocalTextStylesAsync()) {

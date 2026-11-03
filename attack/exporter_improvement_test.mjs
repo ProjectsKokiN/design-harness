@@ -8,8 +8,9 @@ const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
 async function functions() {
   const src=await readFile(new URL('exporters/export_frames.js',root),'utf8');
   const part=src.slice(src.indexOf('function h('),src.indexOf('const SECTIONS'));
+  const cols={c1:{name:'Typography',modes:[{modeId:'m0',name:'PC'},{modeId:'m1',name:'SP'}]},c2:{name:'Width&Height',modes:[{modeId:'m2',name:'PC'},{modeId:'m3',name:'SP'}]}};
   const figma={mixed:Symbol(),getStyleByIdAsync:async()=>({name:'Display/S'}),
-    variables:{getVariableByIdAsync:async()=>({name:'Size/XL',resolveForConsumer:()=>({value:48})})},getNodeByIdAsync:async()=>null};
+    variables:{getVariableByIdAsync:async()=>({name:'Size/XL',resolveForConsumer:()=>({value:48})}),getVariableCollectionByIdAsync:async id=>cols[id]||null},getNodeByIdAsync:async()=>null};
   return new AsyncFunction('figma',part+'\nreturn {shape,walk,ovValue,NOT_READ,h};')(figma);
 }
 test('形の追加欄・ゼロ・falseを保存する',async()=>{
@@ -62,6 +63,12 @@ test('重なり順（itemReverseZIndex）を true のときだけ書く（2026-1
   assert.ok((await shape({...base,itemReverseZIndex:true})).includes('itemReverseZIndex=true'));
   assert.ok(!(await shape({...base,itemReverseZIndex:false})).includes('itemReverseZIndex'));
 });
+test('節点に明示した変数のモードを、コレクション名 → モード名で書く（#191）',async()=>{
+  const {shape}=await functions();
+  const s=await shape({type:'FRAME',explicitVariableModes:{c2:'m2',c1:'m1'}});
+  assert.ok(s.includes('modes={"Typography":"SP","Width&Height":"PC"}'),s);
+  assert.ok(!(await shape({type:'FRAME',explicitVariableModes:{}})).includes('modes='));
+});
 test('Variablesの全モードと日本語のハッシュを取得する',async()=>{
   const src=await readFile(new URL('exporters/export_variables.js',root),'utf8');
   const figma={fileKey:'fixture',variables:{getLocalVariableCollectionsAsync:async()=>[{name:'色',variableIds:['v'],modes:[{modeId:'l',name:'Light'},{modeId:'d',name:'Dark'}]}],
@@ -70,6 +77,7 @@ test('Variablesの全モードと日本語のハッシュを取得する',async(
   const d=JSON.parse(await new AsyncFunction('figma',src)(figma));
   assert.equal(d.collections['色'].variables[0].values.Dark,'#000000');
   assert.equal(d.$meta.declared.variables,1);assert.ok(d.$meta.payloadDigest.value);
+  assert.deepEqual(d.collections['色'].modeIds,{Light:'l',Dark:'d'});
   figma.variables.getVariableByIdAsync=async()=>null;
   await assert.rejects(new AsyncFunction('figma',src)(figma));
 });
