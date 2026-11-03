@@ -33,11 +33,21 @@ test('古い文字変数の束縛を流さない',async()=>{
 });
 test('SLOTの差し込んだ子だけを取得する',async()=>{
   const {walk}=await functions();
-  const leaf={type:'RECTANGLE',name:'Content',width:20,height:20,x:0,y:0};
-  const slot={type:'SLOT',name:'Slot',children:[leaf],width:20,height:20,x:0,y:0};
-  const instance={type:'INSTANCE',name:'Lists',getMainComponentAsync:async()=>null,children:[slot],width:20,height:20,x:0,y:0};
-  const rows=[];await walk(instance,0,rows);
+  const leaf={id:'I1;3',type:'RECTANGLE',name:'Content',width:20,height:20,x:0,y:0};
+  const slot={id:'I1;2',type:'SLOT',name:'Slot',children:[leaf],width:20,height:20,x:0,y:0};
+  const instance={id:'1',type:'INSTANCE',name:'Lists',getMainComponentAsync:async()=>null,children:[slot],width:20,height:20,x:0,y:0};
+  const rows=[],ids=[];await walk(instance,0,rows,ids);
   assert.equal(rows.length,3);assert.ok(rows[1].includes('slotPath='));assert.ok(rows[2].includes('Content'));
+  assert.deepEqual(ids,['1','I1;2','I1;3']);
+});
+test('ID の一覧が行と同じ順に並び、畳んだ行は ID の配列になる（#157）',async()=>{
+  const {walk}=await functions();
+  const dot=id=>({id,type:'ELLIPSE',name:'Dot',width:8,height:8,x:0,y:0});
+  const fr={id:'1:1',type:'FRAME',name:'F',width:100,height:100,x:0,y:0,children:[dot('1:2'),dot('1:3'),
+    {id:'1:4',type:'RECTANGLE',name:'Bar',width:50,height:4,x:0,y:20}]};
+  const rows=[],ids=[];await walk(fr,0,rows,ids);
+  assert.equal(ids.length,rows.length);
+  assert.deepEqual(ids,['1:1',['1:2','1:3'],'1:4']);assert.ok(rows[1].includes('Dot×2'));
 });
 test('Variablesの全モードと日本語のハッシュを取得する',async()=>{
   const src=await readFile(new URL('exporters/export_variables.js',root),'utf8');
@@ -63,6 +73,7 @@ test('本物の分割書き出しをPythonで全体照合して復元する',asy
   const result=JSON.parse(execFileSync(process.env.PYTHON??(process.platform==='win32'?'python':'python3'),['-c',script],{cwd:fileURLToPath(root),input:JSON.stringify({manifest,chunks}),encoding:'utf8'}));
   assert.equal(result.frames['1:1'].rows.length,2);assert.ok(result.frames['1:1'].rows[1].includes('絵😀'));
   assert.equal(result.$meta.declared.screens,1);
+  assert.deepEqual(result.frames['1:1'].ids,['1:1','leaf']);
 });
 test('余白・寸法に結んだ変数と、意図した直値の印を書く（候補6）',async()=>{
   const {shape}=await functions();

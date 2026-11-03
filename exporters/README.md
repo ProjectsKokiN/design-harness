@@ -95,3 +95,14 @@ return JSON.stringify({ $meta: { declared: c.declared, pages: c.pages }, result 
 - 同じ行になるかは、器に行ごとのハッシュだけを返させ（`TRANSFER_MODE = 'manifest'`）、`--compare-hashes` で照合する
 - portfolio の 23 画面（964 行）で 960 行が一致。残り 4 行は REST では区別できない違い（部品の上書きで、効果のスタイルだけか中身もか）
 - 両方の器で、部品の性質（props）は**名前の順**に並べる（Plugin API の返す順に決まりが無く、REST と合わせられないため）
+
+## 子のノード ID は行の外の `ids` に入る（#157・2026-11-03）
+
+`export_frames.js` と `export_frames_rest.py` は、画面ごとに `rows` と同じ順・同じ数の `ids` を書きます。
+畳んだ行（`名前×N`）は ID の配列です。**行とその行のハッシュは変わりません**（ID は行の外にあるため）。
+
+- 分割で取るとき: manifest は `idsHash`、rows は行と同じ番号の `ids` を返し、`tools/frame_io.py` が組み立てて照合する。
+  `--previous` で使い回した行のノードが作り直されていると、ID の一覧のハッシュが合わずに止まる（全部の行を取り直す）
+- `idsHash` の無い manifest は古い器で、`ids` を持たない
+- 決めた経緯: ユーザーの選択（原文）「行の外に ID の一覧を足す」。行の中に `id=` を足すと同じ形の兄弟を畳めなくなり、
+  全案件で行のハッシュが変わる。名前の並びで引くと、同じ名前の兄弟（FlashEnglish の ButtonsGroup 2つ）を取り違える

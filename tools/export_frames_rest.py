@@ -511,8 +511,11 @@ def coord_box(parent, grand):
     return grand if parent and parent.get("type") == "GROUP" else (parent or {}).get("absoluteBoundingBox")
 
 
-def walk(ctx, n, depth, rows, parent=None, origin=None, in_instance=False):
+def walk(ctx, n, depth, rows, parent=None, origin=None, in_instance=False, ids=None):
+    """ids には rows と同じ順のノード ID を足す（畳んだ行は配列）。器の ids と同じ（2026-11-03・#157）"""
+    ids = [] if ids is None else ids
     sh = shape(ctx, n, parent)
+    ids.append(n.get("id"))
     w, h = size(n)
     x, y = rel_xy(n, origin)
     rows.append("|".join(str(v) for v in [depth, n["name"], n["type"], num(R(w)), num(R(h)), num(R(x)), num(R(y))])
@@ -529,7 +532,7 @@ def walk(ctx, n, depth, rows, parent=None, origin=None, in_instance=False):
                 nxt = path + [c["name"]]
                 if c.get("type") == "SLOT":
                     start = len(rows)
-                    walk(ctx, c, depth + 1, rows, node, box, True)
+                    walk(ctx, c, depth + 1, rows, node, box, True, ids)
                     if len(rows) > start:
                         rows[start] += "|slotPath=" + esc("/".join(nxt))
                 elif c.get("type") != "INSTANCE":
@@ -553,8 +556,9 @@ def walk(ctx, n, depth, rows, parent=None, origin=None, in_instance=False):
             rows.append("|".join(str(v) for v in [depth + 1, kids[i]["name"] + "×" + str(j - i + 1), kids[i]["type"],
                                                   num(R(cw)), num(R(ch)), "-", "-"])
                         + ("|" + shapes[i] if shapes[i] else "") + "|at=" + pos)
+            ids.append([c.get("id") for c in kids[i:j + 1]])
         else:
-            walk(ctx, kids[i], depth + 1, rows, n, box, in_instance)
+            walk(ctx, kids[i], depth + 1, rows, n, box, in_instance, ids)
         i = j + 1
 
 
@@ -635,9 +639,10 @@ def export(file_key, ids, var_paths, parents=None, sections=None, tok=None):
         node = (data["nodes"].get(fid) or {}).get("document")
         if not node:
             raise RuntimeError(f"節点が取れません: {fid}")
-        rows = []
-        walk(ctx, node, 0, rows, None, (parents or {}).get(fid))
-        out[fid] = {**({"section": sections[fid]} if sections and fid in sections else {}), "name": node["name"], "rows": rows}
+        rows, nids = [], []
+        walk(ctx, node, 0, rows, None, (parents or {}).get(fid), ids=nids)
+        out[fid] = {**({"section": sections[fid]} if sections and fid in sections else {}), "name": node["name"],
+                    "rows": rows, "ids": nids}
     body = js(out)
     return {"frames": out, "$meta": {"読めなかったもの": ctx.not_read, "source": "REST（tools/export_frames_rest.py）"},
             "digest": {"algo": "FNV-1a 32bit", "rows": len(out), "chars": len(body), "value": fnv(body)}}
@@ -694,6 +699,10 @@ def compare_hashes(manifest_path, rest_path):
                if i >= len(hs) or i >= len(rows) or hs[i] != fnv(rows[i])]
         if bad:
             out[fid] = bad
+        # 器が ID の一覧のハッシュを返していれば、それも照合する（行が同じでも ID が違えば別のノード）
+        if "idsHash" in info and info["idsHash"] != fnv(js((r.get(fid) or {}).get("ids"))):
+            out[fid + " の ID の一覧"] = "違う"
+            total += 1
     return out, total
 
 
@@ -721,6 +730,10 @@ def compare(a_path, b_path):
                 sx, sy = set(fx), set(fy)
                 bad += [f"器だけ: {s[:60]}" for s in sorted(sx - sy)][:3] + [f"REST だけ: {s[:60]}" for s in sorted(sy - sx)][:3]
             diffs.append(f"{fid} 行{i} {head}: " + " / ".join(bad))
+        ia, ib = (a.get(fid) or {}).get("ids"), (b.get(fid) or {}).get("ids")
+        if ia is not None and ib is not None and ia != ib:
+            n = sum(1 for i in range(max(len(ia), len(ib))) if i >= len(ia) or i >= len(ib) or ia[i] != ib[i])
+            diffs.append(f"{fid}: ID の一覧が {n} 行で違います")
     return diffs, total
 
 
@@ -767,6 +780,18 @@ def self_test():
         hs.write_text(js({"frames": {"1": {"total": 1, "hashes": [fnv("0|A|FRAME|1|1|0|0|fill=X")]}}}), encoding="utf-8")
         ck(main(["--compare-hashes", str(hs), str(a)]) == 0, "ハッシュが同じなのに違うと言った")
         ck(main(["--compare-hashes", str(hs), str(b)]) == 1, "ハッシュが違うのに同じと言った")
+        ai = Path(td) / "ai.json"
+        ai.write_text(js({"frames": {"1": {"rows": ["0|A|FRAME|1|1|0|0|fill=X"], "ids": ["1:1"]}}}), encoding="utf-8")
+        hi = Path(td) / "hi.json"
+        hi.write_text(js({"frames": {"1": {"total": 1, "hashes": [fnv("0|A|FRAME|1|1|0|0|fill=X")],
+                                           "idsHash": fnv(js(["9:9"]))}}}), encoding="utf-8")
+        ck(main(["--compare-hashes", str(hi), str(ai)]) == 1, "**行が同じでも ID の一覧が違うのに同じと言った**")
+        hi.write_text(js({"frames": {"1": {"total": 1, "hashes": [fnv("0|A|FRAME|1|1|0|0|fill=X")],
+                                           "idsHash": fnv(js(["1:1"]))}}}), encoding="utf-8")
+        ck(main(["--compare-hashes", str(hi), str(ai)]) == 0, "ID の一覧が同じなのに違うと言った")
+        bi = Path(td) / "bi.json"
+        bi.write_text(js({"frames": {"1": {"rows": ["0|A|FRAME|1|1|0|0|fill=X"], "ids": ["2:2"]}}}), encoding="utf-8")
+        ck(main(["--compare", str(ai), str(bi)]) == 1, "**ID の一覧の違いを --compare が見逃した**")
         ck(main(["--compare-hashes", str(hs), str(Path(td) / "none.json")]) == 2, "読めないのに 2 でない")
         ck(main(["--compare", str(a), str(Path(td) / "none.json")]) == 2, "比べる相手が読めないのに 2 でない")
         ck(main(["--compare", str(a), str(b)]) == 1, "違う書き出しを同じと言った")
@@ -857,6 +882,10 @@ def self_test():
             ck("|In|RECTANGLE|" in whole, "グループの中の子が行に無い")
             ck("of=Button/M" in whole and "override=100x40->120x40" in whole, "部品と寸法の上書きが行に無い")
             ck("Hidden" not in whole, "部品の中の隠れた子を書いた（器は引かない）")
+            nids = doc["frames"]["1:1"]["ids"]
+            ck(len(nids) == len(rows) and nids[0] == "1:1" and ["1:4", "1:5"] in nids
+               and nids[next(i for i, r in enumerate(rows) if "|Title|" in r)] == "1:2",
+               f"ID の一覧が行と並ばない（畳んだ行は配列）: {nids}")
             ck(doc["digest"]["value"] == fnv(js(doc["frames"])), "ハッシュが本体と合わない")
             out = Path(td) / "rest.json"
             ck(main(["--file", "F", "--ids", "1:1", "--variables", str(vf), "--out", str(out)]) == 0

@@ -333,8 +333,11 @@ async function shape(n) {
   }
   return p.join('|');
 }
-async function walk(n, depth, rows) {
+// **ids は rows と同じ順のノード ID**（畳んだ行は ID の配列）。行の外に置くので、行とそのハッシュは変わらない
+// （2026-11-03 ユーザー確定「行の外に ID の一覧を足す」。FlashEnglish の読み手が子のノード ID を引く・#157）
+async function walk(n, depth, rows, ids = []) {
   const sh = await shape(n);
+  ids.push(n.id);
   rows.push([depth, n.name, n.type, R(n.width), R(n.height), R(n.x), R(n.y)].join('|') + (sh ? '|' + sh : ''));
   if (depth >= 8) {
     if (n.children?.length) NOT_READ.push({ instance: n.id, name: n.name, fields: ['children'], why: '深さの上限8で未取得' });
@@ -347,7 +350,7 @@ async function walk(n, depth, rows) {
         const next = [...path, child.name];
         if (child.type === 'SLOT') {
           const start = rows.length;
-          await walk(child, depth + 1, rows);
+          await walk(child, depth + 1, rows, ids);
           if (rows.length > start) rows[start] += '|slotPath=' + esc(next.join('/'));
         } else if (child.type !== 'INSTANCE') await findSlots(child, next);
       }
@@ -372,8 +375,9 @@ async function walk(n, depth, rows) {
       rows.push([depth + 1, n.children[i].name + '×' + (j - i + 1), n.children[i].type,
         R(n.children[i].width), R(n.children[i].height), '-', '-'].join('|') +
         (shapes[i] ? '|' + shapes[i] : '') + '|at=' + pos);
+      ids.push(n.children.slice(i, j + 1).map(c => c.id));
     } else {
-      await walk(n.children[i], depth + 1, rows);
+      await walk(n.children[i], depth + 1, rows, ids);
     }
     i = j + 1;
   }

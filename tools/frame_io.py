@@ -57,10 +57,15 @@ def merge(manifest, chunks, previous=None):
         if not isinstance(total, int) or total < 1 or len(hashes) != total:
             raise ValueError(f'{fid}: 行の宣言件数が違います')
         rows = [None] * total
-        old = (previous or {}).get('frames', {}).get(fid, {}).get('rows', [])
+        # ID の一覧（行と同じ順・2026-11-03・#157）。idsHash の無い manifest は古い器なので ID を持たない
+        want_ids = 'idsHash' in meta
+        ids = [None] * total
+        prev = (previous or {}).get('frames', {}).get(fid, {})
+        old, old_ids = prev.get('rows', []), prev.get('ids') or []
         for i, row in enumerate(old[:total]):
             if frame_hash(row) == hashes[i]:
                 rows[i] = row
+                ids[i] = old_ids[i] if i < len(old_ids) else None
         for chunk in chunks:
             part = chunk['frames'].get(fid)
             if part is None:
@@ -74,6 +79,10 @@ def merge(manifest, chunks, previous=None):
                 if rows[i] is not None and rows[i] != row:
                     raise ValueError(f'{fid}: 矛盾する行{index}')
                 rows[i] = row
+                if want_ids:
+                    if index not in (part.get('ids') or {}):
+                        raise ValueError(f'{fid}: 行{index}の ID がありません（器が古い）')
+                    ids[i] = part['ids'][index]
         missing = [i for i, row in enumerate(rows) if row is None]
         if missing:
             raise ValueError(f'{fid}: 未取得の行 {missing}')
@@ -81,6 +90,11 @@ def merge(manifest, chunks, previous=None):
         if frame_hash(body) != meta['frameHash']:
             raise ValueError(f'{fid}: 全体ハッシュが違います')
         result[fid] = {'section': meta['section'], 'name': meta['name'], 'rows': rows}
+        if want_ids:
+            if frame_hash(json.dumps(ids, ensure_ascii=False, separators=(',', ':'))) != meta['idsHash']:
+                # 前回から使い回した行は、中身が同じでもノードが作り直されて ID が変わっていることがある
+                raise ValueError(f'{fid}: ID の一覧のハッシュが違います。--previous を使わずに全部の行を取り直してください')
+            result[fid]['ids'] = ids
     doc = {'frames': result, '$meta': {'読めなかったもの': unseen, 'transferVerified': True,
             'declared': {'screens': len(result)}}}
     doc['$meta']['payloadDigest'] = payload_digest(doc)
@@ -103,6 +117,17 @@ def self_test():
                 lambda: resolve_frame({'a': frame, 'b': frame}, 'A'),
                 lambda: screen_mapping({'a': frame, 'b': frame}, {'A': {}}, 'a'),
                 lambda: merge(manifest, [{'mode': 'rows', 'frames': {'1:1': {'frameHash': meta['frameHash'], 'rows': {'0': 'broken'}}}}])]
+    # ID の一覧（idsHash を持つ manifest）
+    ids = ['1:1', ['1:2', '1:3']]
+    meta_i = dict(meta, idsHash=frame_hash(json.dumps(ids, ensure_ascii=False, separators=(',', ':'))))
+    man_i = {'mode': 'manifest', 'frames': {'1:1': meta_i}}
+    ch_i = [{'mode': 'rows', 'frames': {'1:1': {'frameHash': meta['frameHash'], 'rows': {'0': rows[0], '1': rows[1]},
+                                               'ids': {'0': ids[0], '1': ids[1]}}}}]
+    assert merge(man_i, ch_i)['frames']['1:1'] == dict(frame, ids=ids)
+    assert merge(man_i, [], {'frames': {'1:1': dict(frame, ids=ids)}})['frames']['1:1']['ids'] == ids
+    failures += [lambda: merge(man_i, chunks),   # 古い器の断片（ID が無い）
+                 lambda: merge(man_i, [], {'frames': {'1:1': dict(frame, ids=['9:9', ids[1]])}}),  # 作り直された節点
+                 lambda: merge(man_i, [], {'frames': {'1:1': frame}})]   # 前回に ID が無い
     for fail in failures:
         try:
             fail()
