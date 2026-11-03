@@ -324,6 +324,8 @@ def ov_value(ctx, node, f):
         return R(w if f == "width" else h)
     if f == "visible":
         return node.get("visible", True)
+    if f == "reactions":
+        return "あり"
     if f == "boundVariables":
         out = {}
         for k, v in bvars(node).items():
@@ -395,6 +397,12 @@ def overrides_of(ctx, n):
         # （スタイルが無くても effectStyleId: null を挙げる。2026-11-03・414 の Ellipse 4）
         if "effects" in fields and "effectStyleId" not in fields:
             fields.append("effectStyleId")
+        # REST は動き（プロトタイプの遷移）の上書きを transitionDuration・transitionEasing・transitionNodeID に分けて返す。
+        # 器（Plugin API の overriddenFields）は reactions 1 つで、値は「あり」（2026-11-03・414 の Tabs/BuildingBlocks）
+        if any(f.startswith("transition") for f in fields):
+            fields = [f for f in fields if not f.startswith("transition")]
+            if "reactions" not in fields:
+                fields.append("reactions")
         vals = {}
         for f in sorted(fields, key=lambda s: s.encode("utf-16-be")):   # 器は欄を名前の順（JS の文字の順）で返す
             if f in SKIP_OV:
@@ -1095,6 +1103,11 @@ def self_test():
             hid = {"id": "h", "type": "INSTANCE", "visible": False, "children": [{"id": "h;1", "name": "x", "type": "TEXT"}],
                    "overrides": [{"id": "h", "overriddenFields": ["width", "inheritFillStyleId"]}],
                    "absoluteBoundingBox": {"x": 0, "y": 0, "width": 10, "height": 10}}
+            tr = {"id": "t", "type": "INSTANCE", "children": [],
+                  "overrides": [{"id": "t", "overriddenFields": ["transitionDuration", "transitionEasing", "transitionNodeID", "width"]}],
+                  "absoluteBoundingBox": {"x": 0, "y": 0, "width": 41, "height": 10}}
+            ck(overrides_of(Ctx({}, {}, {}, {}, {}, {}), tr) == [["", {"reactions": "あり", "width": 41}]],
+               f"動きの上書きを器と同じ reactions に畳めない: {overrides_of(Ctx({}, {}, {}, {}, {}, {}), tr)}")
             ck(kid_children(hid, False) == [] and overrides_of(Ctx({}, {}, {}, {}, {}, {}), hid)[0][0] == ""
                and list(overrides_of(Ctx({}, {}, {}, {}, {}, {}), hid)[0][1]) == ["fillStyleId", "width"],
                f"隠れたインスタンスの扱いか欄の名前が器と違う: {overrides_of(Ctx({}, {}, {}, {}, {}, {}), hid)}")
