@@ -41,10 +41,32 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import react_web_check
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'tools'))
-import _utf8  # noqa: F401  既存の出力設定との互換を保つ
+_TOOLS = str(Path(__file__).resolve().parent.parent / 'tools')
+sys.path.insert(0, _TOOLS)
+try:
+    import _utf8  # noqa: F401  既存の出力設定との互換を保つ
+finally:
+    sys.path.remove(_TOOLS)   # 案件から部品として読まれても、読み込んだ側の検索パスを汚さない（#186）
+
+
+def _harness_sibling(name, folder):
+    """ハーネスの兄弟の部品を、**別名で・ファイルの場所から**読む（#186）。
+
+    案件がこの道具を部品として読み込むと、`sys.path` の先頭にハーネスの置き場所が残り、案件の同じ名前の部品
+    （aub の design/gen/digest_check.py・FlashEnglish の figma_names.py など）を隠していた。
+    `sys.modules` も名前で共有されるので、検索パスを戻すだけでは、先に読まれた案件の部品を拾う。別名なら混ざらない
+    """
+    import importlib.util
+    key = "_harness_" + name
+    if key not in sys.modules:
+        spec = importlib.util.spec_from_file_location(key, Path(folder) / (name + ".py"))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[key] = mod
+        spec.loader.exec_module(mod)
+    return sys.modules[key]
+
+
+react_web_check = _harness_sibling("react_web_check", Path(__file__).resolve().parent)
 
 # Windows の cp932 端末でも、UnicodeEncodeError で検査ごと落ちない・
 # 日本語が「?」に潰れない、の両方を満たす（FlashEnglish 2026-08-24 ＋

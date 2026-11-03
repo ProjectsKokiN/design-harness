@@ -62,8 +62,12 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+_HERE = str(Path(__file__).resolve().parent)
+sys.path.insert(0, _HERE)
+try:
+    import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+finally:
+    sys.path.remove(_HERE)   # 案件から部品として読まれても、読み込んだ側の検索パスを汚さない（#186）
 
 #: 余りがこれ未満なら注意（書体が少し違うだけで破れる）
 DEFAULT_MIN_SLACK = 20.0

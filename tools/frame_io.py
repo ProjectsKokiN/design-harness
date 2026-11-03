@@ -4,9 +4,32 @@ import argparse
 import json
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import _utf8  # noqa: F401
-from digest_check import payload_digest
+_HERE = str(Path(__file__).resolve().parent)
+sys.path.insert(0, _HERE)
+try:
+    import _utf8  # noqa: F401
+finally:
+    sys.path.remove(_HERE)   # 読み込んだ側の検索パスを汚さない（#186）
+
+
+def _harness_sibling(name, folder):
+    """ハーネスの兄弟の部品を、**別名で・ファイルの場所から**読む（#186）。
+
+    案件がこの道具を部品として読み込むと、`sys.path` の先頭にハーネスの置き場所が残り、案件の同じ名前の部品
+    （aub の design/gen/digest_check.py・FlashEnglish の figma_names.py など）を隠していた。
+    `sys.modules` も名前で共有されるので、検索パスを戻すだけでは、先に読まれた案件の部品を拾う。別名なら混ざらない
+    """
+    import importlib.util
+    key = "_harness_" + name
+    if key not in sys.modules:
+        spec = importlib.util.spec_from_file_location(key, Path(folder) / (name + ".py"))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[key] = mod
+        spec.loader.exec_module(mod)
+    return sys.modules[key]
+
+
+payload_digest = _harness_sibling("digest_check", _HERE).payload_digest
 
 
 def frame_hash(text):
@@ -168,6 +191,21 @@ def self_test():
         except ValueError:
             continue
         raise AssertionError('壊した入力が通りました')
+    # 案件から部品として読まれても、案件の同じ名前の部品を隠さない（#186）
+    import subprocess
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as case:
+        (Path(case) / 'digest_check.py').write_text("WHO = 'case'\n", encoding='utf-8')
+        (Path(case) / 'figma_names.py').write_text("WHO = 'case'\n", encoding='utf-8')
+        code = ("import sys; sys.path.insert(0, sys.argv[1]); import digest_check as a; before = list(sys.path);"
+                "import importlib.util as u; s = u.spec_from_file_location('frame_io', sys.argv[2]);"
+                "m = u.module_from_spec(s); s.loader.exec_module(m);"
+                "import digest_check as b, figma_names as c;"
+                "print(a.WHO, b.WHO, c.WHO, sys.path == before, callable(m.payload_digest))")
+        r = subprocess.run([sys.executable, '-c', code, case, str(Path(__file__).resolve())],
+                           capture_output=True, text=True, encoding='utf-8', errors='replace')
+        assert r.stdout.split() == ['case', 'case', 'case', 'True', 'True'], \
+            f'**案件の同じ名前の部品を隠した、または検索パスを汚した**: {r.stdout} {r.stderr[-300:]}'
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / 'manifest.json'

@@ -4,8 +4,12 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'tools'))
-import _utf8  # noqa: F401  Windowsの出力規約を共有する
+_TOOLS = str(Path(__file__).resolve().parent.parent / 'tools')
+sys.path.insert(0, _TOOLS)
+try:
+    import _utf8  # noqa: F401  Windowsの出力規約を共有する
+finally:
+    sys.path.remove(_TOOLS)   # 読み込んだ側の検索パスを汚さない（#186）
 
 
 def analyze(content, filename, mode=None):

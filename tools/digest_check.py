@@ -34,8 +34,12 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+_HERE = str(Path(__file__).resolve().parent)
+sys.path.insert(0, _HERE)
+try:
+    import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
+finally:
+    sys.path.remove(_HERE)   # 部品として読まれても、読み込んだ側の検索パスを汚さない（#186）
 
 
 def fnv1a(body: str) -> int:
