@@ -1,5 +1,6 @@
 // web_render_check の試験（候補1・#176・#177）。正常なページは両ブラウザ・両方の高さで違反0、
 // 壊し方ごとに、その種類の違反で落ちることを見る。
+// 正常なページには line-clamp で切った本文を置く（切られて描画されない行を「隠れている」と数えない・#189）。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -34,6 +35,7 @@ ${broken === 'clip' ? '<div style="width:80px;overflow:hidden"><p id="clipt" sty
 ${broken === 'occlude' ? '<div style="position:relative"><p id="occ" style="margin:0">隠れる文字</p><div style="position:absolute;inset:0;background:#fff"></div></div>' : ''}
 ${broken === 'spill' ? '<p id="sp" style="width:50px;white-space:nowrap">はみ出す長い文字です</p>' : ''}
 ${broken === 'brokenImage' ? '<img id="bad" src="/missing.png" alt="" style="width:20px;height:20px">' : ''}
+<div id="clampbox"><p id="clamp" style="margin:0;width:120px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">行数を制限した長い本文です行数を制限した長い本文です行数を制限した長い本文です行数を制限した長い本文です</p><p id="after" style="margin:0;background:#eee">次の段落</p></div>
 <p id="below" ${broken === 'hidden' ? 'style="opacity:0"' : ''}>下の段落</p>
 <script>
 ${broken === 'stuck' ? "document.getElementById('card').addEventListener('mouseenter',()=>document.getElementById('name').classList.add('hid'));" : ''}

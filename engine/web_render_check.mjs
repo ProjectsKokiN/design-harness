@@ -82,7 +82,15 @@ function collect(allow) {
       const over = Math.max(cx ? Math.max(q.left - r.left, r.right - q.right) : 0, cy ? Math.max(q.top - r.top, r.bottom - q.bottom) : 0);
       if (over > 0.5) { push('clipped', el, `${over.toFixed(1)}px 切られている（${desc(p)}）`); break; }
     }
-    // 他の要素に隠れる（各行の中心で当たり判定）
+    // 他の要素に隠れる（各行の中心で当たり判定）。
+    // **自分か祖先の overflow で切られて描画されない行は数えない**（#189・2026-11-04）。line-clamp で 2 行に切った本文の
+    // 3 行目以降は、描画されないのに位置だけを持ち、下の要素に「隠れている」と数えられていた（portfolio の Expertise カード）
+    let cl = -Infinity, ct = -Infinity, cr = Infinity, cb = Infinity;
+    for (let p = el; p && p !== document.documentElement; p = p.parentElement) {
+      const pc = getComputedStyle(p), q = p.getBoundingClientRect();
+      if (['hidden', 'clip'].includes(pc.overflowX)) { cl = Math.max(cl, q.left); cr = Math.min(cr, q.right); }
+      if (['hidden', 'clip'].includes(pc.overflowY)) { ct = Math.max(ct, q.top); cb = Math.min(cb, q.bottom); }
+    }
     const range = document.createRange();
     for (const n of el.childNodes) {
       if (n.nodeType !== 3 || !n.textContent.trim()) continue;
@@ -90,6 +98,7 @@ function collect(allow) {
       for (const line of range.getClientRects()) {
         const x = line.left + line.width / 2, y = line.top + line.height / 2;
         if (x < 0 || y < 0 || x >= vw || y >= vh) continue;
+        if (x < cl || x > cr || y < ct || y > cb) continue;   // 切られて描画されない行
         const hit = document.elementFromPoint(x, y);
         if (hit && hit !== el && !el.contains(hit) && !hit.contains(el)) {
           push('occluded', el, `${desc(hit)} の下になっている`); break;
