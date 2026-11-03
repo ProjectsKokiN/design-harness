@@ -248,12 +248,13 @@ async function shape(n) {
   // **塗りのスタイル**（#149）。それまで書いておらず、Header / Footer の塗りのスタイルが行から消えていた
   const fst = await sn(rv(n, 'fillStyleId')); if (fst) p.push('fillStyle=' + fst);
   // 線の塗り・太さと向き・グリッド（#184。portfolio が案件の拡張 build-frames.mjs で足していた欄を共通にした）
+  // 太さは辺ごとに違うと figma.mixed（Symbol）。rn を通して MIXED にする（素で R に入れると器が落ちる・2026-11-03 414）
   if (n.strokes && n.strokes.length) {
     p.push('stroke=' + (await bn(n, 'strokes') || await paintOf(n.strokes[0])));
-    if (n.type !== 'LINE') p.push('outline=' + [(await bn(n, 'strokeWeight')) || R(n.strokeWeight), n.strokeAlign].join(','));
+    if (n.type !== 'LINE') p.push('outline=' + [(await bn(n, 'strokeWeight')) || rn(n, 'strokeWeight'), n.strokeAlign].join(','));
   }
   if (n.type === 'LINE') {
-    p.push('line=' + [(await bn(n, 'strokeWeight')) || R(n.strokeWeight), n.strokeAlign, Math.round(n.rotation)].join(','));
+    p.push('line=' + [(await bn(n, 'strokeWeight')) || rn(n, 'strokeWeight'), n.strokeAlign, Math.round(n.rotation)].join(','));
   }
   const es = await sn(n.effectStyleId); if (es) p.push('effect=' + es);
   if (n.layoutMode && n.layoutMode !== 'NONE') {
@@ -265,8 +266,8 @@ async function shape(n) {
   }
   if (n.layoutMode === 'GRID') {
     const sz = a => (a || []).map(x => x.type === 'FIXED' ? 'FIXED:' + R(x.value) : x.type + ':' + R(x.value)).join(';');
-    p.push('grid=' + [n.gridRowCount, n.gridColumnCount, (await bn(n, 'gridRowGap')) || R(n.gridRowGap),
-      (await bn(n, 'gridColumnGap')) || R(n.gridColumnGap), sz(n.gridRowSizes), sz(n.gridColumnSizes)].join(','));
+    p.push('grid=' + [n.gridRowCount, n.gridColumnCount, (await bn(n, 'gridRowGap')) || rn(n, 'gridRowGap'),
+      (await bn(n, 'gridColumnGap')) || rn(n, 'gridColumnGap'), sz(n.gridRowSizes), sz(n.gridColumnSizes)].join(','));
   }
   if (n.parent && n.parent.layoutMode === 'GRID') {
     p.push('cell=' + [rv(n, 'gridRowAnchorIndex'), rv(n, 'gridColumnAnchorIndex'), rv(n, 'gridRowSpan'), rv(n, 'gridColumnSpan'),

@@ -404,8 +404,7 @@ def shape(ctx, n, parent):
                                   ("bottom", "strokeBottomWeight"), ("left", "strokeLeftWeight")):
                     p.append(key + "=" + num(ind.get(side, sw)))
             # 辺ごとに違えば、器は strokeWeight を figma.mixed（MIXED）で返す
-            mixed = ind and len({ind.get(s) for s in ("top", "right", "bottom", "left")}) > 1
-            p.append("strokeWeight=" + (bn(ctx, n, "strokeWeight") or ("MIXED" if mixed else num(sw))))
+            p.append("strokeWeight=" + stroke_weight(ctx, n))
     if n.get("visible", True) is False:
         p.append("vis=0")
     if n.get("opacity") is not None and n.get("opacity") != 1:
@@ -420,10 +419,10 @@ def shape(ctx, n, parent):
     if n.get("strokes"):
         p.append("stroke=" + (bn(ctx, n, "strokes") or paint_of(ctx, n, n["strokes"][0])))
         if t != "LINE":
-            p.append("outline=" + (bn(ctx, n, "strokeWeight") or num(R(n.get("strokeWeight", 1)))) + ","
+            p.append("outline=" + stroke_weight(ctx, n, True) + ","
                      + (n.get("strokeAlign") or "INSIDE"))
     if t == "LINE":
-        p.append("line=" + (bn(ctx, n, "strokeWeight") or num(R(n.get("strokeWeight", 1)))) + ","
+        p.append("line=" + stroke_weight(ctx, n, True) + ","
                  + (n.get("strokeAlign") or "INSIDE") + "," + str(rotation_deg(n)))
     es = ctx.style((n.get("styles") or {}).get("effect"))
     if es:
@@ -479,6 +478,14 @@ def shape(ctx, n, parent):
         cr = n.get("cornerRadius") or radii[0]
         tl = rbv.get(CORNERS[0])
         p.append("radius=" + ((ctx.var(tl, n, "radius") if tl else None) or num(R(cr))))
+    elif (n.get("boundVariables") or {}).get("cornerRadius"):
+        # 楕円などは REST が cornerRadius の値を返さず、結んだ変数だけを返す。器は値（R(cornerRadius)）を書くので、
+        # 変数の値で書く（2026-11-03・414 の Charts/Pie の Ellipse 4 で、器 radius=2・REST は書かず報せが 6 件減った）
+        v = ctx.value(n["boundVariables"]["cornerRadius"])
+        if v is None:
+            ctx.miss(n, ["radius"], "角丸の変数の値が対応表にありません（--variables に値つきの書き出しを渡す）")
+        elif v != 0:
+            p.append("radius=" + num(R(v)))
     if t == "TEXT":
         p.append("listSegments=" + esc(js(list_segments(n))))
         p.append("text=" + esc(js(n.get("characters") or "")))
@@ -511,6 +518,17 @@ def shape(ctx, n, parent):
         if ovs:
             p.append("ov=" + esc(js(ovs)))
     return "|".join(p)
+
+
+def stroke_weight(ctx, n, rounded=False):
+    """器の strokeWeight の値。辺ごとに違えば器は figma.mixed（MIXED）を返す。
+
+    strokeWeight= は器が丸めずに書き、outline=・line= は rn（小数2桁に丸める）で書く
+    """
+    sw = n.get("strokeWeight", 1)
+    ind = n.get("individualStrokeWeights") or {}
+    mixed = ind and len({ind.get(s) for s in ("top", "right", "bottom", "left")}) > 1
+    return bn(ctx, n, "strokeWeight") or ("MIXED" if mixed else num(R(sw) if rounded else sw))
 
 
 def rotation_deg(n):
@@ -984,6 +1002,14 @@ def self_test():
             ck("Dot×2|ELLIPSE" in whole and "at=16,60 32,60" in whole, f"同じ形の兄弟を畳めない:\n{whole}")
             ck("|In|RECTANGLE|" in whole, "グループの中の子が行に無い")
             ck("line=1,CENTER,90" in whole and "stroke=SOLID:#000000" in whole, f"線の向き・塗りが行に無い（#184）:\n{whole}")
+            # 辺ごとに太さが違うと、strokeWeight= と outline= の両方が MIXED（器は figma.mixed を rn で MIXED にする）
+            el = {"id": "e", "type": "ELLIPSE", "boundVariables": {"cornerRadius": {"type": "VARIABLE_ALIAS", "id": VID}}}
+            ck("radius=16" in shape(Ctx({VID: "Gap/M"}, {}, {}, {}, {}, {}, {VID: 16}), el, None),
+               "**楕円の角丸（結んだ変数の値）を書かない**（器は値で書く・414）")
+            mx = {"id": "m", "type": "FRAME", "strokes": [{"type": "SOLID", "color": {"r": 0, "g": 0, "b": 0, "a": 1}}],
+                  "strokeWeight": 1, "individualStrokeWeights": {"top": 0, "right": 1, "bottom": 1, "left": 1}}
+            sh = shape(Ctx({}, {}, {}, {}, {}, {}), mx, None)
+            ck("strokeWeight=MIXED" in sh and "outline=MIXED,INSIDE" in sh, f"辺ごとに違う太さが器と合わない: {sh}")
             ck("grid=1,2,4,8,HUG:1,FLEX:1;FLEX:1" in whole and "outline=2,INSIDE" in whole
                and "cell=0,1,1,1,AUTO,AUTO" in whole, f"グリッド・線の太さ・置き場所が行に無い（#184）:\n{whole}")
             ck("of=Button/M" in whole and "override=100x40->120x40" in whole, "部品と寸法の上書きが行に無い")

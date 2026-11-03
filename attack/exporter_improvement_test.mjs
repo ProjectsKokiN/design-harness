@@ -49,6 +49,13 @@ test('ID の一覧が行と同じ順に並び、畳んだ行は ID の配列に�
   assert.equal(ids.length,rows.length);
   assert.deepEqual(ids,['1:1',['1:2','1:3'],'1:4']);assert.ok(rows[1].includes('Dot×2'));
 });
+test('辺ごとに違う線の太さ（figma.mixed）で落ちず、MIXED と書く（2026-11-03・414）',async()=>{
+  const {shape}=await functions();
+  const s=await shape({type:'FRAME',strokes:[{type:'SOLID',color:{r:0,g:0,b:0}}],strokeWeight:Symbol('mixed'),strokeAlign:'INSIDE',
+    layoutMode:'GRID',gridRowCount:1,gridColumnCount:1,gridRowGap:Symbol('mixed'),gridColumnGap:4,gridRowSizes:[],gridColumnSizes:[],
+    paddingTop:0,paddingRight:0,paddingBottom:0,paddingLeft:0,itemSpacing:0});
+  assert.ok(s.includes('outline=MIXED,INSIDE'),s);assert.ok(s.includes('grid=1,1,MIXED,4'),s);
+});
 test('Variablesの全モードと日本語のハッシュを取得する',async()=>{
   const src=await readFile(new URL('exporters/export_variables.js',root),'utf8');
   const figma={fileKey:'fixture',variables:{getLocalVariableCollectionsAsync:async()=>[{name:'色',variableIds:['v'],modes:[{modeId:'l',name:'Light'},{modeId:'d',name:'Dark'}]}],
