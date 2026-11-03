@@ -83,7 +83,9 @@ def scan_rows(where, rows, has_bind):
             if nums:
                 found.append(("角丸", place, seg["radius"]))
         sw = seg.get("strokeWeight")
-        if sw and "strokeWeight" not in raw and NUM_RX.match(sw) and float(sw) != 0:
+        # **線の無い節点は数えない。** 器は線の有無にかかわらず strokeWeight を書く（既定 1）。
+        # 2026-11-03、aub で取り直した書き出しに当てると「線の太さ 860 件」と出た（線の無い節点の既定値）
+        if sw and "stroke" in seg and "strokeWeight" not in raw and NUM_RX.match(sw) and float(sw) != 0:
             found.append(("線の太さ", place, sw))
         if kind == "TEXT" and "ts" not in seg and "textStyle" not in raw:
             found.append(("文字", place, "文字スタイルが無い"))
@@ -146,13 +148,15 @@ def self_test():
         rc, out = run(["0|Top|FRAME|10|10|0|0|fill=Frame/Neutral/Default|layout=16,0,0,0,8,VERTICAL,HUG,FIXED,MIN,MIN|bind=paddingTop:Gap/M,itemSpacing:Gap/S",
                        "1|T|TEXT|1|1|0|0|fill=Text/Neutral/Default|ts=Body/M"])
         ck(rc == 0, f"結ばれている値を直値と言った: {rc} {out}")
-        rc, out = run(["0|Top|FRAME|10|10|0|0|fill=SOLID:#ff0000|radius=8|strokeWeight=2|layout=16,0,0,0,8,VERTICAL,HUG,FIXED,MIN,MIN|bind=paddingTop:Gap/M",
+        rc, out = run(["0|Top|FRAME|10|10|0|0|fill=SOLID:#ff0000|radius=8|strokeWeight=2|stroke=あり|layout=16,0,0,0,8,VERTICAL,HUG,FIXED,MIN,MIN|bind=paddingTop:Gap/M",
                        "1|T|TEXT|1|1|0|0|fill=Text/Neutral/Default"])
         text = "\n".join(out)
         ck(rc == 1, f"直値を報せない: {rc}")
         for k in ("色 1 件", "角丸 1 件", "線の太さ 1 件", "文字 1 件", "余白 1 件"):
             ck(k in text, f"{k} を数えていない: {text}")
         ck("itemSpacing=8" in text and "paddingTop" not in text.split("余白")[1], f"結んだ余白まで直値と言った: {text}")
+        rc, out = run(["0|Top|FRAME|10|10|0|0|strokeTopWeight=1|strokeWeight=1"])
+        ck(rc == 0, f"線の無い節点の既定の太さを直値と言った: {rc} {out}")
         rc, out = run(["0|Top|FRAME|10|10|0|0|fill=SOLID:#ff0000|radius=8|raw=fill,radius"])
         ck(rc == 0, f"印を付けた直値を報せた: {rc} {out}")
         rc, out = run(["0|Top|FRAME|10|10|0|0|fill=Frame/A>#ffffff@1"])
