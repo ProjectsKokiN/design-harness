@@ -51,6 +51,8 @@ def check_effect_styles(doc):
     """エフェクトスタイルの中身を見る。"""
     out = []
     for s in doc.get("effectStyles", []):
+        if settled(s):
+            continue   # 棚卸し済み（Figma に無い）の記録は、再現性の一覧にも出さない（2026-11-04・414 の提案）
         name = s.get("name", "?")
         for e in s.get("effects", []):
             m = re.search(r"spread(-?\d+)", e.replace(" ", ""))
@@ -86,6 +88,8 @@ def check_components(doc):
     """コンポーネントが使っている指定を見る。"""
     out = []
     for c in doc.get("componentSets", []):
+        if settled(c):
+            continue   # 棚卸し済みの記録は、再現性の一覧にも出さない
         name = c.get("name", "?")
         tokens = " | ".join(c.get("tokens", []))
         if "Stroke/Glass" in tokens:
@@ -425,6 +429,11 @@ def self_test():
         if "棚卸し待ち" not in buf.getvalue() or "Gone" not in buf.getvalue() or "棚卸し済み 1 件" not in buf.getvalue() \
                 or "  - Old" in buf.getvalue():
             print(f"self-test NG: 棚卸し済みの行を待ちと数えた、または済みを数えない: {buf.getvalue()}"); ok = False
+
+        # 棚卸し済みの記録は、再現性の一覧にも出さない（Figma に無いのに △ に出続けていた）
+        if check_effect_styles({"effectStyles": [{"name": "Gone", "effects": ["PROGRESSIVE"], "棚卸し": "確定（日付）"}]}) \
+                or not check_effect_styles({"effectStyles": [{"name": "Live", "effects": ["PROGRESSIVE"]}]}):
+            print("self-test NG: 棚卸し済みの記録を再現性の一覧に出した、または生きている記録を出さない"); ok = False
 
         # 書き出しが空（「穴 0」が「何も見ていない」を意味する場合）
         expect(1, setup(**{"figma.json": {"componentSets": {}}}),
