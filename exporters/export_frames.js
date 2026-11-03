@@ -264,6 +264,8 @@ async function shape(n) {
       n.counterAxisSizingMode === 'AUTO' ? 'HUG' : 'FIXED',
       n.primaryAxisAlignItems, n.counterAxisAlignItems].join(','));
   }
+  // 重なり順（Auto Layout の itemReverseZIndex）。true のときだけ書く（並びは描画順ではない・#10。2026-11-04 FlashEnglish の依頼）
+  if (rv(n, 'itemReverseZIndex') === true) p.push('itemReverseZIndex=true');
   if (n.layoutMode === 'GRID') {
     const sz = a => (a || []).map(x => x.type === 'FIXED' ? 'FIXED:' + R(x.value) : x.type + ':' + R(x.value)).join(';');
     p.push('grid=' + [n.gridRowCount, n.gridColumnCount, (await bn(n, 'gridRowGap')) || rn(n, 'gridRowGap'),

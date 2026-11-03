@@ -478,6 +478,8 @@ def shape(ctx, n, parent):
             "FIXED" if (n.get("primaryAxisSizingMode") or "AUTO") == "FIXED" else "HUG",
             "FIXED" if (n.get("counterAxisSizingMode") or "AUTO") == "FIXED" else "HUG",
             n.get("primaryAxisAlignItems") or "MIN", n.get("counterAxisAlignItems") or "MIN"]))
+    if n.get("itemReverseZIndex") is True:
+        p.append("itemReverseZIndex=true")   # 器と同じく true のときだけ（2026-11-04）
     if lm == "GRID":
         p.append("grid=" + ",".join([
             str(n.get("gridRowCount", 0)), str(n.get("gridColumnCount", 0)),
@@ -562,6 +564,11 @@ def stroke_weight(ctx, n, rounded=False):
     ind = n.get("individualStrokeWeights") or {}
     mixed = ind and len({ind.get(s) for s in ("top", "right", "bottom", "left")}) > 1
     return bn(ctx, n, "strokeWeight") or ("MIXED" if mixed else num(R(sw) if rounded else sw))
+
+
+def round_half_up(x):
+    """JS の Math.round と同じ丸め（.5 は上へ）"""
+    return int(math.floor(x + 0.5))
 
 
 def rotation_deg(n):
@@ -788,19 +795,28 @@ def export(file_key, ids, var_paths, parents=None, sections=None, tok=None):
     # 親がボード（auto-layout や GRID の FRAME）だと、器は sz=・cell= を書く。/files?ids= は根から指定の節点までの
     # 途中の節点を返すので、そこから親を取る
     unknown = [fid for fid in ids if root_parent[fid] is None and not set_of.get(fid) and fid not in (parents or {})]
-    if unknown:
-        tree = get(f"/files/{file_key}", {"ids": ",".join(unknown)}, tok)["document"]
-        want_ids = set(unknown)
+    # 図の上の置き場所（ボードと並び順）も、同じ呼び出しで取る（2026-11-04・FlashEnglish の依頼。器の placement と同じ）。
+    # 変異はセットの置き場所を使う
+    owner = {fid: set_of.get(fid) or fid for fid in ids}
+    look = set(unknown) | set(owner.values())
+    placed = {}
+    tree = get(f"/files/{file_key}", {"ids": ",".join(sorted(look))}, tok)["document"]
 
-        def find(node):
-            for c in node.get("children") or []:
-                if c.get("id") in want_ids:
+    def find(node, board):
+        for c in node.get("children") or []:
+            b = c if node.get("type") == "CANVAS" else board
+            if c.get("id") in look:
+                if c["id"] in unknown:
                     d = dict(node)
                     d.pop("children", None)
                     root_parent[c["id"]] = d if node.get("type") not in ("DOCUMENT", "CANVAS") else None
-                else:
-                    find(c)
-        find(tree)
+                bb = (b or c).get("absoluteBoundingBox") or {}
+                nb = c.get("absoluteBoundingBox") or {}
+                placed[c["id"]] = {"board": (b or c).get("name"),
+                                   "order": [round_half_up(bb.get("y", 0)), round_half_up(bb.get("x", 0)),
+                                             round_half_up(nb.get("y", 0)), round_half_up(nb.get("x", 0))]}
+            find(c, b)
+    find(tree, None)
     out = {}
     for fid in ids:
         node = (data["nodes"].get(fid) or {}).get("document")
@@ -809,7 +825,7 @@ def export(file_key, ids, var_paths, parents=None, sections=None, tok=None):
         rows, nids = [], []
         walk(ctx, node, 0, rows, root_parent[fid], (parents or {}).get(fid), ids=nids)
         out[fid] = {**({"section": sections[fid]} if sections and fid in sections else {}), "name": node["name"],
-                    "rows": rows, "ids": nids}
+                    "rows": rows, "ids": nids, **placed.get(owner[fid], {})}
     body = js(out)
     return {"frames": out, "$meta": {"読めなかったもの": ctx.not_read, "source": "REST（tools/export_frames_rest.py）"},
             "digest": {"algo": "FNV-1a 32bit", "rows": len(out), "chars": len(body), "value": fnv(body)}}
@@ -1018,7 +1034,7 @@ def self_test():
                                "absoluteBoundingBox": {"x": 120, "y": 124, "width": 40, "height": 20}},
                               {"id": "I1:8;2:2", "name": "Hidden", "type": "TEXT", "visible": False,
                                "characters": "x", "absoluteBoundingBox": {"x": 0, "y": 0, "width": 1, "height": 1}}]}]}
-        page = {"document": {"children": [{"id": "0:1", "name": "Screens", "children": [
+        page = {"document": {"type": "DOCUMENT", "children": [{"id": "0:1", "name": "Screens", "type": "CANVAS", "children": [
             {"id": "9:1", "name": "Main", "type": "SECTION", "absoluteBoundingBox": {"x": 100, "y": 0},
              "children": [frame, {"id": "1:9", "name": "Tiny", "type": "FRAME",
                                   "absoluteBoundingBox": {"x": 0, "y": 0, "width": 390, "height": 40}}]}]}]}}
@@ -1095,6 +1111,12 @@ def self_test():
                and nids[next(i for i, r in enumerate(rows) if "|Title|" in r)] == "1:2",
                f"ID の一覧が行と並ばない（畳んだ行は配列）: {nids}")
             ck(doc["digest"]["value"] == fnv(js(doc["frames"])), "ハッシュが本体と合わない")
+            ck(doc["frames"]["1:1"].get("board") == "Main" and doc["frames"]["1:1"].get("order") == [0, 100, 0, 100],
+               f"図の上の置き場所（ボード・並び順）が無い: {doc['frames']['1:1'].get('board')} {doc['frames']['1:1'].get('order')}")
+            rz = {"id": "z", "type": "FRAME", "layoutMode": "HORIZONTAL", "itemReverseZIndex": True}
+            ck("itemReverseZIndex=true" in shape(Ctx({}, {}, {}, {}, {}, {}), rz, None)
+               and "itemReverseZIndex" not in shape(Ctx({}, {}, {}, {}, {}, {}), dict(rz, itemReverseZIndex=False), None),
+               "重なり順を true のときだけ書く形になっていない")
             # 親を知らない節点は /files?ids= で親を引く（親が節なら sz= は書かない）
             got = export("F", ["1:1"], [str(vf)])["frames"]["1:1"]["rows"]
             ck([r.split("|")[7:] for r in got] == [r.split("|")[7:] for r in rows] and "/files/F" in calls,

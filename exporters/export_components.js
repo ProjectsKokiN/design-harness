@@ -255,6 +255,8 @@ async function shape(n) {
       n.counterAxisSizingMode === 'AUTO' ? 'HUG' : 'FIXED',
       n.primaryAxisAlignItems, n.counterAxisAlignItems].join(','));
   }
+  // 重なり順（Auto Layout の itemReverseZIndex）。true のときだけ書く（並びは描画順ではない・#10。2026-11-04 FlashEnglish の依頼）
+  if (rv(n, 'itemReverseZIndex') === true) p.push('itemReverseZIndex=true');
   if (n.layoutMode === 'GRID') {
     const sz = a => (a || []).map(x => x.type === 'FIXED' ? 'FIXED:' + R(x.value) : x.type + ':' + R(x.value)).join(';');
     p.push('grid=' + [n.gridRowCount, n.gridColumnCount, (await bn(n, 'gridRowGap')) || rn(n, 'gridRowGap'),
@@ -405,6 +407,16 @@ const ONLY = [];
 // 1 セットでも収まらないときは変異を区切る（[始め, 終わり)）。既定は全部
 const VARIANT_SLICE = [0, Infinity];
 
+// **図の上の置き場所**（2026-11-04・FlashEnglish の依頼。古い器の orderKey と同じ読み方）。
+// ページは 1920x1080 のボードを敷いた形なので、ボード（ページの直下）の y → x → ボードの中の y → x で並べる。
+// 行の外に置くので、行とそのハッシュは変わらない
+function placement(node) {
+  let board = node;
+  while (board.parent && board.parent.type !== 'PAGE') board = board.parent;
+  const bb = board.absoluteBoundingBox || { x: 0, y: 0 };
+  const nb = node.absoluteBoundingBox || { x: 0, y: 0 };
+  return { board: board.name, order: [Math.round(bb.y), Math.round(bb.x), Math.round(nb.y), Math.round(nb.x)] };
+}
 const c = await collect();
 if (c.error) return safe(JSON.stringify(c));    // 止める（同名・許可ページ無し）
 
@@ -426,7 +438,7 @@ for (const [kind, list] of [['set', c.sets], ['single', c.singles]]) {
       if (v.key) variants[key].key = v.key;   // 候補6: 作り直しに気づくため
     }
     // **全部で何変異あるかを書く。**区切って回したとき、足りているかを数で確かめるため
-    out[name] = { id: node.id, kind, variantTotal: all.length, variants };
+    out[name] = { id: node.id, kind, variantTotal: all.length, variants, ...placement(node) };
     if (node.key) out[name].key = node.key;
   }
 }

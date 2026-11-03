@@ -56,6 +56,12 @@ test('辺ごとに違う線の太さ（figma.mixed）で落ちず、MIXED と書
     paddingTop:0,paddingRight:0,paddingBottom:0,paddingLeft:0,itemSpacing:0});
   assert.ok(s.includes('outline=MIXED,INSIDE'),s);assert.ok(s.includes('grid=1,1,MIXED,4'),s);
 });
+test('重なり順（itemReverseZIndex）を true のときだけ書く（2026-11-04）',async()=>{
+  const {shape}=await functions();
+  const base={type:'FRAME',layoutMode:'HORIZONTAL',paddingTop:0,paddingRight:0,paddingBottom:0,paddingLeft:0,itemSpacing:0};
+  assert.ok((await shape({...base,itemReverseZIndex:true})).includes('itemReverseZIndex=true'));
+  assert.ok(!(await shape({...base,itemReverseZIndex:false})).includes('itemReverseZIndex'));
+});
 test('Variablesの全モードと日本語のハッシュを取得する',async()=>{
   const src=await readFile(new URL('exporters/export_variables.js',root),'utf8');
   const figma={fileKey:'fixture',variables:{getLocalVariableCollectionsAsync:async()=>[{name:'色',variableIds:['v'],modes:[{modeId:'l',name:'Light'},{modeId:'d',name:'Dark'}]}],

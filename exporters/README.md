@@ -116,3 +116,11 @@ REST はグリッドの大きさを CSS の書き方（`repeat(4,minmax(0,1fr))`
 portfolio の 23 画面で、拡張つきの器の行と 1070 行中 1066 行が一致しました（残り 4 行は上の「REST では区別できない違い」）。
 
 REST 版に部品の変異の ID を直接渡したときは、部品のセットを親として引いて `sz=` を書きます（器は親の layoutMode を見るため）。
+
+## 重なり順と、図の上の置き場所（2026-11-04）
+
+- **重なり順**: Auto Layout の `itemReverseZIndex` が true のときだけ、行に `itemReverseZIndex=true` を書きます（false の行は変わらない）。
+  並び（children）は描画順ではないため、読み手（FlashEnglish の stacking_order_test）が要ります
+- **置き場所**: 部品の器は各セット・単体に `board`（ページの直下のボードの名前）と `order`（ボードの y・x、部品の y・x）を書きます。
+  REST 版は各画面（変異はそのセット）に同じ欄を書きます。**行の外**なので、行とそのハッシュは変わりません。
+  古い器（FlashEnglish の figma_export_components.js）の orderKey と同じ読み方で、カタログの並び順に使います
