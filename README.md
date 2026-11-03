@@ -19,6 +19,7 @@
 | `engine/web_browser_check.mjs` | Chromium・WebKitのスクロールとVECTORの画素を試す。実機Safariの限界も出す |
 | `tools/frame_io.py` | 画面をIDで照合し、分割した行を件数・ハッシュで復元する |
 | `tools/figma_change_check.py` | 同じノードIDでの改名・種類変更と古い参照候補を出す |
+| `tools/stage_run.py` | 検査の段を時間切れつきで回す（止まったら子のプロセスごと止めて終了コード2）。`--repeat N` で同じ段を続けて回し、たまに落ちる検査を見つける（#174・#178） |
 | `tools/deploy_check.py` | 公開前のGit状態を確認する。未コミット・未追跡・確認不能なら停止する |
 | `docs/web-setup.md` | Web案件の導入・React・WebKit・期待値・公開前検査の接続手順 |
 | `shims/design_check_shim.py` | 案件側に置く薄い入口のテンプレート |

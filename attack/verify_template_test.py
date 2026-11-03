@@ -49,6 +49,14 @@ key = sys.argv[1] if Path(__file__).stem == "fake_step" else Path(__file__).stem
 for part in os.environ.get("STUB_RC", "").split(";"):
     k, _, v = part.partition("=")
     if k == key:
+        if v == "sleep":                       # 止まる段（時間切れの試験・#174）
+            import time
+            time.sleep(60)
+        if v == "rundir":                      # 作業フォルダを書き残す段（#175）
+            d = os.environ.get("HARNESS_RUN_DIR", "")
+            with open(os.environ["STUB_OUT"], "a", encoding="utf-8") as f:
+                f.write(d + "\\n")
+            sys.exit(0 if d and Path(d).is_dir() else 3)
         sys.exit(int(v))
 sys.exit(0)
 '''
@@ -66,6 +74,10 @@ def build(base: Path, git: str):
     (up / "engine").mkdir()
     for t in tools:
         (up / "tools" / f"{t}.py").write_text(STUB, encoding="utf-8")
+    # **段を回す道具だけは本物**（#174）。作り物にすると、どの段も 0 を返して
+    # 段の判定そのものを試せなくなる
+    for real in ("stage_run.py", "_utf8.py"):
+        shutil.copy(HERE.parent / "tools" / real, up / "tools" / real)
     (up / "engine" / "design_check.py").write_text(STUB, encoding="utf-8")
 
     def g(*a, cwd):
@@ -96,10 +108,12 @@ def build(base: Path, git: str):
     return prj, None
 
 
-def run(prj: Path, home: Path, target=None, stub="", expected=None):
-    env = {k: v for k, v in os.environ.items() if k != "HARNESS_EXPECTED_FAILURES"}
+def run(prj: Path, home: Path, target=None, stub="", expected=None, extra=None):
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("HARNESS_EXPECTED_FAILURES", "HARNESS_STAGE_TIMEOUT", "HARNESS_RUN_DIR")}
     env.update(HOME=str(home), FIGMA_TOKEN="x", PYTHON=sys.executable,
                PYTHONDONTWRITEBYTECODE="1", STUB_RC=stub)
+    env.update(extra or {})
     if expected is not None:
         env["HARNESS_EXPECTED_FAILURES"] = expected
     cmd = ["bash", "design/verify.sh"] + ([target] if target else [])
@@ -206,7 +220,23 @@ def main(argv=None):
            and "すべての検証を通過しました" not in out,
            f"quick の通過を、全体の検査の通過と同じ言い方にした（rc={rc}）", out)
 
-    print("verify_template_test:", "OK（12 通り）" if ok else "NG")
+        # 11) **止まった段は時間切れで「確かめられなかった」にして、検査全体を落とす**（#174）
+        rc, out = run(prj, home, target="quick", stub="config_schema_check=sleep",
+                      extra={"HARNESS_STAGE_TIMEOUT": "2"})
+        ck(rc == 1 and "時間切れ" in out and "NG（確かめられなかった）" in out,
+           f"止まった段を時間切れにしない（rc={rc}）", out)
+
+        # 12) **検査1回ごとに専用の作業フォルダを渡し、終わったら消す**（#175）
+        rec = base / "rundir.txt"
+        for _ in range(2):
+            rc, out = run(prj, home, target="quick", stub="config_schema_check=rundir",
+                          extra={"STUB_OUT": str(rec)})
+            ck(rc == 0, f"作業フォルダが段から見えない（rc={rc}）", out)
+        dirs = [l for l in rec.read_text(encoding="utf-8").splitlines() if l]
+        ck(len(dirs) == 2 and dirs[0] != dirs[1], f"検査ごとに別の作業フォルダになっていない: {dirs}")
+        ck(all(not Path(d).exists() for d in dirs), f"検査のあと作業フォルダが残っている: {dirs}")
+
+    print("verify_template_test:", "OK（15 通り）" if ok else "NG")
     return 0 if ok else 1
 
 

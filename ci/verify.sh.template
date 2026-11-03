@@ -27,7 +27,28 @@ EXPECTED_LIST="$(mktemp -t harness_expected.XXXXXX)"
 EXPECTED_OK_LIST="$(mktemp -t harness_expected_ok.XXXXXX)"
 # **全部の段の結果**（名前とコード）。最後に「条件ごとに何を保証したか」を出すため（#135）
 GATE_LIST="$(mktemp -t harness_gate.XXXXXX)"
-trap 'rm -f "$FAILED_LIST" "$EXPECTED_LIST" "$EXPECTED_OK_LIST" "$GATE_LIST"' EXIT
+# **検査1回ごとの作業フォルダ**（#175・2026-11-03）。段が組み立てる・測るものは
+# ここに置く（`$HARNESS_RUN_DIR`）。共有の出力先（dist-preview など）に組み立てると、
+# 検査の外で別の組み直しが走ったときに測る対象がすり替わる。
+# 実害（2026-10-25・portfolio）: push 前の検査中に別の作業で `build.mjs --preview` を
+# 回し、画面の段が「測れませんでした」、別の確認ではカードが0件と出た。
+HARNESS_RUN_DIR="$(mktemp -d -t harness_run.XXXXXX)"
+export HARNESS_RUN_DIR
+trap 'rm -f "$FAILED_LIST" "$EXPECTED_LIST" "$EXPECTED_OK_LIST" "$GATE_LIST"; rm -rf "$HARNESS_RUN_DIR"' EXIT
+
+# **段は時間切れつきで回す**（#174・2026-11-03）。止まった段は「確かめられなかった（2）」。
+# 実害（2026-10-24・portfolio）: 画面の段が20分以上止まり、時間切れが無かったので
+# push も公開も黙って止まった。段ごとの秒数は HARNESS_STAGE_TIMEOUT（既定 600）で変える。
+run_stage() {  # run_stage <名前> <コマンド...>
+  _rs_name="$1"
+  shift
+  if [ ! -f "$HARNESS/tools/stage_run.py" ]; then
+    echo "時間切れを付ける道具（$HARNESS/tools/stage_run.py）がありません。" \
+         "submodule が古いままです。確かめていません。" >&2
+    return 2
+  fi
+  "$PY" "$HARNESS/tools/stage_run.py" --name "$_rs_name" -- "$@"
+}
 
 # --- 秘密を、検査の中で読む（2026-09-19・PlantTalk で踏んだ）-----------------
 # **pre-push フックと CI には対話セッションの環境変数が届きません。**
@@ -79,7 +100,7 @@ step() {  # step <名前> <コマンド...>
   # 分けないと「検査が働いていない」を「違反」と読み違え、直す場所を間違えます。
   # 実害（2026-09-07・#96）: Windows で self-test が落ちている道具の出力が `NG` として
   # 並び、**案件が壊れていると半日ぶん誤解**していた。壊れていたのは道具のほうだった。
-  set +e; "$@"; _rc=$?; set -e
+  set +e; run_stage "$_name" "$@"; _rc=$?; set -e
   printf '%s\t%s\n' "$_name" "$_rc" >> "$GATE_LIST"
   # **「これから直す段」は分けて出します**（design-harness #139・2026-09-24）。
   #
@@ -251,8 +272,9 @@ fi
 # ユーザーの判断のものはここ。「参考」と見出しに書きながら step で呼ぶと関門になる
 note() {  # note <名前> <コマンド...>
   echo "=== $1（報せ・落とさない） ==="
+  _nt_name="$1"
   shift
-  if "$@"; then echo "OK"; else echo "報せ（落とさない）"; fi
+  if run_stage "$_nt_name" "$@"; then echo "OK"; else echo "報せ（落とさない）"; fi
   echo
 }
 
