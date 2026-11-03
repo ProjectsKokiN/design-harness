@@ -124,3 +124,12 @@ REST 版に部品の変異の ID を直接渡したときは、部品のセッ�
 - **置き場所**: 部品の器は各セット・単体に `board`（ページの直下のボードの名前）と `order`（ボードの y・x、部品の y・x）を書きます。
   REST 版は各画面（変異はそのセット）に同じ欄を書きます。**行の外**なので、行とそのハッシュは変わりません。
   古い器（FlashEnglish の figma_export_components.js）の orderKey と同じ読み方で、カタログの並び順に使います
+
+## 部品を REST で取る（#185・2026-11-04）
+
+部品の全量が器の戻りに収まらないときは `tools/export_components_rest.py` を使います。器と同じ形（セット → 単体の順、
+id・kind・variantTotal・variants・board・order・key）で書き、外したセット（`--exclude` の `{"名前": {"why"}}`）は
+`$meta.excluded` に why と**実測した** board・order を書きます。`--previous` に今の書き出しを渡すと、restDigests・bodyHash・
+既知の差を引き継ぎます（器との照合の結果は引き継がないので、取り直したら `--compare-hashes` をやり直す）。
+414 で回し、手書きの組み立て器（design-systems の 414/figma/build/assemble.py）と 31 セットの中身・外したセットの置き場所が
+すべて一致しました（セットの並びだけ、器と同じ「セット → 単体」の順に変わる）。

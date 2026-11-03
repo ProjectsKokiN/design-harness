@@ -22,6 +22,7 @@
 | `tools/figma_change_check.py` | 同じノードIDでの改名・種類変更と古い参照候補を出す。名前が同じで key が変わった部品・変数（作り直し）も名指しする（候補6） |
 | `tools/token_role_check.py` | 色のトークンを Figma の用途（scopes・役割の名前）と、Figma に実在する文字色 × 面の組み合わせで使っているか（CSS）。`--emit-flutter` で Flutter の用途の規則を Figma から生成し、`--check-flutter` で古くなっていないかを見る（候補3） |
 | `tools/export_frames_rest.py` | 画面の書き出しを Figma の REST API から作る（`export_frames.js` と同じ行の形）。use_figma の1回の戻り（約18KB）を通らないので、大きい画面もファイルへ直接書ける。`--compare-hashes` で器の行と全行を照合する（#179） |
+| `tools/export_components_rest.py` | 部品の書き出しを REST から作る（`export_components.js` と同じ形・セットの置き場所つき）。外したセットの置き場所も実測し、`--previous` から鮮度の記録（restDigests・bodyHash）を引き継ぐ（#185） |
 | `tools/figma_raw_values.py` | Figma の中で変数・スタイルに結ばれていない色・角丸・余白・線の太さ・文字を並べる**報せ**（実装の合否には使わない）。意図した直値は Figma の節点の印（`harness`/`raw`）で外す（候補6） |
 | `tools/design_coverage.py` | デザイナー本人が見た画面の割合。本人が会話で言ったら `--record` で記録し、見た目のファイルが変わると未判断に戻る（候補10） |
 | `tools/stage_run.py` | 検査の段を時間切れつきで回す（止まったら子のプロセスごと止めて終了コード2）。`--repeat N` で同じ段を続けて回し、たまに落ちる検査を見つける（#174・#178） |
