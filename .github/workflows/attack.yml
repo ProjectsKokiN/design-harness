@@ -33,6 +33,7 @@ jobs:
         run: |
           npx --no-install playwright install --with-deps chromium webkit
           node --test attack/web_browser_test.mjs
+          node --test attack/web_render_test.mjs
       - name: エンジンの妨害テスト
         run: python3 attack/engine_attack_test.py
 

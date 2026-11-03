@@ -133,6 +133,47 @@ node design/harness/engine/web_browser_check.mjs design/web-browser.json
 
 配布版Chromiumを取得できず既存のChromeを使う場合は、設定に `chromiumChannel: "chrome"` を指定します。試験固定具では `HARNESS_TEST_CHROME_CHANNEL=chrome` を使います。結果には使用したchannelを出し、配布版Chromiumを試したことにはしません。
 
+## 8.5 表示した画面を数値で点検する（2026-11-03）
+
+`engine/web_render_check.mjs` は、**動きを有効にしたまま**（prefers-reduced-motion を付けずに）画面を開き、次を数えます。
+画像の見比べはしません。要素の位置・計算済みのスタイル・当たり判定・アニメーションのイベントだけで判定します。
+
+| 数えるもの | 中身 |
+|---|---|
+| clipped | 文字が、はみ出しを切る祖先（overflow: hidden・clip）に切られている |
+| occluded | 文字の行の中心に、別の要素が重なっている（最初の画面だけ） |
+| spill | 文字の要素の中身が、自分の枠からはみ出している |
+| unitWrap | 数字と単位（円・%・px など）が別の行に分かれている |
+| brokenImage | 読み込みに失敗した画像 |
+| hidden | 読み込み直後・スクロールで現れた後・ホバーの後に、見えないままの画像と字 |
+| flash | 一度見えてから消えた画像（一瞬消える） |
+| cancel | 途中で打ち切られた動き（animationcancel・transitioncancel） |
+| gap | 宣言した2つの要素の間隔が、Figma の値と違う |
+| overlap | 重なってはいけない2つの要素が重なっている |
+
+案件側は `design/web-render.json` に書きます。**viewports には、同じ幅で高さだけを変えたものを2つ以上入れます**
+（高さで位置が変わる配置は、1つの高さでは見つかりません）。間隔の値は Figma の書き出しから生成し、手で書きません。
+
+```json
+{
+  "pages": [{
+    "url": "http://127.0.0.1:8802/profile.html",
+    "viewports": [{"width": 1440, "height": 960}, {"width": 1440, "height": 720}],
+    "hover": ["[data-layout-id=\"card\"]"],
+    "gaps": [{"a": "#title", "b": "#lead", "gap": 24}],
+    "noOverlap": [["#row-text", "#gauge"]],
+    "allow": [{"check": "hidden", "selector": ".caption", "why": "ホバーで出す説明。止まっている間は隠す"}]
+  }]
+}
+```
+
+```sh
+node design/harness/engine/web_render_check.mjs design/web-render.json
+```
+
+意図して隠しているもの・切っているものは `allow` に**理由（why）つき**で書きます。理由が無いと確かめずに止めます（終了コード2）。
+動きが落ち着かない・記録が4枚に満たない・ブラウザが無いときも終了コード2です。
+
 ## 9. 関門へ接続する
 
 `ci/verify.sh.template` を参照し、案件のverify入口と自動検査へ、禁止パターン、種まき、生成物一致、書き出しのハッシュ・鮮度、実装網羅、再現性、木の照合、期待値の出どころ、数値照合、WebKit、限界報告を接続します。
