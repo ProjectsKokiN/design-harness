@@ -373,6 +373,8 @@ def index_subtree(n, parent=None, out=None, hidden=False):
 
 def overrides_of(ctx, n):
     idx = index_subtree(n)
+    # インスタンス自身への上書きは、インスタンスが隠れていても器は読める（隠れて引けないのは中の子）
+    idx[n["id"]] = (n, None, False)
     ovs = []
     for o in n.get("overrides") or []:
         hit = idx.get(o["id"])
@@ -386,9 +388,12 @@ def overrides_of(ctx, n):
         while cur and cur[0]["id"] != n["id"]:
             path.insert(0, cur[0]["name"])
             cur = idx.get(cur[1]["id"]) if cur[1] else None
-        fields = list(o.get("overriddenFields") or [])
+        # REST はスタイルを外した上書きを inheritFillStyleId などと呼ぶ。器は fillStyleId と呼ぶ（2026-11-03・414）
+        fields = [re.sub(r"^inherit(\w)(\w*StyleId)$", lambda m: m.group(1).lower() + m.group(2), f)
+                  for f in o.get("overriddenFields") or []]
         # REST は効果のスタイルの上書きを effects としか言わない。器は effectStyleId も挙げる
-        if "effects" in fields and (node.get("styles") or {}).get("effect") and "effectStyleId" not in fields:
+        # （スタイルが無くても effectStyleId: null を挙げる。2026-11-03・414 の Ellipse 4）
+        if "effects" in fields and "effectStyleId" not in fields:
             fields.append("effectStyleId")
         vals = {}
         for f in sorted(fields, key=lambda s: s.encode("utf-16-be")):   # 器は欄を名前の順（JS の文字の順）で返す
@@ -626,6 +631,13 @@ def coord_box(parent, grand):
     return grand if parent and parent.get("type") == "GROUP" else (parent or {}).get("absoluteBoundingBox")
 
 
+def kid_children(c, in_instance):
+    """器から見える子。隠れたインスタンスと、部品の中の隠れた節点は、器では子を持たない（畳みの判定に効く・414）"""
+    if c.get("visible", True) is False and (c.get("type") == "INSTANCE" or in_instance):
+        return []
+    return c.get("children") or []
+
+
 def walk(ctx, n, depth, rows, parent=None, origin=None, in_instance=False, ids=None):
     """ids には rows と同じ順のノード ID を足す（畳んだ行は配列）。器の ids と同じ（2026-11-03・#157）"""
     ids = [] if ids is None else ids
@@ -640,6 +652,8 @@ def walk(ctx, n, depth, rows, parent=None, origin=None, in_instance=False, ids=N
             ctx.miss(n, ["children"], "深さの上限8で未取得")
         return
     box = n.get("absoluteBoundingBox") if n.get("type") != "GROUP" else origin
+    if n.get("type") == "INSTANCE" and n.get("visible", True) is False:
+        return   # 隠れたインスタンスの中は器が引けない（skipInvisibleInstanceChildren）。差し込み口の行も無い
     if n.get("type") == "INSTANCE":
         def find_slots(node, path):
             # 器は部品の中の隠れた子を引かない（skipInvisibleInstanceChildren）。子の一覧からも外れる
@@ -663,7 +677,7 @@ def walk(ctx, n, depth, rows, parent=None, origin=None, in_instance=False, ids=N
     while i < len(kids):
         j = i
         while (j + 1 < len(kids) and kids[j + 1]["type"] == kids[i]["type"] and shapes[j + 1] == shapes[i]
-               and R(size(kids[j + 1])[0]) == R(size(kids[i])[0]) and not kids[i].get("children")):
+               and R(size(kids[j + 1])[0]) == R(size(kids[i])[0]) and not kid_children(kids[i], in_instance)):
             j += 1
         if j > i:
             pos = " ".join(f"{num(R(rel_xy(c, box)[0]))},{num(R(rel_xy(c, box)[1]))}" for c in kids[i:j + 1])
@@ -761,13 +775,31 @@ def export(file_key, ids, var_paths, parents=None, sections=None, tok=None):
                 d = dict(v["document"])
                 d.pop("children", None)
                 owners[sid] = d
+    root_parent = {fid: owners.get(set_of.get(fid)) for fid in ids}
+    # **変異でもなく、節（SECTION）の直下でもない節点は、親を別に引く**（2026-11-03・414 の単体の部品 Header・Footer など）。
+    # 親がボード（auto-layout や GRID の FRAME）だと、器は sz=・cell= を書く。/files?ids= は根から指定の節点までの
+    # 途中の節点を返すので、そこから親を取る
+    unknown = [fid for fid in ids if root_parent[fid] is None and not set_of.get(fid) and fid not in (parents or {})]
+    if unknown:
+        tree = get(f"/files/{file_key}", {"ids": ",".join(unknown)}, tok)["document"]
+        want_ids = set(unknown)
+
+        def find(node):
+            for c in node.get("children") or []:
+                if c.get("id") in want_ids:
+                    d = dict(node)
+                    d.pop("children", None)
+                    root_parent[c["id"]] = d if node.get("type") not in ("DOCUMENT", "CANVAS") else None
+                else:
+                    find(c)
+        find(tree)
     out = {}
     for fid in ids:
         node = (data["nodes"].get(fid) or {}).get("document")
         if not node:
             raise RuntimeError(f"節点が取れません: {fid}")
         rows, nids = [], []
-        walk(ctx, node, 0, rows, owners.get(set_of.get(fid)), (parents or {}).get(fid), ids=nids)
+        walk(ctx, node, 0, rows, root_parent[fid], (parents or {}).get(fid), ids=nids)
         out[fid] = {**({"section": sections[fid]} if sections and fid in sections else {}), "name": node["name"],
                     "rows": rows, "ids": nids}
     body = js(out)
@@ -1055,6 +1087,17 @@ def self_test():
                and nids[next(i for i, r in enumerate(rows) if "|Title|" in r)] == "1:2",
                f"ID の一覧が行と並ばない（畳んだ行は配列）: {nids}")
             ck(doc["digest"]["value"] == fnv(js(doc["frames"])), "ハッシュが本体と合わない")
+            # 親を知らない節点は /files?ids= で親を引く（親が節なら sz= は書かない）
+            got = export("F", ["1:1"], [str(vf)])["frames"]["1:1"]["rows"]
+            ck([r.split("|")[7:] for r in got] == [r.split("|")[7:] for r in rows] and "/files/F" in calls,
+               "親を引いた書き出しが、節の下の画面で形を変えた")   # 位置は基準が無いので比べない
+            # 隠れたインスタンスは子を持たない扱い（同じ形なら畳む）・自身への上書きは読める・inherit… は器の欄の名前に直す
+            hid = {"id": "h", "type": "INSTANCE", "visible": False, "children": [{"id": "h;1", "name": "x", "type": "TEXT"}],
+                   "overrides": [{"id": "h", "overriddenFields": ["width", "inheritFillStyleId"]}],
+                   "absoluteBoundingBox": {"x": 0, "y": 0, "width": 10, "height": 10}}
+            ck(kid_children(hid, False) == [] and overrides_of(Ctx({}, {}, {}, {}, {}, {}), hid)[0][0] == ""
+               and list(overrides_of(Ctx({}, {}, {}, {}, {}, {}), hid)[0][1]) == ["fillStyleId", "width"],
+               f"隠れたインスタンスの扱いか欄の名前が器と違う: {overrides_of(Ctx({}, {}, {}, {}, {}, {}), hid)}")
             # 変異を直接渡すと、部品のセットを親として sz= を書く（器と同じ。2026-11-03・414）
             v = export("F", ["C:1"], [str(vf)])["frames"]["C:1"]["rows"][0]
             ck("|sz=FIXED,HUG" in v, f"**変異の行に sz= が無い**（セットを親として引いていない）: {v}")
