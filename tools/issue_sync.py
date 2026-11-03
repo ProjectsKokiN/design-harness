@@ -457,17 +457,24 @@ def self_test():
         if not cond:
             print(f"self-test NG: {msg}"); ok = False
 
+    # **期限は今日から数える。** 日付を直書きすると、その日の 30 日前から
+    # 「期限が近い課題」に入って self-test が勝手に落ちる（2026-11-03 実測: 直書きの
+    # 2026-11-30 が 10-31 から窓に入り、--check の段が落ちていた）
+    from datetime import date as _date, timedelta as _td
+    review_by = (_date.today() + _td(days=400)).isoformat()
+    expires = (_date.today() + _td(days=430)).isoformat()
+
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         (root / "a.json").write_text(json.dumps({
             "allow": [{"name": "x.py", "why": "案件ごとに違ってよい理由",
-                       "reviewBy": "2026-12-31"},
+                       "reviewBy": review_by},
                       {"name": "noreason.py"}],          # 理由なし → 課題でない
             "$warn_only": "段階導入。実装網羅 10/26 が残っている"}),
             encoding="utf-8")
         (root / "b.json").write_text(json.dumps({
             "entries": [{"id": "splash", "reason": "Figma が束縛していない",
-                         "expires": "2026-11-30", "decidedBy": "ユーザー"}]}),
+                         "expires": expires, "decidedBy": "ユーザー"}]}),
             encoding="utf-8")
         (root / "plain.json").write_text(json.dumps({"x": 1}), encoding="utf-8")
 
@@ -478,9 +485,9 @@ def self_test():
         check("b.json:entries:splash" in fs, "entries を集めていない")
         check(not any("noreason" in k for k in fs),
               "**理由の無い行を課題にした**（素のデータと区別できていない）")
-        check(fs["b.json:entries:splash"]["due"] == "2026-11-30",
+        check(fs["b.json:entries:splash"]["due"] == expires,
               "expires を期限として読めていない")
-        check(fs["a.json:allow:x.py"]["due"] == "2026-12-31",
+        check(fs["a.json:allow:x.py"]["due"] == review_by,
               "reviewBy を期限として読めていない")
 
         # 鍵が本文から読み戻せる（作った Issue と宣言が結びつく）
