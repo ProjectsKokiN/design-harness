@@ -58,7 +58,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf8.py）
 
-HEAD_RX = re.compile(r"^## (\d{4}-\d{2}-\d{2}) 宛先: (.+?) \[(未対応|完了)\] — (.+?)\s*$", re.M)
+HEAD_RX = re.compile(r"^## (\d{4}-\d{2}-\d{2}) 宛先: (.+?) \[([^\]\n]+)\] — (.+?)\s*$", re.M)
 #: **書式から外れた見出し**を見つけるための緩い形（2026-09-11・machine-relay で実害）。
 #: `[未対応]` の角括弧を落とした見出しが1件あり、**`HEAD_RX` に当たらないので
 #: どの道具からも見えていなかった**（3件あるのに「未対応 2 件」と数え、
@@ -164,12 +164,27 @@ def section_end(text, after: int) -> int:
     return min(ends)
 
 
+def recipient_states(to, state):
+    names = [n.strip() for n in to.split(' / ')]
+    if state in ('未対応', '完了'):
+        return {n: state for n in names}
+    pairs = [p.rsplit(':', 1) for p in state.split(' / ')]
+    if any(len(p) != 2 or p[1] not in ('未対応', '完了') for p in pairs):
+        return None
+    states = dict(pairs)
+    return states if len(states) == len(pairs) and set(states) == set(names) else None
+
+
 def sections(text):
     """[(start, end, date, to, state, title)] — 見出しから節の終わりまで。"""
     out = []
     for m in HEAD_RX.finditer(text):
+        states = recipient_states(m.group(2), m.group(3))
+        if states is None:
+            continue
+        state = '完了' if all(v == '完了' for v in states.values()) else '未対応'
         out.append((m.start(), section_end(text, m.end()), m.group(1), m.group(2),
-                    m.group(3), m.group(4)))
+                    state, m.group(4)))
     return out
 
 
@@ -220,7 +235,9 @@ def do_add(path, root, to, title, body, date, with_target, target_repo=None):
                 return 2
             target = (f"対象の commit: {branch}@{sha}（この依頼を書いたときの {branch}。"
                       f"取り込んだ main がこれより**古ければ、先に取り込む**。新しければそのまま進む）\n\n")
-    head = f"## {date} 宛先: {to} [未対応] — {title}\n\n"
+    names = to.split(' / ')
+    state = ' / '.join(n + ':未対応' for n in names) if len(names) > 1 else '未対応'
+    head = f"## {date} 宛先: {to} [{state}] — {title}\n\n"
     section = head + target + body.rstrip("\n") + "\n\n"
     secs = sections(text)
     if secs:
@@ -239,7 +256,7 @@ def do_add(path, root, to, title, body, date, with_target, target_repo=None):
     return 0
 
 
-def do_complete(path, archive, query):
+def do_complete(path, archive, query, recipient=None):
     """節を `[完了]` にしてアーカイブへ移す。
 
     **`[完了]` と書かれている節も動かせます**（#115・2026-09-11 PlantTalk）。
@@ -258,7 +275,22 @@ def do_complete(path, archive, query):
               + "\n".join(f"  - {s[2]} 宛先: {s[3]} — {s[5]}" for s in hits), file=sys.stderr)
         return 1 if hits else 2
     s, e, date, to, s_state, title = hits[0]
-    block = text[s:e].replace("[未対応]", "[完了]", 1).rstrip("\n") + "\n\n"
+    header = HEAD_RX.search(text[s:e])
+    states = recipient_states(to, header.group(3))
+    if len(states) > 1 and s_state != '完了':
+        if recipient not in states:
+            print(f"共同依頼は --to で完了する宛先を指定してください: {list(states)}", file=sys.stderr)
+            return 2
+        states[recipient] = '完了'
+        state = ' / '.join(n + ':' + v for n, v in states.items())
+        block = text[s:e].replace('[' + header.group(3) + ']', '[' + state + ']', 1)
+        if any(v == '未対応' for v in states.values()):
+            path.write_text(text[:s] + block + text[e:], encoding='utf-8')
+            print(f"{recipient}のみ完了しました。ほかの宛先と索引を残します")
+            return 0
+    else:
+        block = text[s:e].replace('[' + header.group(3) + ']', '[完了]', 1)
+    block = block.rstrip("\n") + "\n\n"
     text = text[:s] + text[e:]
     # 索引の行を消す（日付と宛先で当てる。要件は書き換わることがある）
     lines = text.splitlines(keepends=True)
@@ -307,7 +339,8 @@ def malformed_heads(text):
     # **1行目だけで比べる。** `HEAD_RX` の末尾は `\s*$` で、`\s` は改行にも当たるため
     # 一致が次の行まで伸びることがある（そのまま比べると、正しい見出しまで
     # 「書式から外れている」と言ってしまう。2026-09-11 に実際に3件とも誤検出した）
-    good = {m.group(0).splitlines()[0] for m in HEAD_RX.finditer(text)}
+    good = {m.group(0).splitlines()[0] for m in HEAD_RX.finditer(text)
+            if recipient_states(m.group(2), m.group(3)) is not None}
     out = []
     for m in LOOSE_HEAD_RX.finditer(text):
         line = m.group(0)
@@ -540,7 +573,7 @@ def main(argv=None):
         return do_set_target(args.file, args.root, args.set_target,
                              args.sha, args.target_repo)
     if args.complete:
-        return do_complete(args.file, args.archive, args.complete)
+        return do_complete(args.file, args.archive, args.complete, args.to)
     if args.check_target:
         return do_check_target(args.file, args.root, args.require_for,
                                archive=args.archive)
@@ -605,8 +638,11 @@ def self_test():
                       "--body", str(body), "--date", "2026-09-05")
         t = inbox.read_text(encoding="utf-8")
         check(rc == 0, f"足せなかった（{rc}）\n   {out}")
-        check("## 2026-09-05 宛先: Mac mini / Windows [未対応] — iOS と Android をビルド" in t, "見出しが無い")
+        check("## 2026-09-05 宛先: Mac mini / Windows [Mac mini:未対応 / Windows:未対応] — iOS と Android をビルド" in t, "見出しが無い")
         check(TARGET_RX.search(t) is not None, "対象の commit が無い")
+        joint_states = recipient_states('Mac mini / Windows', 'Mac mini:未対応 / Windows:完了')
+        check(joint_states == {'Mac mini': '未対応', 'Windows': '完了'}, '宛先ごとの状態を読めません')
+        check(recipient_states('Mac mini / Windows', 'Windows:完了') is None, '片方の状態が欠けても通しました')
         check("- 2026-09-05 宛先: Mac mini / Windows — **iOS と Android をビルド**" in t, "索引の行が無い")
         check(t.index("2026-09-05 宛先") < t.index("2026-09-01 宛先"), "新しい依頼が上に入っていない")
         check("## セッションログの書き方" in t and "## ビルドを頼むときの決まり" in t, "**他の節を消した**")
@@ -894,6 +930,15 @@ def self_test():
         rc, _out = run("--set-target", "存在しない要件ZZZ")
         check(rc == 2, f"当たらないのに 2 を返さなかった: rc={rc}")
         check(inbox.read_text(encoding="utf-8") == t_before, "当たらないのに書き換えた")
+        rc, _ = run('--add', '--to', 'Mac mini / Windows', '--title', '共同の状態試験', '--body', str(body), '--no-target')
+        check(rc == 0, '共同依頼を作れません')
+        before = inbox.read_text(encoding='utf-8')
+        rc, _ = run('--complete', '共同の状態試験')
+        check(rc == 2 and inbox.read_text(encoding='utf-8') == before, '宛先を指定せずに共同依頼を完了しました')
+        rc, _ = run('--complete', '共同の状態試験', '--to', 'Windows')
+        check(rc == 0 and 'Mac mini:未対応 / Windows:完了' in inbox.read_text(encoding='utf-8'), '片方の完了で共同依頼が消えました')
+        rc, _ = run('--complete', '共同の状態試験', '--to', 'Mac mini')
+        check(rc == 0 and '共同の状態試験' not in inbox.read_text(encoding='utf-8'), '全員完了しても共同依頼が残ります')
 
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1

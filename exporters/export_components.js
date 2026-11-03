@@ -156,6 +156,19 @@ async function ovValue(node, f) {
       // どの欄にどの変数を結んだか（「あり」だけでは、上書きの中身が分からない）
       const out = {};
       for (const [k, v] of Object.entries(node.boundVariables || {})) {
+        if (node.type === 'TEXT' && rv(node, 'textStyleId') &&
+            ['fontSize', 'lineHeight', 'fontName', 'fontFamily', 'fontStyle', 'fontWeight'].includes(k)) {
+          const e = Array.isArray(v) ? v[0] : v;
+          const variable = e?.id ? await figma.variables.getVariableByIdAsync(e.id) : null;
+          let resolved = null;
+          try { resolved = variable?.resolveForConsumer(node)?.value; } catch (_) { /* 未取得は下で記録する */ }
+          const actual = rv(node, k);
+          if (resolved === null || resolved === undefined || typeof actual !== 'number' || resolved !== actual) {
+            NOT_READ.push({ instance: node.id, name: node.name, fields: [k],
+              why: '文字スタイルの実際の値と変数の束縛が不一致、または照合不能' });
+            continue;
+          }
+        }
         const e = Array.isArray(v) ? v[0] : v;
         if (!e || !e.id) continue;
         const x = await figma.variables.getVariableByIdAsync(e.id);
@@ -201,6 +214,13 @@ async function overridesOf(n) {
 /** そのノードの「形」（位置を除いた全部）を1行で返す */
 async function shape(n) {
   const p = [];
+  for (const k of ['isMask', 'layoutPositioning', 'constraints', 'clipsContent', 'numberOfFixedChildren',
+      'strokeAlign', 'strokeTopWeight', 'strokeRightWeight', 'strokeBottomWeight', 'strokeLeftWeight']) {
+    const v = rv(n, k);
+    if (v !== null && v !== undefined) p.push(k + '=' + esc(JSON.stringify(v)));
+  }
+  const sw = rv(n, 'strokeWeight');
+  if (sw !== null && sw !== undefined) p.push('strokeWeight=' + ((await bn(n, 'strokeWeight')) || sw));
   if (n.visible === false) p.push('vis=0');
   if (n.opacity != null && n.opacity !== 1) p.push('opacity=' + R(n.opacity));
   // **見えている塗りを全部書く。** 2026-08-30 まで fills[0] だけを見て、
@@ -245,6 +265,20 @@ async function shape(n) {
     p.push('radius=' + (await bn(n, 'topLeftRadius') || R(cr)));
   }
   if (n.type === 'TEXT') {
+    try {
+      if (n.getStyledTextSegments) {
+        const segs = n.getStyledTextSegments(['listOptions', 'indentation']);
+        p.push('listSegments=' + esc(JSON.stringify(segs.map(s => ({
+          start: s.start, end: s.end, listOptions: s.listOptions, indentation: s.indentation
+        })))));
+        if (segs.some(s => s.indentation > 0)) NOT_READ.push({
+          instance: n.id, name: n.name, fields: ['listIndentWidth'],
+          why: '箇条書きの字下げ段は取得したが、字下げの描画実寸は未検証'
+        });
+      } else NOT_READ.push({ instance: n.id, name: n.name, fields: ['listOptions', 'indentation'], why: '文字区間のAPIが無い' });
+    } catch (e) {
+      NOT_READ.push({ instance: n.id, name: n.name, fields: ['listOptions', 'indentation'], why: String(e) });
+    }
     p.push('text=' + esc(JSON.stringify(n.characters)));   // | を逃がす（行が割れない）
     const ts = await sn(rv(n, 'textStyleId')); if (ts) p.push('ts=' + ts);
     const fo = fontOf(n); if (fo) p.push('font=' + fo);   // 書体/太さ/大きさ（#145）
@@ -284,7 +318,26 @@ async function shape(n) {
 async function walk(n, depth, rows) {
   const sh = await shape(n);
   rows.push([depth, n.name, n.type, R(n.width), R(n.height), R(n.x), R(n.y)].join('|') + (sh ? '|' + sh : ''));
-  if (n.type === 'INSTANCE' || !n.children || !n.children.length || depth >= 8) return;
+  if (depth >= 8) {
+    if (n.children?.length) NOT_READ.push({ instance: n.id, name: n.name, fields: ['children'], why: '深さの上限8で未取得' });
+    return;
+  }
+  if (n.type === 'INSTANCE') {
+    // 定義の木は再展開せず、差し込まれたSLOTの木だけを書く。
+    const findSlots = async (node, path) => {
+      for (const child of node.children || []) {
+        const next = [...path, child.name];
+        if (child.type === 'SLOT') {
+          const start = rows.length;
+          await walk(child, depth + 1, rows);
+          if (rows.length > start) rows[start] += '|slotPath=' + esc(next.join('/'));
+        } else if (child.type !== 'INSTANCE') await findSlots(child, next);
+      }
+    };
+    await findSlots(n, []);
+    return;
+  }
+  if (!n.children || !n.children.length) return;
   // 同じ形の兄弟を畳む
   const shapes = [];
   for (const c of n.children) shapes.push(await shape(c));

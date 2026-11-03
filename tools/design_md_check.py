@@ -105,6 +105,11 @@ def main(argv=None):
     if args.self_test:
         return self_test()
 
+    for key in ("project", "harness"):
+        path = getattr(args, key)
+        if path.is_dir():
+            setattr(args, key, path / "DESIGN.md")
+
     if not args.harness.exists():
         print(f"共通の憲法がありません: {args.harness}\n"
               f"  submodule が入っていない可能性があります: "
@@ -114,8 +119,12 @@ def main(argv=None):
         print(f"案件の DESIGN.md がありません: {args.project}", file=sys.stderr)
         return 2
 
-    common = args.harness.read_text(encoding="utf-8")
-    proj = args.project.read_text(encoding="utf-8")
+    try:
+        common = args.harness.read_text(encoding="utf-8")
+        proj = args.project.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"DESIGN.mdを読めません: {type(e).__name__}", file=sys.stderr)
+        return 2
 
     problems, notes = [], []
 
@@ -228,6 +237,15 @@ def self_test():
         # そのままの形は通る
         if run(good) != 0:
             print("self-test NG: 正しい形なのに落ちた"); ok = False
+        p.write_text(good, encoding='utf-8')
+        if main(['--project', str(base), '--harness', str(h.parent)]) != 0:
+            print('self-test NG: ディレクトリ指定を読めません'); ok = False
+        if main(['--project', str(base / 'missing'), '--harness', str(h.parent)]) != 2:
+            print('self-test NG: 無い文書を通しました'); ok = False
+        (base / 'bad').mkdir()
+        (base / 'bad' / 'DESIGN.md').mkdir()
+        if main(['--project', str(base / 'bad'), '--harness', str(h.parent)]) != 2:
+            print('self-test NG: 読めない文書を通しました'); ok = False
 
         # 参照が無い
         if run(good.replace("**共通の憲法 `design/harness/DESIGN.md` "

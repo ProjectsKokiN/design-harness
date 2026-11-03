@@ -41,6 +41,10 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import react_web_check
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'tools'))
+import _utf8  # noqa: F401  既存の出力設定との互換を保つ
 
 # Windows の cp932 端末でも、UnicodeEncodeError で検査ごと落ちない・
 # 日本語が「?」に潰れない、の両方を満たす（FlashEnglish 2026-08-24 ＋
@@ -210,7 +214,7 @@ def load_rules(rules_path, _seen=None):
 #: extends の鎖の上限（A層→B層→C層→案件で4段。余裕をみて8）
 MAX_EXTENDS_DEPTH = 8
 
-KNOWN_RULE_TYPES = {"require-near"}
+KNOWN_RULE_TYPES = {"require-near", "react-web"}
 #: **同じ概念の別の型**（design-harness #142・FlashEnglish 2026-09-24）。
 #:
 #:     "概念の対": {"影": ["BoxShadow", "InnerShadowSpec"]}
@@ -244,7 +248,7 @@ def unrunnable_rules(config):
         elif rtype == "require-near":
             if not rule.get("trigger") or not rule.get("require"):
                 out.append(f"  {rid}: require-near に trigger / require がありません")
-        elif not rule.get("pattern"):
+        elif rtype != "react-web" and not rule.get("pattern"):
             out.append(f"  {rid}: pattern がありません（このルールは一度も走りません）")
     return out
 
@@ -502,6 +506,25 @@ def scan(content, config, path, project_root, soften=False):
         if only and path.suffix not in only:
             continue
 
+        if rule.get("type") == "react-web":
+            result = react_web_check.analyze(content, path.name)
+            observations.append({"kind": "react-analysis", "file": str(where), **result})
+            for finding in result["violations"]:
+                i = finding["line"]
+                hit(rule, i, lines[i - 1] if i <= len(lines) else finding["value"])
+            if result["unparsed"]:
+                errors.append(f"- [React未解析] {where}: {result['unparsed']}件。検証できていません")
+            continue
+
+        # Reactの生値は構文解析で属性だけを見る。説明文字列を旧CSSパターンで拾わない。
+        if path.suffix in (".tsx", ".jsx") and rule.get("id", "").startswith("no-") and any(
+                r.get("type") == "react-web" for r in config.get("rules", [])):
+            if rule.get("id") in {"no-raw-hex", "no-raw-font-size", "no-raw-spacing",
+                    "no-raw-border-width", "no-raw-radius", "no-inline-style-values",
+                    "no-raw-color-function", "no-js-style-values", "no-raw-offset",
+                    "no-raw-stroke-width", "no-raw-font-weight", "no-non-token-color"}:
+                continue
+
         if rule.get("type") == "require-near":
             # 不在検査: trigger に当たった行の前後 within 行以内に require が
             # 無ければ違反。2026-08-28 まで実装がどこにも無く、この型のルールは
@@ -704,6 +727,8 @@ def write_observations(log_path, observations):
     try:
         with log_path.open("a", encoding="utf-8") as f:
             for o in observations:
+                if o.get("kind") == "react-analysis":
+                    continue  # 今回の解析結果は集計ログに混ぜない
                 f.write(json.dumps(o, ensure_ascii=False) + "\n")
     except OSError:
         pass
@@ -809,6 +834,7 @@ def run_all(config, rules_path, project_root, hooks, log_path):
     """全走査。読んだ数と対象外の数を必ず出す（空振り検知・QnD）。"""
     errors_total, warns_total = [], []
     scanned, skipped, unread = 0, 0, []
+    analysis = []
     for path in sorted(project_root.rglob("*")):
         if set(path.relative_to(project_root).parts) & SKIP_DIRS:
             continue
@@ -822,7 +848,11 @@ def run_all(config, rules_path, project_root, hooks, log_path):
         scanned += 1
         errors_total.extend(errs)
         warns_total.extend(warns)
+        analysis.extend(o for o in obs if o.get("kind") == "react-analysis")
         write_observations(log_path, obs)
+
+    for line in react_web_check.summary(analysis):
+        print(line)
 
     errs, warns = ratchet(config, scanned)
     for w in warns:
@@ -896,6 +926,8 @@ def run_single(file_path, config, rules_path, project_root, hooks, log_path):
 
     soften = bool(hooks.get("soften") and hooks["soften"](path, project_root))
     errors, warns, obs = scan(content, config, path, project_root, soften)
+    for line in react_web_check.summary(obs):
+        print(line)
     write_observations(log_path, obs)
 
     if any(o.get("kind") == "ignored_expired" for o in obs):

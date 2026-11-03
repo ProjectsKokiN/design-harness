@@ -96,7 +96,7 @@ def _decl(config, key):
     return f"（宣言 {v}）" if isinstance(v, int) else ""
 
 
-def scan_project(engine, config, project_root):
+def scan_project(engine, config, project_root, analysis=None):
     """実コードを走査し、ルールごとの発火件数と除外の一覧を返す。"""
     hits, ignored, read = {}, [], 0
     for rule in config.get("rules", []):
@@ -110,6 +110,8 @@ def scan_project(engine, config, project_root):
             continue
         read += 1
         for o in obs:
+            if analysis is not None and o.get("kind") == "react-analysis":
+                analysis.append(o)
             if o.get("kind") == "hit":
                 hits[o["rule"]] = hits.get(o["rule"], 0) + 1
             elif str(o.get("kind", "")).startswith("ignored"):
@@ -308,7 +310,8 @@ def main(argv=None):
               file=sys.stderr)
         return 2
 
-    hits, ignored, read = scan_project(engine, config, base)
+    analysis = []
+    hits, ignored, read = scan_project(engine, config, base, analysis)
     # 自分自身の空振りを先に潰す。読んだファイルが0なら、以下の「0件」は
     # 全部「見ていない」であって「綺麗」ではない（この道具が一番やりがちな嘘）
     if read == 0:
@@ -345,6 +348,8 @@ def main(argv=None):
              f"発火: {sum(hits.values())}件", ""]
     if warns:
         lines += ["- " + w.replace("\n", " ") for w in warns] + [""]
+    if analysis:
+        lines += engine.react_web_check.summary(analysis) + [""]
 
     if unproven:
         lines.append(f"- **効いているか不明なルール（{len(unproven)}件）**: "
@@ -352,9 +357,10 @@ def main(argv=None):
         lines.append("  実コードで1件も発火せず、種（design/seeds/）も無い。"
                      "コードが綺麗なのか、ルールが死んでいるのか区別が付かない")
     proven_clean = [r for r in silent if r in seeded]
-    if proven_clean:
+    if proven_clean and not any(r["unparsed"] for r in analysis):
+        scope_note = '生値検査の確認範囲のみ・別記の未検証範囲を除く' if analysis else 'コードが綺麗という意味'
         lines.append(f"- 発火0だが種で発火を確認済み（{len(proven_clean)}件・"
-                     f"コードが綺麗という意味）: " + " / ".join(proven_clean))
+                     f"{scope_note}）: " + " / ".join(proven_clean))
 
     if ignored:
         lines.append(f"- **検査から除外した箇所（{len(ignored)}件）**")
@@ -410,6 +416,8 @@ def main(argv=None):
 
     out = "\n".join(lines)
     print(out)
+    if any(r["unparsed"] for r in analysis):
+        return 2
     # 「見ない」の宣言が形を保っているか（aub 提案8・2026-08-29）。
     # 理由が消えた項目が黙って素通りし続けるのを止める
     if nv_problems:
@@ -599,6 +607,15 @@ def self_test():
             rc2 = main(["--config", str(root / "design" / "gaps.json")])
         if rc2 != 2:
             print(f"self-test NG: 読んだファイル0なのに落ちなかった（{rc2}）"); ok = False
+        rulesp.write_text(json.dumps({'file_extensions': ['.tsx'], 'rules': [{
+            'id': 'react', 'type': 'react-web', 'extensions': ['.tsx']}]}), encoding='utf-8')
+        (root / 'lib/view.tsx').write_text('const A=()=> <div style={unknownStyles}/>;', encoding='utf-8')
+        (root / 'design/gaps.json').write_text(json.dumps({'rules': 'design/rules.json'}), encoding='utf-8')
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = main(['--config', str(root / 'design/gaps.json'), '--no-write'])
+        if rc != 2 or '解析できなかった 1件' not in buf.getvalue():
+            print('self-test NG: Reactの未解析を合格にしました'); ok = False
     print("self-test:", "OK" if ok else "NG")
     return 0 if ok else 1
 

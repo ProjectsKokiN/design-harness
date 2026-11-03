@@ -1,0 +1,12 @@
+{
+  "name": "design-harness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:react": "node --test attack/react_web_test.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.63.0",
+    "typescript": "5.9.3"
+  }
+}

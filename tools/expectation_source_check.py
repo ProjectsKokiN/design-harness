@@ -138,6 +138,17 @@ def main(argv=None):
                 used.add(rel)
                 continue
             text = f.read_text(encoding="utf-8", errors="ignore")
+            if conf.get('check_web_literals') and f.suffix in ('.js', '.mjs', '.ts', '.tsx', '.jsx'):
+                sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'engine'))
+                from react_web_check import analyze
+                report = analyze(text, f.name, mode='expectations')
+                print(f"Web期待値: {rel} / 解析できた {report['parsed']}件 / 解析できなかった {report['unparsed']}件")
+                for finding in report['violations']:
+                    problems.append(f"{rel}:{finding['line']}: 見た目の期待値を直書きしています: {finding['value']}")
+                for finding in report['unknown']:
+                    print(f"  未検証: {rel}:{finding['line']}: {finding['why']}")
+                if report['unparsed'] and not report['parsed']:
+                    problems.append(f'{rel}: Web期待値を解析できません')
             if not any(g in text for g in globs):
                 handwritten.append(rel)
 

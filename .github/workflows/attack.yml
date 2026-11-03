@@ -16,6 +16,23 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: React解析器の準備と試験
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run test:react
+          python3 attack/improvement_test.py
+          python3 attack/web_setup_test.py
+          node --test attack/exporter_improvement_test.mjs
+          python3 tools/seed_check.py --seeds seeds/web --rules rules/web.json
+          python3 tools/rules_selftest.py rules/web.json
+      - name: WebKitとChromiumの操作・描画の試験
+        run: |
+          npx --no-install playwright install --with-deps chromium webkit
+          node --test attack/web_browser_test.mjs
       - name: エンジンの妨害テスト
         run: python3 attack/engine_attack_test.py
 

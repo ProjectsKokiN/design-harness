@@ -14,6 +14,13 @@
 |---|---|
 | **`DESIGN.md`** | **全案件共通のデザイン憲法**（原則・品質フロア・検証の4段・語彙）。案件側はこれを参照し、写さない |
 | `engine/design_check.py` | 禁止パターン検査エンジン（5案件の機能を統合した正本） |
+| `engine/react_web_check.py` | React構文解析の入口。Node・解析器が無いと未解析にする |
+| `engine/react_web_check.mjs` | 固定版TypeScriptでTSX/JSXを解析し、生値と未解析件数を出す |
+| `engine/web_browser_check.mjs` | Chromium・WebKitのスクロールとVECTORの画素を試す。実機Safariの限界も出す |
+| `tools/frame_io.py` | 画面をIDで照合し、分割した行を件数・ハッシュで復元する |
+| `tools/figma_change_check.py` | 同じノードIDでの改名・種類変更と古い参照候補を出す |
+| `tools/deploy_check.py` | 公開前のGit状態を確認する。未コミット・未追跡・確認不能なら停止する |
+| `docs/web-setup.md` | Web案件の導入・React・WebKit・期待値・公開前検査の接続手順 |
 | `shims/design_check_shim.py` | 案件側に置く薄い入口のテンプレート |
 | `tools/design_md_check.py` | 案件の DESIGN.md が共通の憲法を参照しているか・写していないか |
 | **`rules/<stack>.json`** | **A層: スタック共通の禁止ルール**（生値の直書き。DS の値に依存しない） |

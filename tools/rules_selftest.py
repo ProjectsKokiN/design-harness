@@ -49,6 +49,22 @@ def check_rule(rule: dict) -> tuple[str, list[str]]:
             f"{rid}: _skip は「なぜ」と「かわりに」を持つ形で書いてください"
             f"（いまは文字列: {str(sk)[:40]!r}）"]
 
+    if rule.get("type") == "react-web":
+        from seed_check import load_engine
+        engine = load_engine()
+        msgs = []
+        for kind in ("bad", "good"):
+            samples = st.get(kind) or []
+            if not samples:
+                return "unknown", [f"{rid}: {kind} がありません"]
+            for s in samples:
+                errors, _, obs = engine.scan(s, {"rules": [rule]}, Path("sample.tsx"), Path.cwd())
+                hits = [o for o in obs if o.get("kind") == "hit"]
+                if any(o.get("kind") == "react-analysis" and o["unparsed"] for o in obs):
+                    return "unknown", [f"{rid}: 試験の構文を解析できません"]
+                if bool(hits) != (kind == "bad") or (kind == "good" and errors):
+                    msgs.append(f"{rid}: {kind} の結果が違います: {s!r}")
+        return ("ng", msgs) if msgs else ("ok", [])
     pat = rule.get("pattern") or rule.get("trigger")
     if not pat:
         return "unknown", [f"{rid}: pattern も trigger もありません"]

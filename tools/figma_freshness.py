@@ -119,6 +119,9 @@ DIGEST_FIELDS = [
     'layoutMode', 'primaryAxisAlignItems', 'counterAxisAlignItems',
     'layoutSizingHorizontal', 'layoutSizingVertical',
     'textAlignHorizontal', 'textAlignVertical', 'layoutGrow', 'layoutAlign',
+    'strokeWeight', 'strokeTopWeight', 'strokeRightWeight', 'strokeBottomWeight',
+    'strokeLeftWeight', 'strokeAlign', 'isMask', 'layoutPositioning',
+    'clipsContent', 'numberOfFixedChildren',
 ]
 
 
@@ -702,6 +705,10 @@ def compare(saved: dict, now: dict, exported: set, excluded: set) -> dict:
 
 def self_test() -> int:
     """網に触らずに [compare] の振る舞いを確かめる。"""
+    original = {'type': 'RECTANGLE', 'name': 'stroke', 'strokeWeight': 4}
+    if node_digest(original) == node_digest({**original, 'strokeWeight': 8}):
+        print('selftest NG: 線の太さだけの変更を検出しません')
+        return 1
 
     import os
     import tempfile

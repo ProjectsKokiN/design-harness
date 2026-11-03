@@ -66,6 +66,9 @@
   "clipsContent": {
    "figma": "はみ出しを隠す（Clip content）"
   },
+  "constraints": {"figma": "子の水平・垂直の制約"},
+  "numberOfFixedChildren": {"figma": "スクロール時の固定する子の数"},
+  "isMask": {"figma": "可視の塗りではなくマスクかどうか"},
   "itemReverseZIndex": {
    "figma": "キャンバススタッキング（後の子を下に敷く）",
    "values": "true / false",
@@ -113,6 +116,8 @@
    "figma": "テキストスタイル",
    "note": "スタイル名 → 参照トークンまで辿る。値の写しは作らない"
   }
+  ,"listOptions": {"figma": "文字区間の箇条書きの種類"},
+  "indentation": {"figma": "文字区間の字下げ段（実寸は未検証）"}
  },
  "component": {
   "variantProperties": {

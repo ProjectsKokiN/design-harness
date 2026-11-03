@@ -5,6 +5,7 @@
     "no-raw-spacing": "seed_css.css の padding と、seed_markup.html のインライン style の padding に当たって2件"
   },
   "$注意": "件数を『1にそろえる』ために種を分けない。狙いは『そのルールがまだ発火するか』であって『ちょうど1件か』ではない。ルールを直したら、この宣言も実測に合わせて更新する",
+  "no-react-raw-values": 2,
   "no-raw-hex": 1,
   "no-raw-font-size": 1,
   "no-raw-spacing": 2,

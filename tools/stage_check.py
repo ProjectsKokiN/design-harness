@@ -558,6 +558,8 @@ def self_test_stages():
         rc, out = with_history(TWO, RENAMED)
         check(rc == 0, f"**見出しを変えただけなのに「外した」と言った**（exit {rc}）\n"
                        f"   {out[:300]}")
+        rc, out = with_history(TWO, RENAMED.replace('--config a.json', '--config a.json --extra'))
+        check(rc == 0, f'改名に補助的な旗を足しただけで外したと判定しました: {out[:300]}')
         # **道具ごと入れ替えたら「外した」**（仕事の中身が変わっている）。
         # 段Aが**別の道具**を呼んでいた形から始める（TWO は両方 seed_check なので、
         # 旗まで同じで**改名と区別が付かない**——それは #112 の家族の話）
@@ -1162,15 +1164,26 @@ def removed_stages(verify_path):
         return out
 
     was_inv = invs(before)
+    # 同じ道具の別モードを区別する旗だけを照合に使う。補助的な旗の追加は改名を壊さない。
+    dist = distinguishing(was_inv)
     now_inv = set()
+    now_calls = set()
     for v in invs(verify_path.read_text(encoding="utf-8")).values():
-        now_inv |= set(v)
+        now_calls |= set(v)
+        now_inv |= {key_of(name, flags, dist) for name, flags in v}
     gone = set()
     for x in was:
         if _norm_label(x) in now_n:
             continue
-        had = set(was_inv.get(x) or ())
+        had = {key_of(name, flags, dist) for name, flags in was_inv.get(x) or ()}
         if had and had <= now_inv:
+            before_calls = set(was_inv.get(x) or ())
+            changed = [(name, sorted(flags - new_flags), sorted(new_flags - flags))
+                       for name, flags in before_calls for new_name, new_flags in now_calls
+                       if name == new_name and key_of(name, flags, dist) == key_of(new_name, new_flags, dist)
+                       and flags != new_flags]
+            if changed:
+                print(f'検査段の改名・引数変更: {x} / (道具, 外した旗, 足した旗): {changed}')
             continue                     # 見出しを変えただけ（道具は今も走る）
         gone.add(x)
     return gone

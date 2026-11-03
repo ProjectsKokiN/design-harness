@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""画面をIDで照合し、分割取得を件数・行ハッシュ・全体ハッシュで復元する（#170・#171）。"""
+import argparse
+import json
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _utf8  # noqa: F401
+from digest_check import payload_digest
+
+
+def frame_hash(text):
+    # export_frames.jsのh(): UTF-16コード単位の下位バイト。
+    h = 0x811c9dc5
+    for b in text.encode('utf-16-le', errors='surrogatepass')[::2]:
+        h = ((h ^ b) * 0x01000193) & 0xffffffff
+    return h
+
+
+def resolve_frame(frames, reference):
+    """IDを優先し、名前が重複する場合は黙って選ばない。"""
+    if reference in frames:
+        return reference
+    ids = [k for k, v in frames.items() if v.get('name') == reference]
+    if len(ids) != 1:
+        raise ValueError(f'画面 {reference!r} の候補は {len(ids)}件です。IDで指定してください: {ids}')
+    return ids[0]
+
+
+def screen_mapping(frames, mapping, frame_id):
+    """生成器が使う対応表をIDで引く。名前への移行期間も取り違えない。"""
+    if frame_id not in frames:
+        raise ValueError(f'画面IDが書き出しにありません: {frame_id}')
+    if frame_id in mapping:
+        return mapping[frame_id]
+    name = frames[frame_id]['name']
+    if name not in mapping:
+        raise ValueError(f'対応表に画面がありません: {frame_id} / {name}')
+    if resolve_frame(frames, name) != frame_id:
+        raise ValueError(f'対応表が別の画面を指しています: {frame_id}')
+    return mapping[name]
+
+
+def merge(manifest, chunks, previous=None):
+    if manifest.get('mode') != 'manifest' or not manifest.get('frames'):
+        raise ValueError('完全なmanifestがありません')
+    result = {}
+    unseen = list(manifest.get('$meta', {}).get('読めなかったもの', []))
+    for chunk in chunks:
+        if chunk.get('mode') != 'rows' or not chunk.get('frames'):
+            raise ValueError('行の断片の形式が違います')
+        if set(chunk['frames']) - set(manifest['frames']):
+            raise ValueError('manifestに無い画面の断片です')
+        unseen.extend(chunk.get('$meta', {}).get('読めなかったもの', []))
+    for fid, meta in manifest['frames'].items():
+        total, hashes = meta['total'], meta['hashes']
+        if not isinstance(total, int) or total < 1 or len(hashes) != total:
+            raise ValueError(f'{fid}: 行の宣言件数が違います')
+        rows = [None] * total
+        old = (previous or {}).get('frames', {}).get(fid, {}).get('rows', [])
+        for i, row in enumerate(old[:total]):
+            if frame_hash(row) == hashes[i]:
+                rows[i] = row
+        for chunk in chunks:
+            part = chunk['frames'].get(fid)
+            if part is None:
+                continue
+            if part['frameHash'] != meta['frameHash']:
+                raise ValueError(f'{fid}: 別の版の断片です')
+            for index, row in part['rows'].items():
+                i = int(index)
+                if str(i) != str(index) or i < 0 or i >= total or frame_hash(row) != hashes[i]:
+                    raise ValueError(f'{fid}: 行{index}の番号またはハッシュが違います')
+                if rows[i] is not None and rows[i] != row:
+                    raise ValueError(f'{fid}: 矛盾する行{index}')
+                rows[i] = row
+        missing = [i for i, row in enumerate(rows) if row is None]
+        if missing:
+            raise ValueError(f'{fid}: 未取得の行 {missing}')
+        body = json.dumps([meta['section'], meta['name'], rows], ensure_ascii=False, separators=(',', ':'))
+        if frame_hash(body) != meta['frameHash']:
+            raise ValueError(f'{fid}: 全体ハッシュが違います')
+        result[fid] = {'section': meta['section'], 'name': meta['name'], 'rows': rows}
+    doc = {'frames': result, '$meta': {'読めなかったもの': unseen, 'transferVerified': True,
+            'declared': {'screens': len(result)}}}
+    doc['$meta']['payloadDigest'] = payload_digest(doc)
+    return doc
+
+
+def self_test():
+    rows = ['0|画面|FRAME|300|400|0|0', '1|文字😀|TEXT|10|20|0|0']
+    frame = {'name': 'A', 'section': 'S', 'rows': rows}
+    body = json.dumps(['S', 'A', rows], ensure_ascii=False, separators=(',', ':'))
+    meta = {'name': 'A', 'section': 'S', 'total': 2, 'hashes': [frame_hash(r) for r in rows], 'frameHash': frame_hash(body)}
+    manifest = {'mode': 'manifest', 'frames': {'1:1': meta}}
+    chunks = [{'mode': 'rows', 'frames': {'1:1': {'frameHash': meta['frameHash'], 'rows': {'0': rows[0], '1': rows[1]}}}}]
+    assert merge(manifest, chunks)['frames']['1:1'] == frame
+    assert merge(manifest, [], {'frames': {'1:1': frame}})['frames']['1:1'] == frame
+    assert resolve_frame({'a': frame, 'b': frame}, 'a') == 'a'
+    assert screen_mapping({'a': frame, 'b': frame}, {'a': {'class': 'screen-a'}}, 'a') == {'class': 'screen-a'}
+    failures = [lambda: merge(manifest, []),
+                lambda: merge(manifest, [{'mode': 'rows', 'frames': {'1:1': {'frameHash': 0, 'rows': {}}}}]),
+                lambda: resolve_frame({'a': frame, 'b': frame}, 'A'),
+                lambda: screen_mapping({'a': frame, 'b': frame}, {'A': {}}, 'a'),
+                lambda: merge(manifest, [{'mode': 'rows', 'frames': {'1:1': {'frameHash': meta['frameHash'], 'rows': {'0': 'broken'}}}}])]
+    for fail in failures:
+        try:
+            fail()
+        except ValueError:
+            continue
+        raise AssertionError('壊した入力が通りました')
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / 'manifest.json'
+        p.write_text(json.dumps(manifest), encoding='utf-8')
+        assert main([]) == 2
+        assert main(['--manifest', str(p)]) == 2
+    print('self-test: OK')
+    return 0
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--manifest', type=Path)
+    ap.add_argument('--chunks', nargs='*', type=Path, default=[])
+    ap.add_argument('--previous', type=Path)
+    ap.add_argument("--self-test", action='store_true')
+    args = ap.parse_args(argv)
+    if args.self_test:
+        return self_test()
+    try:
+        read = lambda p: json.loads(p.read_text(encoding='utf-8'))
+        if not args.manifest:
+            raise ValueError('--manifestが必要です')
+        result = merge(read(args.manifest), [read(p) for p in args.chunks], read(args.previous) if args.previous else None)
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        print(f'書き出しを復元できません: {e}', file=sys.stderr)
+        return 2
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

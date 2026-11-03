@@ -11,6 +11,8 @@
     ".html",
     ".mjs",
     ".js",
+    ".tsx",
+    ".jsx",
     ".svg"
   ],
   "exclude_paths": [
@@ -29,7 +31,20 @@
   ],
   "rules": [
     {
+      "id": "no-react-raw-values",
+      "type": "react-web",
+      "severity": "error",
+      "extensions": [".tsx", ".jsx"],
+      "forbidden": "Reactの色・余白・角丸やTailwind任意値に生値を書くこと。未解析は検証済みにしない。",
+      "instead": "既存のCSS変数を参照する。動的値と別ファイルのstyleは未検証として報告する。",
+      "_selftest": {
+        "bad": ["const A = () => <div style={{padding: 16}} />;", "const A = () => <div className=\"rounded-[8px]\" />;"],
+        "good": ["const A = () => <div style={{padding: 'var(--gap-xs)'}} />;"]
+      }
+    },
+    {
       "id": "no-raw-hex",
+      "_selftest": {"bad": ["color:#abcdef"], "good": ["color:var(--text-neutral-default)"]},
       "severity": "error",
       "pattern": "#[0-9a-fA-F]{3,8}\\b",
       "forbidden": "色の直値（#ffffff などの hex）。Figma の変数と対応が取れず、Figma を直しても追従しない。",
@@ -38,6 +53,7 @@
     },
     {
       "id": "no-raw-font-size",
+      "_selftest": {"bad": ["font-size:16px"], "good": ["font-size:var(--font-size-xs)"]},
       "severity": "error",
       "pattern": "(?<![-\\w])(?:font-size|font)\\s*:\\s*[^;{}]*?\\d+(?:\\.\\d+)?(?:px|rem|em|pt)",
       "forbidden": "文字サイズの直値。px だけでなく rem / em / pt、font ショートハンド、clamp() の中も含む。Figma のテキストスタイル12件と対応が取れなくなる。",
@@ -47,6 +63,7 @@
     },
     {
       "id": "no-raw-spacing",
+      "_selftest": {"bad": ["padding:16px"], "good": ["padding:var(--gap-xs)"]},
       "severity": "error",
       "pattern": "(?<![-\\w])(?:gap|row-gap|column-gap|padding|margin)(?:-(?:top|right|bottom|left|block|inline)(?:-(?:start|end))?)?\\s*:\\s*[^;{}]*?\\d+(?:\\.\\d+)?(?:px|rem|em)",
       "forbidden": "余白の直値。論理プロパティ（padding-block / margin-inline など）と rem / em も含む。Figma の Gap 13段と対応が取れなくなる。",
@@ -56,6 +73,7 @@
     },
     {
       "id": "no-raw-border-width",
+      "_selftest": {"bad": ["border-width:2px"], "good": ["border-width:var(--stroke-s)"]},
       "severity": "error",
       "pattern": "(?<![-\\w])(?:border(?:-(?:top|right|bottom|left|block|inline))?(?:-width)?|outline(?:-width)?)\\s*:\\s*[^;{}]*?\\d+(?:\\.\\d+)?(?:px|rem|em)",
       "forbidden": "線幅の直値。outline も含む。Figma の Stroke 4段と対応が取れなくなる。",
@@ -65,6 +83,7 @@
     },
     {
       "id": "no-raw-radius",
+      "_selftest": {"bad": ["border-radius:8px"], "good": ["border-radius:var(--radius-s)"]},
       "severity": "error",
       "pattern": "(?<![-\\w])border(?:-(?:top|bottom)-(?:left|right)|-(?:start|end)-(?:start|end))?-radius\\s*:\\s*[^;{}]*?\\d+(?:\\.\\d+)?(?:px|rem|em)",
       "forbidden": "角丸の直値。Figma の CornerRadius 9段と対応が取れなくなる。",
@@ -74,6 +93,7 @@
     },
     {
       "id": "no-inline-style-values",
+      "_selftest": {"bad": ["<div style=\"padding:16px\">"], "good": ["<div style=\"padding:var(--gap-xs)\">"]},
       "severity": "error",
       "pattern": "style=\"[^\"]*(?:#[0-9a-fA-F]{3,8}|\\d+px)",
       "forbidden": "style 属性に直値を書くこと。クラスを介さないので、デザインシステムの変更が届かない。記事やページの .md に書いた場合も同じ。",
@@ -88,6 +108,7 @@
     },
     {
       "id": "no-raw-color-function",
+      "_selftest": {"bad": ["color:rgb(0,0,0)"], "good": ["color:var(--text-neutral-default)"]},
       "severity": "error",
       "pattern": "(?<![-\\w])(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color-mix)\\s*\\(",
       "forbidden": "色の関数表記（rgb() / hsl() / color-mix() など）。hex と同じく Figma の変数と対応が取れない。",
@@ -96,6 +117,7 @@
     },
     {
       "id": "no-js-style-values",
+      "_selftest": {"bad": ["el.style.marginTop = '12px';"], "good": ["el.style.marginTop = 'var(--gap-xs)';"]},
       "severity": "error",
       "pattern": "(?:\\.style\\.[A-Za-z]+\\s*=|setProperty\\s*\\(\\s*['\\\"][^'\\\"]+['\\\"]\\s*,)\\s*[^;\\n]*?(?:\\d+(?:\\.\\d+)?(?:px|rem|em)|#[0-9a-fA-F]{3,8})",
       "forbidden": "JavaScript から style に直値を代入すること。ビューは JS で書くので、ここが抜けると制約層が意味を失う。",
@@ -103,6 +125,7 @@
     },
     {
       "id": "no-raw-offset",
+      "_selftest": {"bad": ["top:12px"], "good": ["top:var(--gap-xs)"]},
       "severity": "error",
       "pattern": "(?<![-\\w])(?:inset(?:-(?:block|inline))?|top|right|bottom|left)\\s*:\\s*[^;{}]*?\\d+(?:\\.\\d+)?(?:px|rem|em)",
       "forbidden": "位置指定（top / left / inset など）の直値。見た目は余白と同じなので、Gap の段から外れる。",
@@ -111,6 +134,7 @@
     },
     {
       "id": "no-raw-stroke-width",
+      "_selftest": {"bad": ["stroke-width:2"], "good": ["stroke-width:var(--stroke-s)"]},
       "severity": "error",
       "pattern": "(?<![-\\w])stroke-width\\s*:\\s*(?!0\\s*[;}]|0$)[0-9.]",
       "forbidden": "SVG の線幅の直値。単位が無いので border とは別に見る必要がある。",
@@ -120,6 +144,7 @@
     },
     {
       "id": "no-raw-font-weight",
+      "_selftest": {"bad": ["font-weight:600"], "good": ["font-weight:var(--font-weight-xl)"]},
       "severity": "error",
       "pattern": "(?<![-\\w])font-weight\\s*:\\s*[0-9]",
       "scale_prefix": "font-weight",
@@ -129,6 +154,7 @@
     },
     {
       "id": "no-non-token-color",
+      "_selftest": {"bad": ["color:white"], "good": ["color:var(--text-neutral-default)", "color:transparent"]},
       "severity": "error",
       "extensions": [
         ".css",

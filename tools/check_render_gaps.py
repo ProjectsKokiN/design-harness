@@ -35,6 +35,7 @@ IGNORED_TOKENS = set()  # UI に出ない表記用トークン
 RENAMED = {}            # 書き出し側の名前 → 判定記録側の名前
 LEDGER = None           # 判定の根拠を書いた台帳（案件ごとに違う）
 DS_NAME = "?"           # デザインシステム名（表示用）
+FRAMES_EXPORT = None     # 書き出し自身が報告する描画の未検証範囲
 
 # Flutter が素直に出せるフォントウェイト
 SUPPORTED_WEIGHTS = {100, 200, 300, 400, 500, 600, 700, 800, 900}
@@ -172,9 +173,19 @@ def check_coverage(doc):
     return out
 
 
+def export_limits(doc):
+    out = []
+    for item in (doc.get('$meta') or {}).get('読めなかったもの', []):
+        if 'listIndentWidth' in item.get('fields', []):
+            out.append(('△', item.get('name') or item.get('instance') or '?',
+                        '箇条書きの字下げ段は取得しましたが、字下げの描画実寸は未検証です'))
+    return out
+
+
 def load_config(argv=None):
     global COMPONENTS, TOKENS, FIGMA_COMPONENTS, IGNORED_TOKENS, RENAMED
     global LEDGER, DS_NAME
+    global FRAMES_EXPORT
     ap = argparse.ArgumentParser(
         description="Figma の指定のうちスタックで再現できないものと、判定の網羅を見る")
     ap.add_argument("--config", type=Path,
@@ -194,6 +205,7 @@ def load_config(argv=None):
     COMPONENTS = base / conf["components"]
     TOKENS = base / conf["tokens"]
     FIGMA_COMPONENTS = base / conf["figma_components"]
+    FRAMES_EXPORT = base / conf['frames_export'] if conf.get('frames_export') else None
     IGNORED_TOKENS = set(conf.get("ignored_tokens", []))
     RENAMED = dict(conf.get("renamed", {}))
     # 台帳とデザインシステム名は案件ごとに違う。固定文字列にしない
@@ -212,6 +224,8 @@ def main(argv=None):
     # ファイルが1つでも欠けるとその検査を黙って飛ばして exit 0 を返していた。
     # 「違反 0 件」と「そもそも見ていない」が出力上まったく同じになる型の穴。
     missing = [str(x) for x in (COMPONENTS, TOKENS, FIGMA_COMPONENTS) if not x.exists()]
+    if FRAMES_EXPORT and not FRAMES_EXPORT.is_file():
+        missing.append(str(FRAMES_EXPORT))
     if missing:
         print("再現性の判定に必要な入力がありません。**確認せずに通すことはしません**:",
               file=sys.stderr)
@@ -227,6 +241,8 @@ def main(argv=None):
     findings += check_components(doc)
     findings += check_coverage(doc)
     findings += check_tokens(json.loads(TOKENS.read_text(encoding="utf-8")))
+    if FRAMES_EXPORT:
+        findings += export_limits(json.loads(FRAMES_EXPORT.read_text(encoding='utf-8')))
 
     # 同じ指摘の重複をまとめる
     seen, uniq = set(), []
@@ -257,6 +273,8 @@ def self_test():
     """落ちるケースを持つ（2026-08-29 新設。入力欠落と空振りの穴を潰した回）。"""
     import tempfile
     ok = True
+    if not export_limits({'$meta': {'読めなかったもの': [{'name': 'List', 'fields': ['listIndentWidth']}]}}):
+        print('self-test NG: 字下げの描画実寸の未検証を報告しません'); ok = False
     BASE = {
         "components.json": {"componentSets": [{"name": "Button", "flutter": "○"}]},
         "figma.json": {"componentSets": {"Button": {}}},
