@@ -127,6 +127,17 @@ def _is_tool(src) -> bool:
                for n in tree.body)
 
 
+def source_lines(src):
+    """行を "\\n" だけで切る（改行は残す）。**AST の行番号と同じ数え方です。**
+
+    splitlines は U+2028・U+2029・改ページなども行の区切りに数えるため、
+    それを含む道具では AST の行番号とずれて**別の行を書き換えます**
+    （2026-11-03・export_frames_rest.py で 6 本が誤って素通りと出た）。
+    """
+    parts = src.split("\n")
+    return [p + "\n" for p in parts[:-1]] + ([parts[-1]] if parts[-1] else [])
+
+
 def failure_returns(src):
     """self_test の外にある `return 1` / `return 2`（bool は除く）の行番号。"""
     tree = ast.parse(src)
@@ -177,7 +188,7 @@ def list_allowed():
     """いま許している印を一覧する（走査しない）。**一覧は持たず、コードから導く。**"""
     rows, no_reason = [], []
     for f in scanned_files():
-        for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+        for i, line in enumerate(source_lines(f.read_text(encoding="utf-8")), 1):
             if MARK not in line:
                 continue
             why = mark_reason(line)
@@ -241,7 +252,7 @@ def main(argv=None):
                 skipped.append((f.name, "**いま self-test が通らない**（測れない）"))
                 continue
             measured += 1
-            lines = src.splitlines(keepends=True)
+            lines = source_lines(src)
             survived_here = set()
             for ln in targets:
                 paths_total += 1
@@ -350,6 +361,10 @@ def self_test():
            "def h():\n    return 2\n"
            "def self_test():\n    return 1\n")
     check(failure_returns(src) == [2, 6], f"落とす経路の拾い方が違う: {failure_returns(src)}")
+    # 行の区切りに見える文字が混ざっても、AST と同じ行を指す
+    src = 'X = "a\u2028b"\ndef f():\n    return 1\n'
+    check(failure_returns(src) == [3] and "return 1" in source_lines(src)[2],
+          "**U+2028 を含む道具で、書き換える行が AST とずれた**")
 
     # ── 要らなくなった印（化石）────────────────────────────
     L = ["def f():\n", f"    return 1  # {MARK} 環境の経路\n",

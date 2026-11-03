@@ -51,6 +51,11 @@ def _kill_tree(proc):
             os.killpg(proc.pid, sig)
         except ProcessLookupError:
             return
+        except PermissionError:
+            # macOS は組に終わった子（ゾンビ）しか残っていないと EPERM を返す。止める相手はもう居ない
+            # （2026-11-03・CI の self-test が4回に1回この形で落ちた）
+            proc.wait()
+            return
         try:
             proc.wait(timeout=KILL_GRACE)
             # 親が終わっても、同じ組の子が残っていることがある。組が空になるまで合図を送る
