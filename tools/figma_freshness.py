@@ -79,6 +79,8 @@ import _utf8  # noqa: F401  出力の文字コードで死なない（tools/_utf
 ROOT = Path(__file__).resolve().parent.parent
 #: 設定と案件の根（--config を読むと差し替わる）。**関係の判定に使う**
 CONFIG: dict = {}
+#: Variables の書き出し（id つき）。設定の variablesExport（2026-11-03）
+VARIABLES_EXPORT = None
 PROJECT_ROOT = ROOT
 
 # ---- 案件ごとに埋める（3つだけ）--------------------------------------------
@@ -240,6 +242,20 @@ def names_of(data: dict) -> dict:
     varmap = PROJECT_ROOT / 'design' / 'figma-raw' / '_varmap.json'
     if varmap.exists():
         names.update(json.loads(varmap.read_text(encoding='utf-8'))['map'])
+    # **Variables の書き出し（export_variables.js・id つき）からも引く**（2026-11-03・FlashEnglish の依頼）。
+    # 設定の variablesExport で渡す。_varmap.json はプラグインで別に取った写しで、古い書き出しを消すと一緒に消え、
+    # 全部品が「変わった」と出た。id を持つ書き出しがあれば、写しは要らない
+    if VARIABLES_EXPORT and Path(VARIABLES_EXPORT).exists():
+        def walk_v(o):
+            if isinstance(o, dict):
+                if isinstance(o.get('id'), str) and isinstance(o.get('name'), str) and o['id'].startswith('VariableID:'):
+                    names[o['id']] = o['name']
+                for v in o.values():
+                    walk_v(v)
+            elif isinstance(o, list):
+                for v in o:
+                    walk_v(v)
+        walk_v(json.loads(Path(VARIABLES_EXPORT).read_text(encoding='utf-8')))
     for entry in (data.get('nodes') or {}).values():
         for sid, meta in ((entry or {}).get('styles') or {}).items():
             if isinstance(meta, dict) and meta.get('name'):
@@ -927,7 +943,7 @@ def self_test() -> int:
     import tempfile as _tf2
     _keep_cfg = {k: globals().get(k) for k in ('CONFIG', 'PROJECT_ROOT', 'EXPORT', 'FILE_KEY',
                                                'SKIP_PAGES', 'PAGE_SCOPE', 'STYLES_EXPORT',
-                                               'DESCS_EXPORT', 'FRAMES_EXPORT')}
+                                               'DESCS_EXPORT', 'FRAMES_EXPORT', 'VARIABLES_EXPORT')}
     try:
         with _tf2.TemporaryDirectory() as _pd:
             _proj = Path(_pd) / 'app'
@@ -944,6 +960,15 @@ def self_test() -> int:
             cases.append(('変数の名前は、--config で渡した案件の対応表から引く',
                           _nm.get('VariableID:1:2') == 'color/bg'
                           and 'fills=color/bg' in node_parts(_paint, _nm)))
+            # 写し（_varmap.json）が無くても、Variables の書き出し（id つき）から引く
+            (_proj / 'design' / 'figma-raw' / '_varmap.json').unlink()
+            (_proj / 'design' / 'vars.json').write_text(json.dumps({'collections': {'色': {'variables': [
+                {'id': 'VariableID:1:2', 'key': 'k', 'name': 'color/bg'}]}}}), encoding='utf-8')
+            (_proj / 'design' / 'figma-freshness.json').write_text(json.dumps({
+                'export': 'x.json', 'fileKey': 'K', 'skipPages': [], 'variablesExport': 'vars.json'}), encoding='utf-8')
+            load_config(_proj / 'design' / 'figma-freshness.json')
+            cases.append(('写しが無くても、variablesExport の書き出しから変数の名前を引く',
+                          names_of({'nodes': {}}).get('VariableID:1:2') == 'color/bg'))
     finally:
         globals().update(_keep_cfg)
 
@@ -1632,7 +1657,8 @@ def load_config(path) -> None:
           "fileKey": "...",
           "pageScope": "design/figma/page-scope.json",
           "stylesExport": "design/figma/styles.json",
-          "descsExport": "design/figma/descriptions.json"
+          "descsExport": "design/figma/descriptions.json",
+          "variablesExport": "../design-systems/<名前>/figma/variables.json"
         }
     """
     g = globals()
@@ -1648,7 +1674,8 @@ def load_config(path) -> None:
     if conf.get('skipPages') is not None:
         g['SKIP_PAGES'] = conf['skipPages']
     for key, var in (('pageScope', 'PAGE_SCOPE'), ('stylesExport', 'STYLES_EXPORT'),
-                     ('descsExport', 'DESCS_EXPORT'), ('framesExport', 'FRAMES_EXPORT')):
+                     ('descsExport', 'DESCS_EXPORT'), ('framesExport', 'FRAMES_EXPORT'),
+                     ('variablesExport', 'VARIABLES_EXPORT')):
         if conf.get(key):
             g[var] = (base / conf[key]).resolve()
     require_configured()
