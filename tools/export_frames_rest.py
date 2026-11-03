@@ -865,11 +865,19 @@ def locate_parents(file_key, ids, tok=None):
     return parents, sections
 
 
+def frames_of(doc):
+    """画面の書き出し（frames）か部品の書き出し（componentSets）を、ID → {rows, ids} にする。
+    部品は変異の ID で引く（器の行のハッシュも変異ごとに返すため。2026-11-04・414）"""
+    if "frames" in doc:
+        return doc["frames"]
+    return {v["id"]: v for s in (doc.get("componentSets") or {}).values() for v in (s.get("variants") or {}).values()}
+
+
 def compare_hashes(manifest_path, rest_path):
     """器が返した行のハッシュ（manifest）と、REST の行を比べる。違う行の番号を返す。"""
     m = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     m = m.get("frames", m)
-    r = json.loads(Path(rest_path).read_text(encoding="utf-8"))["frames"]
+    r = frames_of(json.loads(Path(rest_path).read_text(encoding="utf-8")))
     out, total = {}, 0
     for fid, info in m.items():
         rows = (r.get(fid) or {}).get("rows")
@@ -972,6 +980,10 @@ def self_test():
         hi.write_text(js({"frames": {"1": {"total": 1, "hashes": [fnv("0|A|FRAME|1|1|0|0|fill=X")],
                                            "idsHash": fnv(js(["1:1"]))}}}), encoding="utf-8")
         ck(main(["--compare-hashes", str(hi), str(ai)]) == 0, "ID の一覧が同じなのに違うと言った")
+        ci = Path(td) / "ci.json"
+        ci.write_text(js({"componentSets": {"B": {"variants": {"Size=M": {"id": "1", "rows": ["0|A|FRAME|1|1|0|0|fill=X"],
+                                                                         "ids": ["1:1"]}}}}}), encoding="utf-8")
+        ck(main(["--compare-hashes", str(hi), str(ci)]) == 0, "部品の書き出し（componentSets）を変異の ID で照合できない")
         bi = Path(td) / "bi.json"
         bi.write_text(js({"frames": {"1": {"rows": ["0|A|FRAME|1|1|0|0|fill=X"], "ids": ["2:2"]}}}), encoding="utf-8")
         ck(main(["--compare", str(ai), str(bi)]) == 1, "**ID の一覧の違いを --compare が見逃した**")

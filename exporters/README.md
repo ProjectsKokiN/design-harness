@@ -133,3 +133,7 @@ id・kind・variantTotal・variants・board・order・key）で書き、外し�
 既知の差を引き継ぎます（器との照合の結果は引き継がないので、取り直したら `--compare-hashes` をやり直す）。
 414 で回し、手書きの組み立て器（design-systems の 414/figma/build/assemble.py）と 31 セットの中身・外したセットの置き場所が
 すべて一致しました（セットの並びだけ、器と同じ「セット → 単体」の順に変わる）。
+
+部品の書き出し（器・REST 版とも）も、変異ごとに行と同じ順の `ids` を書きます（2026-11-04）。`--compare-hashes` は
+部品の書き出し（componentSets）を変異の ID で引いて照合するので、器に変異ごとの行のハッシュと `idsHash` を返させれば、
+ID の一覧まで一度に比べられます。

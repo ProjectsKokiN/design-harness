@@ -432,9 +432,10 @@ for (const [kind, list] of [['set', c.sets], ['single', c.singles]]) {
       const key = kind === 'set' ? v.name : '-';
       // 同じ名前の変異は、どちらが正か機械で決められない。**黙って上書きしない**
       if (variants[key]) { dupVariants.push(name + '/' + key); continue; }
-      const rows = [];
-      await walk(v, 0, rows);
-      variants[key] = { id: v.id, rows };
+      const rows = [], ids = [];
+      await walk(v, 0, rows, ids);
+      // ids（行と同じ順のノード ID）も書く。画面の器と揃え、--compare-hashes で ID の一覧まで照合できるように（2026-11-04・414）
+      variants[key] = { id: v.id, rows, ids };
       if (v.key) variants[key].key = v.key;   // 候補6: 作り直しに気づくため
     }
     // **全部で何変異あるかを書く。**区切って回したとき、足りているかを数で確かめるため

@@ -110,7 +110,7 @@ def build(file_key, pages, var_paths, excluded, previous=None, tok=None):
             key = "-" if s["kind"] == "single" else vname
             if key in variants:
                 raise RuntimeError(f"同名の変異: {name}/{key}")
-            variants[key] = {"id": vid, "rows": frames["frames"][vid]["rows"]}
+            variants[key] = {"id": vid, "rows": frames["frames"][vid]["rows"], "ids": frames["frames"][vid]["ids"]}
             if vkey:
                 variants[key]["key"] = vkey
         entry = {"id": s["id"], "kind": s["kind"], "variantTotal": len(s["variants"]), "variants": variants,
@@ -214,6 +214,7 @@ def self_test():
             ck(list(cs["Button"]["variants"]) == ["Size=M", "Size=L"] and cs["Button"]["variants"]["Size=M"]["key"] == "kv1"
                and cs["Header"]["variants"]["-"]["key"] == "kc9", "変異の名前・key が器と違う")
             ck("sz=FIXED,FIXED" in cs["Button"]["variants"]["Size=M"]["rows"][0], "変異の行が export() の行でない")
+            ck(cs["Button"]["variants"]["Size=M"]["ids"] == ["V:1", "V:1;1"], "変異の ID の一覧が無い（器と同じく行と同じ順）")
             ck(doc["$meta"]["excluded"] == {"Icons": {"why": "字形はフォント", "board": "Icons", "order": [0, 480, 30, 500]}},
                f"外したセットの置き場所を実測していない: {doc['$meta']['excluded']}")
             ck(carried == list(CARRY) and doc["$meta"]["restDigests"] == {"Button": "x"}
