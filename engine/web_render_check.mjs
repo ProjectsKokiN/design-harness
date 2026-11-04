@@ -5,6 +5,9 @@
 //   「隠れたままの画像・字」「一度見えてから消える（一瞬消える）」「途中で打ち切られた動き」を数える
 //   （それまでの段は prefers-reduced-motion: reduce で測っていて、動きの状態を一度も見ていなかった）
 // - #177: 同じ幅で**2つ以上の高さ**を測り、要素どうしの間隔（Figma の値）と重なりを比べる
+// - #192: ページ（か設定の全体）の ignore: [{selector, why}] に書いた要素（下書きだけに出る PREVIEW の帯など）は、
+//   点検される側にも、当たり判定の相手（上に重なっているもの）にもしない。**理由（why）が無ければ確かめない（2）**。
+//   allow は「その要素のその違反を許す」、ignore は「その要素はページに無いものとして測る」
 //
 // 判定は getBoundingClientRect・getComputedStyle・elementFromPoint・アニメーションのイベントだけで行う。
 // **画像の見比べで合否を決めない**（見た目の評価はデザイナー本人）。
@@ -54,16 +57,17 @@ const INIT=`(() => {
   requestAnimationFrame(tick);
 })();`;
 
-// 画面の中で集める。allow は {check, selector} の配列
-function collect(allow) {
+// 画面の中で集める。allow は {check, selector} の配列、ignore は selector の配列（#192）
+function collect({allow, ignore}) {
   const S = window.__hr, desc = S.desc, out = [];
+  const ignored = el => ignore.some(sel => el.closest(sel));
   const allowed = (check, el) => allow.some(a => a.check === check && el.closest(a.selector));
   const push = (check, el, detail) => { if (!allowed(check, el)) out.push({check, target: desc(el), detail}); };
   const vw = innerWidth, vh = innerHeight;
   const shown = el => { const cs = getComputedStyle(el); return cs.display !== 'none' && !el.closest('[aria-hidden="true"]'); };
   const inView = r => r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
   const textEls = [...document.body.querySelectorAll('*')].filter(el =>
-    !['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(el.tagName) && shown(el)
+    !['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(el.tagName) && shown(el) && !ignored(el)
     && [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim()));
   for (const el of textEls) {
     const r = el.getBoundingClientRect();
@@ -99,7 +103,8 @@ function collect(allow) {
         const x = line.left + line.width / 2, y = line.top + line.height / 2;
         if (x < 0 || y < 0 || x >= vw || y >= vh) continue;
         if (x < cl || x > cr || y < ct || y > cb) continue;   // 切られて描画されない行
-        const hit = document.elementFromPoint(x, y);
+        // ignore に書いた要素は、上に重なっていても無いものとして、その下の要素を相手にする（#192）
+        const hit = document.elementsFromPoint(x, y).find(h => !ignored(h));
         if (hit && hit !== el && !el.contains(hit) && !hit.contains(el)) {
           push('occluded', el, `${desc(hit)} の下になっている`); break;
         }
@@ -128,7 +133,7 @@ function collect(allow) {
   // 隠れたままの画像・字、壊れた画像
   for (const el of [...document.querySelectorAll('img, svg, [data-render-watch]'), ...textEls]) {
     const r = el.getBoundingClientRect();
-    if (!shown(el)) continue;
+    if (!shown(el) || ignored(el)) continue;
     // 壊れた画像は大きさで見ない。WebKit は alt が空の壊れた画像を 0×0 に潰す（2026-11-03 実測）
     if (el.tagName === 'IMG' && (S.broken.has(el) || (el.complete && el.naturalWidth === 0))) {
       push('brokenImage', el, el.getAttribute('src') || '');
@@ -139,8 +144,9 @@ function collect(allow) {
     if (o < 0.05) push('hidden', el, `見えない（不透明度 ${o.toFixed(2)}）`);
   }
   // 動きのイベントは要素ではなく名前で残るので、許可は名前で突き合わせる
-  const allowedName = (check, d) => allow.some(a => a.check === check
-    && [...document.querySelectorAll(a.selector)].some(el => desc(el) === d));
+  const named = (sel, d) => [...document.querySelectorAll(sel)].some(el => desc(el) === d);
+  const allowedName = (check, d) => ignore.some(sel => named(sel, d))
+    || allow.some(a => a.check === check && named(a.selector, d));
   for (const c of S.cancels) if (!allowedName('cancel', c.target)) out.push({check: 'cancel', target: c.target, detail: `${c.type} ${c.name}`});
   for (const t of new Set(S.flashes)) if (!allowedName('flash', t)) out.push({check: 'flash', target: t, detail: '一度見えてから消えた'});
   S.cancels = []; S.flashes = [];
@@ -174,6 +180,10 @@ function validate(config) {
       if (!CHECKS.includes(a.check) || !a.selector) throw new Error(`${p.url}: allow の check か selector が不正です: ${JSON.stringify(a)}`);
       if (!a.why || !String(a.why).trim()) throw new Error(`${p.url}: allow に理由（why）がありません: ${a.selector}`);
     }
+    for (const g of [...(config.ignore ?? []), ...(p.ignore ?? [])]) {
+      if (!g || !g.selector) throw new Error(`${p.url}: ignore の selector がありません: ${JSON.stringify(g)}`);
+      if (!g.why || !String(g.why).trim()) throw new Error(`${p.url}: ignore に理由（why）がありません: ${g.selector}`);
+    }
     for (const g of p.gaps ?? []) if (!g.a || !g.b || typeof g.gap !== 'number') throw new Error(`${p.url}: gaps の a・b・gap が不正です`);
   }
 }
@@ -189,6 +199,8 @@ export async function check(config) {
       browser = await type.launch({headless: true, ...(name === 'chromium' && config.chromiumChannel ? {channel: config.chromiumChannel} : {})});
       for (const p of config.pages) {
         const allow = (p.allow ?? []).map(a => ({check: a.check, selector: a.selector}));
+        const ignore = [...(config.ignore ?? []), ...(p.ignore ?? [])].map(g => g.selector);
+        const scope = {allow, ignore};
         for (const vp of p.viewports) {
           const where = {browser: name, url: p.url, viewport: `${vp.width}x${vp.height}`};
           const ctx = await browser.newContext({viewport: vp, reducedMotion: 'no-preference'});
@@ -203,7 +215,7 @@ export async function check(config) {
             if (frames < MIN_FRAMES) { results.push({...where, status: 'unverified', why: `動きの記録が ${frames} 枚しかありません（見ていません）`}); continue; }
             const findings = [];
             const add = (phase, list) => findings.push(...list.map(f => ({...f, phase})));
-            add('読み込み直後', await page.evaluate(collect, allow));
+            add('読み込み直後', await page.evaluate(collect, scope));
             // スクロールで現れるもの（下にあるもの）も、止まった状態で数える
             const height = await page.evaluate(() => document.documentElement.scrollHeight);
             for (let y = vp.height; y < height; y += vp.height) {
@@ -216,7 +228,7 @@ export async function check(config) {
               await settle(page, settleMs);
               // スクロールの段の「打ち切り」は数えない。**検査が一気にスクロールしたこと自体**で、見出しの出し入れなどが
               // 途中で切り替わる（2026-11-03 portfolio で実測）。打ち切りは読み込み直後とホバーの後で数える
-              add(`スクロール ${y}px`, (await page.evaluate(collect, allow)).filter(f => !['occluded', 'cancel'].includes(f.check)));
+              add(`スクロール ${y}px`, (await page.evaluate(collect, scope)).filter(f => !['occluded', 'cancel'].includes(f.check)));
             }
             await page.evaluate(() => window.scrollTo(0, 0));
             await settle(page, settleMs);
@@ -229,7 +241,7 @@ export async function check(config) {
               await settle(page, settleMs);
               await page.mouse.move(0, 0);
               await settle(page, settleMs);
-              add(`ホバーの後（${sel}）`, await page.evaluate(collect, allow));
+              add(`ホバーの後（${sel}）`, await page.evaluate(collect, scope));
             }
             // 要素どうしの間隔と重なり（高さごとに測る・#177）
             await page.evaluate(() => window.scrollTo(0, 0));

@@ -1,6 +1,7 @@
 // web_render_check の試験（候補1・#176・#177）。正常なページは両ブラウザ・両方の高さで違反0、
 // 壊し方ごとに、その種類の違反で落ちることを見る。
 // 正常なページには line-clamp で切った本文を置く（切られて描画されない行を「隠れている」と数えない・#189）。
+// 正常なページには、本文の上に重なる PREVIEW の帯（下書きだけに出る）を置き、ignore で外す（#192）。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -27,6 +28,7 @@ ${anim}
 #below{margin-top:1200px}
 </style></head><body>
 <h1 id="title">見出し</h1>
+<p id="banner" style="position:fixed;left:0;top:4px;margin:0;width:120px;background:#000;color:#fff">PREVIEW</p>
 <img id="img" src="${IMG}" alt="">
 <div id="card"><p id="name">名前</p><p id="cap">ホバーで出る説明</p></div>
 <div class="row"><p id="rowtext">行の文字</p><div id="gauge"></div></div>
@@ -50,6 +52,7 @@ const page = url => ({
   allow: [{check: 'hidden', selector: '#cap', why: 'ホバーで出す説明。止まっている間は隠す'}],
   gaps: [{a: '#title', b: '#img', gap: 24}],
   noOverlap: [['#rowtext', '#gauge']],
+  ignore: [{selector: '#banner', why: '下書きの組み立てにだけ出る帯'}],
 });
 
 test('正常なページは違反0、壊し方ごとにその種類で落ちる', {timeout: 600000}, async () => {
@@ -87,7 +90,17 @@ test('正常なページは違反0、壊し方ごとにその種類で落ちる'
       }
     }
 
+    // ignore を外すと、帯の下の見出しを「隠れている」と数える（宣言した要素だけを外している・#192）
+    broken = null;
+    const noIgnore = await check({...base, pages: [{...page(url), ignore: []}]});
+    for (const browser of ['chromium', 'webkit']) {
+      const hits = noIgnore.results.filter(x => x.browser === browser && x.check === 'occluded');
+      assert.ok(hits.some(x => x.target.includes('title') && x.detail.includes('banner')),
+        `ignore を外しても ${browser} で帯の下の見出しを数えていない ${JSON.stringify(noIgnore.results.filter(x => x.browser === browser), null, 1)}`);
+    }
+
     // 宣言が足りなければ確かめない（2 にする）
+    await assert.rejects(check({pages: [{...page(url), ignore: [{selector: '#banner'}]}]}), /ignore に理由/);
     await assert.rejects(check({pages: [{...page(url), viewports: [{width: 800, height: 900}]}]}), /viewports/);
     await assert.rejects(check({pages: [{...page(url), allow: [{check: 'hidden', selector: '#cap'}]}]}), /理由/);
   } finally { await new Promise(r => server.close(r)); }

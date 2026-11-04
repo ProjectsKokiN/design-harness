@@ -16,7 +16,7 @@
 | `engine/design_check.py` | 禁止パターン検査エンジン（5案件の機能を統合した正本）。`token_sources` を書いた案件では、違反の文に同じ値のトークンの名前と定義の場所を出す（候補8） |
 | `engine/react_web_check.py` | React構文解析の入口。Node・解析器が無いと未解析にする |
 | `engine/react_web_check.mjs` | 固定版TypeScriptでTSX/JSXを解析し、生値と未解析件数を出す |
-| `engine/web_render_check.mjs` | 動きを有効にしたまま画面を表示し、文字の切れ・隠れ・はみ出し・単位だけの改行・壊れた画像、隠れたままの画像と字・一瞬消える・打ち切られた動き、2つ以上の高さでの間隔と重なりを数値で数える（候補1・#176・#177） |
+| `engine/web_render_check.mjs` | 動きを有効にしたまま画面を表示し、文字の切れ・隠れ・はみ出し・単位だけの改行・壊れた画像、隠れたままの画像と字・一瞬消える・打ち切られた動き、2つ以上の高さでの間隔と重なりを数値で数える（候補1・#176・#177）。下書きだけに出る要素は `ignore` で外す（#192） |
 | `engine/web_browser_check.mjs` | Chromium・WebKitのスクロールとVECTORの画素を試す。実機Safariの限界も出す |
 | `tools/frame_io.py` | 画面をIDで照合し、分割した行を件数・ハッシュで復元する |
 | `tools/figma_change_check.py` | 同じノードIDでの改名・種類変更と古い参照候補を出す。名前が同じで key が変わった部品・変数（作り直し）も名指しする（候補6） |
